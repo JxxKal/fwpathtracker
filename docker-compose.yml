@@ -69,3 +69,22 @@ services:
         condition: service_healthy
     ports:
       - "80:80"
+
+  # FortiManager-JSON-RPC-Simulator (nur mit `--profile sim`).
+  # Trocken-Testen des kompletten Stacks ohne echtes Lab. Im Tracker unter
+  # Einstellungen → FortiManager konfigurieren: host=fmg-sim, ssl_verify=false,
+  # auth_mode=token, token=<beliebig>, adoms=[corp]. Topologie: fmg-sim/lab.yaml.
+  fmg-sim:
+    build: ./fmg-sim
+    container_name: fwpt-fmg-sim
+    restart: unless-stopped
+    logging: *default-logging
+    profiles: ["sim"]
+    volumes:
+      - ./fmg-sim/lab.yaml:/app/lab.yaml:ro   # Topologie editierbar (POST /_reload)
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request,ssl; urllib.request.urlopen('https://localhost/healthz', context=ssl._create_unverified_context(), timeout=5)\""]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s

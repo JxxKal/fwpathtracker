@@ -1,0 +1,105 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# fmg-sim – Lab-Topologie (editierbar)
+#
+# Diese Datei beschreibt das simulierte FortiManager-/FortiGate-Estate.
+# Der Simulator serviert daraus 1:1 die echten FMG-JSON-RPC-Antwortshapes
+# (dvmdb/pm/config) und wertet router/lookup + firewall/policy-lookup
+# konsistent dagegen aus.
+#
+# Bearbeiten, um euer OT-Estate nachzubilden: Standorte (/20), VDOMs,
+# Zonen, Policies, Objekte, Routen. Danach `docker compose --profile sim
+# up -d --build fmg-sim` und im Tracker FMG-Sync neu starten.
+#
+# Adress-/Netz-Angaben als CIDR (der Simulator übersetzt in die FMG-Form
+# [ip, netmask]). Policy-action: accept | deny. Reihenfolge = Match-Reihenfolge.
+# ══════════════════════════════════════════════════════════════════════════════
+
+version: "v7.4.3-build2573"       # von /sys/status gemeldet
+hostname: "fmg-sim"
+
+adoms:
+  - corp
+
+devices:
+  # ── Standort A (10.1.0.0/20) — fw-a mit VDOMs root + dmz ────────────────────
+  fw-a:
+    adom: corp
+    serial: "FGVMSIM0000000A"
+    os_ver: "7.4"
+    online: true                  # false → Proxy meldet Ziel offline (Degraded-Mode-Test)
+    vdoms:
+      root:
+        interfaces:
+          lan1:     { ip: 10.1.1.1/24 }
+          lan2:     { ip: 10.1.2.1/24 }
+          vpn-to-b: { type: tunnel }
+          wan:      { ip: 203.0.113.1/30 }
+          vlink0:   { type: vdom-link }
+        zones:
+          inside-a: [lan1, lan2]
+          overlay:  [vpn-to-b]
+        routes:
+          - { dst: 10.2.0.0/20, via: vpn-to-b }     # Standort B über Overlay
+          - { dst: 0.0.0.0/0,   via: wan, gateway: 203.0.113.2 }
+      dmz:
+        interfaces:
+          vlink1:  { type: vdom-link }
+          dmz-lan: { ip: 10.1.8.1/24 }
+        routes:
+          - { dst: 0.0.0.0/0, via: vlink1 }
+  # ── Standort B (10.2.0.0/20) — fw-b, nur root ──────────────────────────────
+  fw-b:
+    adom: corp
+    serial: "FGVMSIM0000000B"
+    os_ver: "7.4"
+    online: true
+    vdoms:
+      root:
+        interfaces:
+          lan1:     { ip: 10.2.1.1/24 }
+          vpn-to-a: { type: tunnel }
+          wan:      { ip: 198.51.100.1/30 }
+        zones:
+          inside-b: [lan1]
+          overlay:  [vpn-to-a]
+        routes:
+          - { dst: 10.1.0.0/20, via: vpn-to-a }     # Standort A über Overlay
+          - { dst: 0.0.0.0/0,   via: wan, gateway: 198.51.100.2 }
+
+# Policy-Packages: pro Package die geordnete Regelliste + Scope (device/vdom).
+packages:
+  pkg-a:
+    scope:
+      - { device: fw-a, vdom: root }
+      - { device: fw-a, vdom: dmz }
+    policies:
+      - { id: 100, name: allow-inside-to-b, action: accept,
+          srcintf: [inside-a], dstintf: [overlay],
+          srcaddr: [all], dstaddr: [all], service: [ALL] }
+      - { id: 110, name: deny-guest,        action: deny,
+          srcintf: [any], dstintf: [any],
+          srcaddr: [all], dstaddr: [all], service: [ALL] }
+  pkg-b:
+    scope:
+      - { device: fw-b, vdom: root }
+    policies:
+      - { id: 200, name: allow-from-a-https, action: accept,
+          srcintf: [overlay], dstintf: [inside-b],
+          srcaddr: [net-site-a], dstaddr: [srv-db], service: [HTTPS] }
+      - { id: 210, name: deny-legacy,        action: deny,
+          srcintf: [any], dstintf: [any],
+          srcaddr: [all], dstaddr: [all], service: [ALL] }
+
+# ADOM-weite Objekte (firewall/address, service/custom, vip).
+objects:
+  corp:
+    addresses:
+      srv-db:     { subnet: 10.2.1.30/32 }
+      net-site-a: { subnet: 10.1.0.0/20 }
+      net-site-b: { subnet: 10.2.0.0/20 }
+    services:
+      HTTPS: { protocol: TCP, tcp: [443] }
+      SSH:   { protocol: TCP, tcp: [22] }
+      DNS:   { protocol: UDP, udp: [53] }
+    vips:
+      vip-web: { extip: 203.0.113.10, mappedip: 10.1.2.20 }
