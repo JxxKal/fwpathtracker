@@ -80,14 +80,19 @@ class SyncManager:
         await self._store(pool, adom, "package",
                           [(p["_path"], p) for p in packages])
 
+        # Policies pro Package sammeln und EINMAL speichern — _store löscht pro
+        # (adom, kind) alle Altzeilen, ein Store-pro-Package würde die vorigen
+        # Packages wieder wegräumen.
+        policy_items: list[tuple[str, Any]] = []
         for pkg in packages:
             path = pkg["_path"]
             self._log(f"  Package '{path}': Policies laden ...")
             policies = await client.rpc(
                 "get", f"/pm/config/adom/{adom}/pkg/{path}/firewall/policy"
             ) or []
-            await self._store(pool, adom, "policy", [(path, policies)])
+            policy_items.append((path, policies))
             counts[f"{adom}:policies"] = counts.get(f"{adom}:policies", 0) + len(policies)
+        await self._store(pool, adom, "policy", policy_items)
 
         obj_paths = [
             ("address", "obj/firewall/address"),
@@ -104,6 +109,11 @@ class SyncManager:
                               [(o.get("name"), o) for o in objs if o.get("name")])
             counts[f"{adom}:{kind}"] = len(objs)
 
+        # Interfaces (pro Gerät) + Routen (pro Gerät/VDOM) über ALLE Geräte
+        # sammeln und je EINMAL speichern — sonst löscht der nächste Store-Aufruf
+        # die Daten des vorigen Geräts wieder (nur das letzte überlebte).
+        interface_items: list[tuple[str, Any]] = []
+        route_items: list[tuple[str, Any]] = []
         for dev in devices:
             name = dev.get("name")
             if not name:
@@ -113,7 +123,7 @@ class SyncManager:
                 intfs = await client.rpc(
                     "get", f"/pm/config/device/{name}/global/system/interface"
                 ) or []
-                await self._store(pool, adom, "interface", [(name, intfs)])
+                interface_items.append((name, intfs))
             except FmgError as exc:
                 self._log(f"  Gerät '{name}': Interfaces fehlgeschlagen ({exc}) – übersprungen.")
                 continue
@@ -123,9 +133,11 @@ class SyncManager:
                     routes = await client.rpc(
                         "get", f"/pm/config/device/{name}/vdom/{vdom}/router/static"
                     ) or []
-                    await self._store(pool, adom, "route", [(f"{name}|{vdom}", routes)])
+                    route_items.append((f"{name}|{vdom}", routes))
                 except FmgError as exc:
                     self._log(f"  {name}/{vdom}: Routen fehlgeschlagen ({exc}) – übersprungen.")
+        await self._store(pool, adom, "interface", interface_items)
+        await self._store(pool, adom, "route", route_items)
 
     async def _store(self, pool: asyncpg.Pool, adom: str, kind: str,
                      items: list[tuple[str, Any]]) -> None:
