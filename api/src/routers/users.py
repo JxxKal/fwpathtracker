@@ -77,7 +77,7 @@ async def update_user(
 
 
 @router.delete("/{user_id}", status_code=204)
-async def delete_user(user_id: int, admin: dict = Depends(require_admin)) -> None:
+async def delete_user(user_id: int, admin: dict = Depends(require_admin)):
     pool = get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow("SELECT role FROM users WHERE id = $1", user_id)
