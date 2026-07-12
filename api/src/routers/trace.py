@@ -92,9 +92,12 @@ async def trace(body: TraceRequest, request: Request,
             )
             break
 
-    # Regel-Vorschläge für Deny-Hops
+    # Regel-Vorschläge für JEDEN blockierenden Hop — um den Flow durchgängig zu
+    # öffnen, braucht es eine Regel auf jeder blockenden Firewall, nicht nur der
+    # ersten. Nachgelagerte Hops werden im Frontend als "nachgelagert" markiert,
+    # der Vorschlag bleibt aber verfügbar.
     for hop in hops:
-        if hop.verdict == "DENY" and not hop.after_deny:
+        if hop.verdict == "DENY":
             hop.suggestion = build_suggestion(
                 inv, hop, src_ip=src_ep["ip"], dst_ip=dst_ep["ip"],
                 protocol=proto, dst_port=body.dst_port,

@@ -42,6 +42,8 @@ export const de = {
     candidates: 'Kandidaten-Regeln',
     suggestion: 'Regelvorschlag',
     degraded: 'Gerät offline — Daten aus Cache',
+    downstream: 'nachgelagert',
+    downstreamHint: 'Hinter einer früheren Blockade — Verkehr erreicht diese Firewall erst, wenn die vorigen Hops geöffnet sind.',
   },
   suggestion: {
     title: 'Regelvorschlag',

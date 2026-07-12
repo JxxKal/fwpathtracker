@@ -20,10 +20,9 @@ const verdictStyles: Record<string, string> = {
 export default function FirewallNode({ data }: { data: FirewallNodeData }) {
   const { hop, onSuggest } = data;
   const [expanded, setExpanded] = useState(false);
-  const dim = hop.after_deny ? 'opacity-40' : '';
 
   return (
-    <div className={`w-72 rounded-lg border bg-slate-900 shadow-lg ${dim} ${
+    <div className={`w-72 rounded-lg border bg-slate-900 shadow-lg ${
       hop.verdict === 'DENY' ? 'border-red-800' : hop.degraded ? 'border-amber-800' : 'border-slate-700'
     }`}>
       <Handle type="target" position={Position.Left} className="!bg-cyan-600" />
@@ -37,6 +36,12 @@ export default function FirewallNode({ data }: { data: FirewallNodeData }) {
             {hop.srcintf} → {hop.egress ?? '?'}
           </p>
         </div>
+        {hop.after_deny && (
+          <span title={de.hop.downstreamHint}
+            className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-medium text-slate-400">
+            {de.hop.downstream}
+          </span>
+        )}
         <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-medium text-slate-300">
           {hop.vdom}
         </span>
