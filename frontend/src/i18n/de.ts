@@ -1,6 +1,6 @@
 // Zentrale deutsche UI-Strings (Single-Language-App).
 export const de = {
-  appTitle: 'FW Path Tracker',
+  appTitle: 'A38',
   tabs: { tracker: 'Tracker', history: 'Verlauf', settings: 'Einstellungen' },
   login: {
     title: 'Anmelden',

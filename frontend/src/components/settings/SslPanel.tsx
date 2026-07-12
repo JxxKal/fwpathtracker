@@ -15,7 +15,7 @@ export default function SslPanel() {
   const [hostname, setHostname] = useState('');
   const [mode, setMode] = useState<Mode>('self-signed');
   const [fmt, setFmt] = useState<UploadFormat>('pem');
-  const [ss, setSs] = useState({ common_name: '', days: 365, country: 'DE', org: 'FW Path Tracker' });
+  const [ss, setSs] = useState({ common_name: '', days: 365, country: 'DE', org: 'A38' });
   const [pfxPassword, setPfxPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
