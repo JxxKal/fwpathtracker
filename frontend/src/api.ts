@@ -2,7 +2,7 @@
 import * as demo from './demo/api';
 import { isDemoMode } from './demo/mode';
 import type {
-  InventorySummary, SearchHit, Session, SyncStatus,
+  InventorySummary, SamlConfig, SearchHit, Session, SslStatus, SyncStatus,
   TraceHistoryEntry, TraceRequest, TraceResult, UserEntry,
 } from './types';
 
@@ -141,4 +141,89 @@ export async function createUser(
 export async function deleteUser(id: number): Promise<void> {
   if (isDemoMode()) return;
   await request(`/api/users/${id}`, { method: 'DELETE' });
+}
+
+// ── SAML / SSO ──────────────────────────────────────────────────────────────────
+
+const SAML_DEFAULTS: SamlConfig = {
+  enabled: false,
+  idp_entity_id: '', idp_sso_url: '', idp_slo_url: '', idp_x509_cert: '',
+  sp_entity_id: '', acs_url: '', slo_url: '',
+  attribute_username: 'uid', attribute_email: 'email',
+  attribute_display_name: 'displayName', default_role: 'viewer',
+};
+
+export async function fetchSamlConfig(): Promise<SamlConfig> {
+  if (isDemoMode()) return SAML_DEFAULTS;
+  const v = await getConfig('saml');
+  return { ...SAML_DEFAULTS, ...(v as Partial<SamlConfig>) };
+}
+
+export async function saveSamlConfig(cfg: SamlConfig): Promise<SamlConfig> {
+  await patchConfig('saml', cfg as unknown as Record<string, unknown>);
+  return cfg;
+}
+
+// Öffentlich (kein JWT) — steuert den SSO-Button auf der Login-Seite.
+export async function samlEnabled(): Promise<{ enabled: boolean; login_url: string }> {
+  try {
+    const res = await fetch('/api/auth/saml/enabled');
+    if (!res.ok) return { enabled: false, login_url: '/api/auth/saml/login' };
+    return await res.json();
+  } catch {
+    return { enabled: false, login_url: '/api/auth/saml/login' };
+  }
+}
+
+// ── SSL / TLS ───────────────────────────────────────────────────────────────────
+
+export async function fetchSslStatus(): Promise<SslStatus> {
+  if (isDemoMode()) return { mode: 'none', active: false };
+  return request('/api/ssl/status');
+}
+
+export async function sslSelfSigned(
+  body: { common_name: string; days: number; country?: string; org?: string },
+): Promise<SslStatus> {
+  return request('/api/ssl/self-signed', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export async function getSslHostname(): Promise<{ hostname: string }> {
+  if (isDemoMode()) return { hostname: '' };
+  return request('/api/ssl/hostname');
+}
+
+export async function setSslHostname(hostname: string): Promise<{ hostname: string }> {
+  return request('/api/ssl/hostname', { method: 'POST', body: JSON.stringify({ hostname }) });
+}
+
+// Uploads gehen an FormData vorbei am JSON-request-Helper (multipart + Bearer manuell).
+async function uploadForm(path: string, fd: FormData): Promise<SslStatus> {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: fd,
+  });
+  if (res.status === 401) { setToken(null); window.dispatchEvent(new Event('fwpt-logout')); }
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { const b = await res.json(); detail = typeof b.detail === 'string' ? b.detail : JSON.stringify(b.detail); } catch { /* */ }
+    throw new ApiError(res.status, detail);
+  }
+  return res.json();
+}
+
+export async function uploadSslCert(cert: File, key: File, ca?: File | null): Promise<SslStatus> {
+  const fd = new FormData();
+  fd.append('cert', cert);
+  fd.append('key', key);
+  if (ca) fd.append('ca', ca);
+  return uploadForm('/api/ssl/upload', fd);
+}
+
+export async function uploadSslPfx(pfx: File, password: string): Promise<SslStatus> {
+  const fd = new FormData();
+  fd.append('pfx', pfx);
+  fd.append('password', password);
+  return uploadForm('/api/ssl/upload-pfx', fd);
 }

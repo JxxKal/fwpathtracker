@@ -7,6 +7,10 @@ COPY . .
 RUN npm run build
 
 FROM nginx:1.27-alpine
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# nginx.conf wird zur Laufzeit vom Entrypoint generiert (HTTP/HTTPS je nach
+# /certs). Die statische Datei bleibt nur als Referenz im Repo.
 COPY --from=build /app/dist /usr/share/nginx/html
-EXPOSE 80
+COPY docker-entrypoint.sh /docker-entrypoint-fwpt.sh
+RUN chmod +x /docker-entrypoint-fwpt.sh
+EXPOSE 80 443
+ENTRYPOINT ["/docker-entrypoint-fwpt.sh"]

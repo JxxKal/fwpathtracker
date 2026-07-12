@@ -6,3 +6,6 @@ python-jose[cryptography]==3.3.*
 bcrypt==4.2.*
 cachetools==5.5.*
 dnspython==2.6.*
+cryptography==43.*        # SSL-Cert-Generierung/-Parsing (ssl.py)
+python-multipart==0.0.*   # File-Uploads + SAML-ACS-Formdaten
+python3-saml==1.16.*      # SAML 2.0 SSO (onelogin)

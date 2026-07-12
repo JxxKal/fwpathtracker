@@ -135,3 +135,28 @@ export interface Session {
   username: string;
   role: 'admin' | 'viewer';
 }
+
+export interface SamlConfig {
+  enabled: boolean;
+  idp_entity_id: string;
+  idp_sso_url: string;
+  idp_slo_url: string;
+  idp_x509_cert: string;
+  sp_entity_id: string;
+  acs_url: string;
+  slo_url: string;
+  attribute_username: string;
+  attribute_email: string;
+  attribute_display_name: string;
+  default_role: 'admin' | 'viewer';
+}
+
+export interface SslStatus {
+  mode: 'none' | 'upload' | 'self-signed' | 'acme';
+  active: boolean;
+  subject?: string | null;
+  issuer?: string | null;
+  not_after?: string | null;
+  domains?: string[] | null;
+  hostname?: string | null;
+}

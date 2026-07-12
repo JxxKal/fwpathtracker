@@ -1,6 +1,6 @@
-import { Route, ShieldCheck } from 'lucide-react';
-import { FormEvent, useState } from 'react';
-import { login } from '../api';
+import { KeyRound, Route, ShieldCheck } from 'lucide-react';
+import { FormEvent, useEffect, useState } from 'react';
+import { login, samlEnabled } from '../api';
 import { de } from '../i18n/de';
 import type { Session } from '../types';
 
@@ -9,6 +9,9 @@ export default function LoginPage({ onLogin }: { onLogin: (s: Session) => void }
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [ssoOn, setSsoOn] = useState(false);
+
+  useEffect(() => { samlEnabled().then((r) => setSsoOn(r.enabled)).catch(() => {}); }, []);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -43,6 +46,20 @@ export default function LoginPage({ onLogin }: { onLogin: (s: Session) => void }
           <ShieldCheck size={16} />
           {de.login.submit}
         </button>
+        {ssoOn && (
+          <>
+            <div className="flex items-center gap-3 text-[11px] uppercase tracking-wide text-slate-600">
+              <span className="h-px flex-1 bg-slate-800" />
+              {de.login.or}
+              <span className="h-px flex-1 bg-slate-800" />
+            </div>
+            <a href="/api/auth/saml/login"
+              className="flex w-full items-center justify-center gap-2 rounded-md border border-purple-700/60 px-3 py-2 text-sm text-purple-300 hover:bg-purple-950/40">
+              <KeyRound size={16} />
+              {de.login.saml}
+            </a>
+          </>
+        )}
       </form>
     </div>
   );

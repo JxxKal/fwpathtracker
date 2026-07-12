@@ -8,6 +8,8 @@ export const de = {
     password: 'Passwort',
     submit: 'Anmelden',
     failed: 'Anmeldung fehlgeschlagen',
+    or: 'oder',
+    saml: 'Mit SSO anmelden',
   },
   trace: {
     src: 'Quelle (IP oder Name)',
@@ -72,6 +74,8 @@ export const de = {
     dns: 'DNS',
     sites: 'Standorte',
     users: 'Benutzer',
+    ssl: 'SSL / TLS-Zertifikat',
+    saml: 'SAML / SSO',
     save: 'Speichern',
     saved: 'Gespeichert.',
     test: 'Verbindung testen',

@@ -24,7 +24,7 @@ from inventory.sync import SyncManager, load_inventory
 from resolver.chain import ResolverChain
 from routers import auth as auth_router
 from routers import config as config_router
-from routers import fmg_admin, itop_admin, search, trace, users
+from routers import fmg_admin, itop_admin, saml, search, ssl, trace, users
 from routers.auth import hash_password
 from routers.config import read_config
 
@@ -109,6 +109,8 @@ app.include_router(fmg_admin.router)
 app.include_router(itop_admin.router)
 app.include_router(search.router)
 app.include_router(trace.router)
+app.include_router(ssl.router)     # SSL/TLS-Cert + Hostname (Endpoints admin-gated)
+app.include_router(saml.router)    # SAML/SSO (public — Login-Flow)
 
 
 @app.get("/api/health")

@@ -10,7 +10,9 @@ import TraceForm from './components/TraceForm';
 import DnsPanel from './components/settings/DnsPanel';
 import FmgPanel from './components/settings/FmgPanel';
 import ItopPanel from './components/settings/ItopPanel';
+import SamlPanel from './components/settings/SamlPanel';
 import SitesPanel from './components/settings/SitesPanel';
+import SslPanel from './components/settings/SslPanel';
 import UsersPanel from './components/settings/UsersPanel';
 import { de } from './i18n/de';
 import type { Hop, Session, TraceRequest, TraceResult } from './types';
@@ -42,6 +44,22 @@ export default function App() {
     const onLogout = () => logout();
     window.addEventListener('fwpt-logout', onLogout);
     return () => window.removeEventListener('fwpt-logout', onLogout);
+  }, []);
+
+  // SAML-Callback: /?saml_token=<JWT> nach dem ACS-Redirect. Token dekodieren
+  // (username/role stecken im Payload), als Session speichern, URL bereinigen.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const samlToken = params.get('saml_token');
+    if (!samlToken) return;
+    try {
+      const payload = JSON.parse(atob(samlToken.split('.')[1])) as { username: string; role: 'admin' | 'viewer' };
+      const s: Session = { token: samlToken, username: payload.username, role: payload.role };
+      setToken(samlToken);
+      localStorage.setItem('fwpt-session', JSON.stringify(s));
+      setSession(s);
+    } catch { /* ungültiges Token ignorieren */ }
+    window.history.replaceState({}, '', window.location.pathname);
   }, []);
 
   function onLogin(s: Session) {
@@ -158,6 +176,8 @@ export default function App() {
             <DnsPanel />
             <SitesPanel />
             <UsersPanel />
+            <SslPanel />
+            <SamlPanel />
           </>
         )}
       </main>
