@@ -16,19 +16,20 @@ log = logging.getLogger("resolver.dns")
 _TIMEOUT_S = 3.0
 
 
-def _resolver(dns_cfg: dict) -> dns.asyncresolver.Resolver:
+def _resolver(dns_cfg: dict, timeout_s: float = _TIMEOUT_S) -> dns.asyncresolver.Resolver:
     res = dns.asyncresolver.Resolver()
     servers = [s for s in (dns_cfg.get("resolvers") or []) if s]
     if servers:
         for s in servers:
             guard_egress_host(s, "DNS-Resolver")
         res.nameservers = servers
-    res.lifetime = _TIMEOUT_S
+    res.lifetime = timeout_s
     return res
 
 
-async def resolve_name(dns_cfg: dict, name: str) -> dict | None:
-    res = _resolver(dns_cfg)
+async def resolve_name(dns_cfg: dict, name: str,
+                       timeout_s: float = _TIMEOUT_S) -> dict | None:
+    res = _resolver(dns_cfg, timeout_s)
     domains = [""] + [d for d in (dns_cfg.get("search_domains") or []) if d]
     for domain in domains:
         fqdn = f"{name}.{domain}".rstrip(".") if domain else name

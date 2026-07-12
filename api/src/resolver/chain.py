@@ -85,12 +85,27 @@ class ResolverChain:
         return names
 
     async def search(self, q: str, inv: Inventory, itop_cfg: dict,
-                     limit: int = 10) -> list[dict]:
-        """Autocomplete: FMG-Objektnamen + iTop-Hosts (DNS nur bei Submit)."""
+                     dns_cfg: dict | None = None, limit: int = 10) -> list[dict]:
+        """Autocomplete-Identifizierung in der Reihenfolge FMG → iTop → DNS.
+
+        FMG-Objekte und iTop-Hosts sind listenbasiert teilstring-durchsuchbar.
+        DNS kann nicht 'suchen', nur einen vollständigen Namen auflösen — daher
+        erst als Fallback, wenn FMG+iTop nichts liefern und die Eingabe wie ein
+        auflösbarer Hostname aussieht. Kurzer Timeout, damit das Tippen flüssig
+        bleibt.
+        """
         out = fmg_source.search(inv, q, limit)
         if itop_cfg.get("base_url") and len(out) < limit:
             try:
                 out += await self.itop.search(itop_cfg, q, limit - len(out))
             except Exception as exc:
                 log.warning("iTop-Suche '%s': %s", q, exc)
+        if not out and dns_cfg is not None and len(q.strip()) >= 4 and not is_ip(q):
+            try:
+                hit = await dns_source.resolve_name(dns_cfg, q.strip(), timeout_s=1.5)
+                if hit:
+                    out.append({"name": hit["name"], "ip": hit["ip"],
+                                "type": "dns", "provenance": "dns"})
+            except Exception as exc:
+                log.warning("DNS-Suche '%s': %s", q, exc)
         return out

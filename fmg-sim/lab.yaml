@@ -97,6 +97,13 @@ objects:
       srv-db:     { subnet: 10.2.1.30/32 }
       net-site-a: { subnet: 10.1.0.0/20 }
       net-site-b: { subnet: 10.2.0.0/20 }
+      # Realistische OT-Host-Objekte (Namensschema Standort-Zone-Ebene-Gerät).
+      # Suche z.B. "svo3101" → findet WD-OT-L3-SVO3101 (Teilstring).
+      WD-OT-L3-SVO3101: { subnet: 10.2.1.31/32 }   # Server, Standort B
+      WD-OT-L3-SVO3102: { subnet: 10.2.1.32/32 }
+      WD-OT-L3-SVO3110: { subnet: 10.2.1.40/32 }
+      WD-OT-HMI-0007:   { subnet: 10.1.8.20/32 }   # HMI, Standort A DMZ
+      WS-IT-CLT-0042:   { subnet: 10.1.1.10/32 }   # Client, Standort A
     services:
       HTTPS: { protocol: TCP, tcp: [443] }
       SSH:   { protocol: TCP, tcp: [22] }

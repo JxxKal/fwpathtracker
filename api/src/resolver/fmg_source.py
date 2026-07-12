@@ -29,12 +29,20 @@ def resolve_ip(inv: Inventory, ip: str) -> dict | None:
 
 
 def search(inv: Inventory, q: str, limit: int = 10) -> list[dict]:
+    """Teilstring-Suche über FMG-Adress-Objekte (Host /32 + FQDN).
+
+    Ranking: exakter Name < Präfix < Teilstring, danach alphabetisch — so steht
+    z.B. bei Suche 'svo3101' das Objekt 'WD-OT-L3-SVO3101' (Teilstring) sinnvoll
+    einsortiert, ein exakt gleichnamiges Objekt aber immer oben.
+    """
     needle = q.strip().lower()
-    out = []
+    scored: list[tuple[int, str, dict]] = []
     for adom in inv.adoms:
         for entry in inv.object_names(adom):
-            if needle in entry["name"].lower():
-                out.append({**entry, "provenance": "fmg"})
-                if len(out) >= limit:
-                    return out
-    return out
+            name_l = entry["name"].lower()
+            if needle not in name_l:
+                continue
+            rank = 0 if name_l == needle else 1 if name_l.startswith(needle) else 2
+            scored.append((rank, entry["name"], {**entry, "provenance": "fmg"}))
+    scored.sort(key=lambda t: (t[0], t[1].lower()))
+    return [entry for _, _, entry in scored[:limit]]

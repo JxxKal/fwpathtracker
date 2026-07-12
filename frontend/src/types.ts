@@ -104,6 +104,7 @@ export interface SearchHit {
   name: string;
   ip?: string | null;
   fqdn?: string | null;
+  type?: string | null;
   provenance: Provenance;
   adom?: string;
 }

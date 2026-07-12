@@ -296,14 +296,20 @@ class Inventory:
         return out
 
     def object_names(self, adom: str) -> list[dict]:
-        """Namensindex für Autocomplete: Adress-Objekte mit /32-Subnet o. FQDN."""
+        """Namensindex für Autocomplete: Adress-Objekte mit /32-Subnet o. FQDN.
+
+        Nur eindeutig auf einen Endpunkt auflösbare Objekte (Host /32, FQDN) —
+        Subnet-/Range-Objekte sind keine sinnvolle Trace-Quelle/-Ziel.
+        """
         out = []
         for name, obj in (self.addresses.get(adom) or {}).items():
             net = parse_subnet(obj.get("subnet"))
             ip = str(net.network_address) if net and net.prefixlen == 32 else None
             fqdn = obj.get("fqdn")
             if ip or fqdn:
-                out.append({"name": name, "ip": ip, "fqdn": fqdn, "adom": adom})
+                out.append({"name": name, "ip": ip, "fqdn": fqdn,
+                            "type": obj.get("type") or ("fqdn" if fqdn else "ipmask"),
+                            "adom": adom})
         return out
 
     def build_prefix_table(self, site_overrides: list[dict] | None = None) -> PrefixTable:

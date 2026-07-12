@@ -32,6 +32,53 @@ def test_fmg_search(inventory):
     assert hits and hits[0]["name"] == "srv-db" and hits[0]["provenance"] == "fmg"
 
 
+def _ot_inventory():
+    from inventory.store import Inventory
+    rows = [
+        {"adom": "corp", "kind": "address", "key": n,
+         "data": {"name": n, "type": "ipmask", "subnet": [ip, "255.255.255.255"]}}
+        for n, ip in [
+            ("SVO3101", "10.2.1.10"),           # exakter Treffer für "svo3101"
+            ("SVO3101-MGMT", "10.2.1.11"),      # Präfix-Treffer
+            ("WD-OT-L3-SVO3101", "10.2.1.31"),  # Teilstring-Treffer
+            ("net-x", "10.9.0.0"),              # kein /32 → nicht durchsuchbar
+        ]
+    ]
+    rows[-1]["data"]["subnet"] = ["10.9.0.0", "255.255.0.0"]
+    return Inventory.build(rows)
+
+
+def test_fmg_search_substring_and_ranking():
+    inv = _ot_inventory()
+    # Teilstring: 'svo3101' findet das lange OT-Objekt (Anforderung)
+    names = [h["name"] for h in fmg_source.search(inv, "svo3101")]
+    assert "WD-OT-L3-SVO3101" in names
+    # Ranking: exakt < Präfix < Teilstring
+    assert names == ["SVO3101", "SVO3101-MGMT", "WD-OT-L3-SVO3101"]
+    # Subnet-Objekt (/16) ist keine Trace-fähige Quelle → nicht in der Suche
+    assert all(h["name"] != "net-x" for h in fmg_source.search(inv, "net"))
+
+
+async def test_chain_search_dns_fallback_only_when_empty(monkeypatch):
+    inv = _ot_inventory()
+    chain = ResolverChain()
+
+    called = {"dns": 0}
+
+    async def fake_a(cfg, name, timeout_s=3.0):
+        called["dns"] += 1
+        return {"ip": "10.5.5.5", "name": f"{name}.corp", "provenance": "dns"}
+    monkeypatch.setattr(dns_source, "resolve_name", fake_a)
+
+    # FMG trifft → DNS-Fallback bleibt aus
+    hits = await chain.search("svo3101", inv, {}, {"resolvers": []})
+    assert called["dns"] == 0 and hits[0]["provenance"] == "fmg"
+
+    # Kein FMG-Treffer + dns_cfg → DNS identifiziert als letzter Schritt
+    hits = await chain.search("host-nirgends", inv, {}, {"resolvers": []})
+    assert called["dns"] == 1 and hits and hits[0]["provenance"] == "dns"
+
+
 async def test_chain_ip_input_collects_names(inventory, monkeypatch):
     chain = ResolverChain()
 

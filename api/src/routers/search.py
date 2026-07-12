@@ -18,7 +18,8 @@ async def search(
 ) -> list[dict]:
     state = request.app.state
     itop_cfg = await read_config("itop")
-    return await state.resolver.search(q, state.inventory, itop_cfg)
+    dns_cfg = await read_config("dns")
+    return await state.resolver.search(q, state.inventory, itop_cfg, dns_cfg)
 
 
 class ResolveRequest(BaseModel):
