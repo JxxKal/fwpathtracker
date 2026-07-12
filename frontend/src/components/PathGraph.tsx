@@ -1,5 +1,5 @@
-import { Background, Edge, Node, ReactFlow } from '@xyflow/react';
-import { useMemo } from 'react';
+import { Background, Edge, Node, ReactFlow, ReactFlowProvider, useReactFlow } from '@xyflow/react';
+import { useEffect, useMemo } from 'react';
 import { de } from '../i18n/de';
 import type { Hop, TraceResult } from '../types';
 import FirewallNode from './nodes/FirewallNode';
@@ -23,7 +23,7 @@ const HOST_W = 176;
 const FW_W = 288;
 const GAP = 90;
 
-export default function PathGraph({ result, onSuggest }: Props) {
+function PathGraphInner({ result, onSuggest }: Props) {
   const { nodes, edges } = useMemo(() => {
     const nodes: Node[] = [];
     const edges: Edge[] = [];
@@ -83,21 +83,40 @@ export default function PathGraph({ result, onSuggest }: Props) {
     return { nodes, edges };
   }, [result, onSuggest]);
 
+  // fitView als Prop greift nur beim ersten Mount. Bei jedem neuen Trace (und
+  // nach dem Auf-/Zuklappen der Kandidaten-Regeln) die Ansicht neu einpassen,
+  // sonst bleibt der Graph aus dem Sichtfeld gescrollt.
+  const { fitView } = useReactFlow();
+  useEffect(() => {
+    const raf = requestAnimationFrame(() =>
+      fitView({ padding: 0.18, duration: 200, maxZoom: 1 }));
+    return () => cancelAnimationFrame(raf);
+  }, [result, fitView]);
+
+  return (
+    <ReactFlow
+      nodes={nodes}
+      edges={edges}
+      nodeTypes={nodeTypes}
+      fitView
+      fitViewOptions={{ padding: 0.18, maxZoom: 1 }}
+      proOptions={{ hideAttribution: true }}
+      nodesDraggable={false}
+      nodesConnectable={false}
+      elementsSelectable={false}
+      colorMode="dark"
+    >
+      <Background color="#1e293b" gap={24} />
+    </ReactFlow>
+  );
+}
+
+export default function PathGraph(props: Props) {
   return (
     <div className="h-[420px] rounded-lg border border-slate-800 bg-slate-950">
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        fitView
-        proOptions={{ hideAttribution: true }}
-        nodesDraggable={false}
-        nodesConnectable={false}
-        elementsSelectable={false}
-        colorMode="dark"
-      >
-        <Background color="#1e293b" gap={24} />
-      </ReactFlow>
+      <ReactFlowProvider>
+        <PathGraphInner {...props} />
+      </ReactFlowProvider>
     </div>
   );
 }

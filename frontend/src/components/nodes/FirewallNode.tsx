@@ -72,7 +72,7 @@ export default function FirewallNode({ data }: { data: FirewallNodeData }) {
         <div className="flex items-center gap-2 pt-1">
           <button
             type="button"
-            className="flex items-center gap-1 text-slate-400 hover:text-cyan-400"
+            className="nodrag nopan pointer-events-auto flex items-center gap-1 text-slate-400 hover:text-cyan-400"
             onClick={() => setExpanded(!expanded)}
           >
             {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
@@ -81,7 +81,7 @@ export default function FirewallNode({ data }: { data: FirewallNodeData }) {
           {hop.verdict === 'DENY' && hop.suggestion && (
             <button
               type="button"
-              className="ml-auto rounded bg-amber-900/60 px-2 py-0.5 text-[11px] font-medium text-amber-300 hover:bg-amber-800/60"
+              className="nodrag nopan pointer-events-auto ml-auto rounded bg-amber-900/60 px-2 py-0.5 text-[11px] font-medium text-amber-300 hover:bg-amber-800/60"
               onClick={() => onSuggest(hop)}
             >
               {de.hop.suggestion}
@@ -91,7 +91,7 @@ export default function FirewallNode({ data }: { data: FirewallNodeData }) {
       </div>
 
       {expanded && (
-        <div className="border-t border-slate-800">
+        <div className="nodrag nopan pointer-events-auto border-t border-slate-800">
           <RulesetTable candidates={hop.candidates} />
         </div>
       )}
