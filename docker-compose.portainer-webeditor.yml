@@ -1,0 +1,123 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# fw-path-tracker – Portainer WEB-EDITOR-Stack (Build hinter Corporate-Proxy)
+#
+# Voraussetzung: Repo liegt auf dem Docker-Host unter  /opt/a38/fwpathtracker
+#   (anderer Pfad? → Env-Var REPO_ROOT setzen).
+#
+# Deploy:  Portainer → Stacks → Add stack → "Web editor" → diesen Text einfügen.
+#   Unter "Environment variables" setzen:
+#     REPO_ROOT    = /opt/a38/fwpathtracker      (nur falls abweichend)
+#     HTTP_PROXY   = http://PROXYHOST:PORT
+#     HTTPS_PROXY  = http://PROXYHOST:PORT
+#     NO_PROXY     = localhost,127.0.0.1,::1,db,api,frontend,fmg-sim,.local
+#     POSTGRES_PASSWORD / JWT_SECRET / ADMIN_PASSWORD   (Secrets)
+#
+# ── ZWEI PROXY-EBENEN ─────────────────────────────────────────────────────────
+#   • RUN-Schritte (apt/pip/npm)  → build.args unten (dieser Stack)            ✔
+#   • FROM-Pull der Base-Images   → macht der Docker-DAEMON, NICHT der Stack.
+#     EINMALIG auf dem Host  /etc/docker/daemon.json:
+#        { "proxies": { "http-proxy": "http://PROXYHOST:PORT",
+#                       "https-proxy": "http://PROXYHOST:PORT",
+#                       "no-proxy": "localhost,127.0.0.1,::1" } }
+#     danach:  systemctl restart docker
+#   HTTP_PROXY/HTTPS_PROXY/NO_PROXY sind vordefinierte Build-Args → wirken in
+#   RUN ohne ARG-Deklaration und landen NICHT im Image. Default-leer = kein Proxy.
+#   Bewusst KEINE Proxy-ENV zur Laufzeit (Container reden nur ins Kundennetz).
+# ══════════════════════════════════════════════════════════════════════════════
+
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
+x-proxy-args: &proxy-args
+  HTTP_PROXY: ${HTTP_PROXY:-}
+  HTTPS_PROXY: ${HTTPS_PROXY:-}
+  NO_PROXY: ${NO_PROXY:-}
+  http_proxy: ${HTTP_PROXY:-}
+  https_proxy: ${HTTPS_PROXY:-}
+  no_proxy: ${NO_PROXY:-}
+
+volumes:
+  db-data:
+  fmg-fixtures:
+  certs:
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: fwpt-db
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      POSTGRES_DB: fwtracker
+      POSTGRES_USER: fwtracker
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD muss gesetzt sein}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fwtracker -d fwtracker"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ${REPO_ROOT:-/opt/a38/fwpathtracker}/api
+      args: *proxy-args
+    container_name: fwpt-api
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET muss gesetzt sein}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+      FMG_RECORD_FIXTURES: ${FMG_RECORD_FIXTURES:-0}
+    volumes:
+      - ${REPO_ROOT:-/opt/a38/fwpathtracker}/migrations:/migrations:ro
+      - fmg-fixtures:/fixtures
+      - certs:/certs
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=5)\""]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  frontend:
+    build:
+      context: ${REPO_ROOT:-/opt/a38/fwpathtracker}/frontend
+      args: *proxy-args
+    container_name: fwpt-frontend
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      api:
+        condition: service_healthy
+    volumes:
+      - certs:/certs:ro
+    ports:
+      - "${HTTP_PORT:-8766}:80"
+      - "${HTTPS_PORT:-8443}:443"
+
+  fmg-sim:
+    build:
+      context: ${REPO_ROOT:-/opt/a38/fwpathtracker}/fmg-sim
+      args: *proxy-args
+    container_name: fwpt-fmg-sim
+    restart: unless-stopped
+    logging: *default-logging
+    profiles: ["sim"]
+    volumes:
+      - ${REPO_ROOT:-/opt/a38/fwpathtracker}/fmg-sim/lab.yaml:/app/lab.yaml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request,ssl; urllib.request.urlopen('https://localhost/healthz', context=ssl._create_unverified_context(), timeout=5)\""]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
