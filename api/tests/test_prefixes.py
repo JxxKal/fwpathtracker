@@ -1,7 +1,10 @@
 """PrefixTable: LPM, Quellen-Priorität, Default-Routen-Ausschluss."""
 from __future__ import annotations
 
+import ipaddress
+
 from inventory.prefixes import PrefixTable
+from inventory.store import Inventory
 
 
 def test_longest_prefix_wins():
@@ -62,6 +65,25 @@ def test_lookup_owner_prefers_connected_over_specific_static():
     only_static.add("10.9.0.0/24", "static", "fw-x", "root", "lan")
     assert only_static.lookup_owner("10.9.0.5").device == "fw-x"
     assert only_static.lookup_owner("192.168.1.1") is None
+
+
+def test_secondary_ip_becomes_connected():
+    """Secondary-IPs eines Interfaces landen als connected-Netz im Inventory und
+    in der PrefixTable — sonst fehlt das Ziel-/Quell-Netz (Feld-Fall WD-OT-HQ)."""
+    rows = [
+        {"adom": "corp", "kind": "device", "key": "fw-s",
+         "data": {"name": "fw-s", "vdom": [{"name": "root"}]}},
+        {"adom": "corp", "kind": "interface", "key": "fw-s", "data": [
+            {"name": "port1", "ip": ["10.7.0.1", "255.255.255.0"], "vdom": ["root"],
+             "secondaryip": [{"ip": ["10.7.9.1", "255.255.255.128"]}]},
+        ]},
+    ]
+    inv = Inventory.build(rows, synced_at="2026-07-13T00:00:00+00:00")
+    nets = {n for n, _ in inv.connected_networks("fw-s", "root")}
+    assert ipaddress.IPv4Network("10.7.0.0/24") in nets
+    assert ipaddress.IPv4Network("10.7.9.0/25") in nets  # Secondary
+    owner = inv.build_prefix_table().lookup_owner("10.7.9.20")
+    assert (owner.device, owner.source) == ("fw-s", "connected")
 
 
 def test_site_override_wins(inventory):

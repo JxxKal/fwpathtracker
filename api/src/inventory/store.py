@@ -124,9 +124,17 @@ class Inventory:
                 iname = intf.get("name")
                 if not iname:
                     continue
+                # Secondary-IPs (mehrere Subnetze pro Interface, z.B. HQ-Interfaces)
+                # — sonst fehlt deren connected-Netz im Inventory.
+                secondaries = []
+                for sec in _as_list(intf.get("secondaryip")):
+                    sip = parse_interface_ip(sec.get("ip") if isinstance(sec, dict) else sec)
+                    if sip is not None:
+                        secondaries.append(sip)
                 table[iname] = {
                     "name": iname,
                     "ip": parse_interface_ip(intf.get("ip")),
+                    "secondary_ips": secondaries,
                     "vdom": _first(intf.get("vdom")) or "root",
                     "type": intf.get("type"),
                 }
@@ -204,9 +212,12 @@ class Inventory:
     def connected_networks(self, device: str, vdom: str) -> list[tuple[ipaddress.IPv4Network, str]]:
         out = []
         for intf in (self.interfaces.get(device) or {}).values():
-            if intf["vdom"] != vdom or intf["ip"] is None:
+            if intf["vdom"] != vdom:
                 continue
-            out.append((intf["ip"].network, intf["name"]))
+            if intf["ip"] is not None:
+                out.append((intf["ip"].network, intf["name"]))
+            for sip in intf.get("secondary_ips", []):   # Secondary-IPs mitnehmen
+                out.append((sip.network, intf["name"]))
         return out
 
     def interface(self, device: str, name: str) -> dict | None:

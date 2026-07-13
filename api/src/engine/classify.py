@@ -71,9 +71,12 @@ def classify_egress(inv: Inventory, prefixes: PrefixTable, overlay_pattern: str,
     dst = ipaddress.IPv4Address(dst_ip)
     intf_info = inv.interface(device, egress_intf)
 
-    # 1. LOCAL: connected Subnet des Egress-Interfaces enthält das Ziel
-    if intf_info and intf_info.get("ip") is not None and dst in intf_info["ip"].network:
-        return Classification(egress_class="LOCAL")
+    # 1. LOCAL: connected Subnet (inkl. Secondary-IPs) des Egress enthält das Ziel
+    if intf_info is not None:
+        nets = [intf_info["ip"].network] if intf_info.get("ip") is not None else []
+        nets += [s.network for s in intf_info.get("secondary_ips", [])]
+        if any(dst in n for n in nets):
+            return Classification(egress_class="LOCAL")
 
     # 2. VDOM-LINK
     peer = inv.vdom_link_peer(device, egress_intf)
