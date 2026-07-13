@@ -219,6 +219,30 @@ async def test_cross_site_multi_vdom_router_then_protect(inventory, prefixes):
     assert aggregate_verdict(hops) == "DENY"
 
 
+async def test_multi_vdom_entry_prefers_sdwan_vdom(inventory, prefixes):
+    """Eintritts-VDOM bei Multi-VDOM-Ziel: der Lookup MUSS im VDOM laufen, an dem
+    das SD-WAN/Overlay terminiert ('Router'), NICHT im ersten VDOM mit irgendeiner
+    Route zur Quelle ('root' via L2-Transfer0). Sonst Lookup im falschen VDOM →
+    fälschlich Deny. Regression zum Feld-Report (fw-c: Router/root/L3)."""
+    client, t = make_client()
+    add_route(t, "fw-a", "root", "10.3.9.20", "wan", gateway="203.0.113.2")
+    add_policy_lookup(t, "fw-a", "root",
+                      tcp_params("lan1", "10.1.1.10", "10.3.9.20", 443), 100)
+    # Ziel-FW: Eintritt über sdwan-c (Router-VDOM) — Reverse-Route zur Quelle dort,
+    # KEINE Fixture für 'root' nötig (Overlay-VDOM wird gezielt gewählt).
+    add_route(t, "fw-c", "Router", "10.1.1.10", "sdwan-c")
+    add_route(t, "fw-c", "Router", "10.3.9.20", "lan-c")
+    add_policy_lookup(t, "fw-c", "Router",
+                      tcp_params("sdwan-c", "10.1.1.10", "10.3.9.20", 443), 400)
+
+    hops = await _trace(inventory, prefixes, client, "10.1.1.10", "10.3.9.20")
+    assert len(hops) == 2
+    assert (hops[1].device, hops[1].vdom, hops[1].srcintf) == ("fw-c", "Router", "sdwan-c")
+    assert hops[1].egress_class == "LOCAL"
+    assert hops[1].verdict == "ALLOW"
+    assert aggregate_verdict(hops) == "ALLOW"
+
+
 async def test_policy_zero_is_implicit_deny(inventory, prefixes):
     """FortiOS policy-lookup mit policy_id 0 = implizites Deny (keine Regel greift
     live, z.B. Policy-Package im FortiManager nicht installiert) → DENY + Hinweis,

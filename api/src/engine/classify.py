@@ -10,9 +10,11 @@ Entscheidet, wie es nach einem Hop weitergeht. Reihenfolge der Prüfungen:
                  (b) anderer VDOM/andere FW im selben Transit-Segment.
                  Selbes Gerät → VDOM_LINK (172.16er Inter-VDOM, geräte-lokal
                  matchen!), anderes Gerät → ROUTED. Fallback: bekanntes Ziel-
-                 Präfix via PrefixTable; die Path-Engine wählt dort den EINTRITTS-
-                 VDOM (Router-VDOM) per Reverse-Route, damit beide VDOM-Policies
-                 (Router- und Schutz-VDOM) geprüft werden.
+                 Präfix via PrefixTable; die Path-Engine wählt dort als EINTRITTS-
+                 VDOM den, an dem SD-WAN/Overlay terminiert (Router-VDOM), NICHT den
+                 erstbesten mit Route zur Quelle — sonst Lookup im falschen VDOM.
+                 Danach ketten die VDOM-Links weiter, sodass alle durchlaufenen
+                 VDOM-Policies geprüft werden.
   5. DEFAULT   – Ziel gehört keinem gemanagten Gerät → Richtung Internet/unbekannt
 """
 from __future__ import annotations

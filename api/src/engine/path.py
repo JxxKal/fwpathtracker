@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import re
 
 from engine.classify import classify_egress
 from engine.verdict import Candidate, Hop
@@ -91,18 +92,34 @@ def cached_route(inv: Inventory, device: str, vdom: str, dst_ip: str) -> dict | 
     return best[1] if best else None
 
 
+def _overlay_vdom(inv: Inventory, device: str, overlay_re: re.Pattern) -> str | None:
+    """VDOM des Geräts, das ein Overlay/SD-WAN-Interface terminiert — der Router-/
+    Eintritts-VDOM, an dem inter-site Traffic ankommt. None, wenn keins vorhanden
+    ODER über mehrere VDOMs verteilt (dann Fallback auf die Reverse-Route-Heuristik).
+    """
+    vdoms = {info["vdom"]
+             for name, info in (inv.interfaces.get(device) or {}).items()
+             if info.get("type") in ("tunnel", "ipsec") or overlay_re.search(name)}
+    return next(iter(vdoms)) if len(vdoms) == 1 else None
+
+
 async def _resolve_ingress(client: FmgClient, inv: Inventory, adom: str | None,
-                           device: str, vdom: str | None,
-                           src_ip: str) -> tuple[str | None, str | None]:
+                           device: str, vdom: str | None, src_ip: str,
+                           overlay_re: re.Pattern) -> tuple[str | None, str | None]:
     """Eintritts-(VDOM, Interface) einer Firewall Richtung Quelle bestimmen.
 
     vdom gesetzt → Reverse-Route auf diesem VDOM → dessen Interface zur Quelle.
-    vdom None    → über alle VDOMs des Geräts den EINTRITTS-/Router-VDOM wählen:
-                   den, dessen Weg zur Quelle NICHT über einen VDOM-Link geht
-                   (dort terminiert die Site das SD-WAN/WAN). So wird auch dessen
-                   Policy geprüft, bevor es per VDOM-Link zum Schutz-VDOM geht.
+    vdom None    → Eintritts-VDOM = der, an dem SD-WAN/Overlay terminiert (dort
+                   kommt inter-site Traffic an). Sonst würde der Lookup im falschen
+                   VDOM laufen (z.B. 'root', das L2-Transfer0 hält, aber wo das
+                   Paket nie ankommt → fälschlich Deny). Fällt das Overlay-Signal
+                   aus, den VDOM wählen, dessen Weg zur Quelle NICHT über einen
+                   VDOM-Link geht. Danach kettet die VDOM-Link-Logik weiter, sodass
+                   alle durchlaufenen VDOM-Policies geprüft werden.
     Live bevorzugt, sonst Cache (symmetrisches Routing angenommen).
     """
+    if vdom is None:
+        vdom = _overlay_vdom(inv, device, overlay_re)
     vdoms = [vdom] if vdom is not None else (
         (inv.devices.get(device) or {}).get("vdoms") or ["root"])
     fallback: tuple[str, str] | None = None
@@ -165,6 +182,7 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
                     inv: Inventory, prefixes: PrefixTable, client: FmgClient,
                     overlay_pattern: str, max_hops: int = 8) -> list[Hop]:
     device, vdom, srcintf = find_ingress(prefixes, inv, src_ip)
+    overlay_re = re.compile(overlay_pattern)
 
     hops: list[Hop] = []
     visited: set[tuple[str, str]] = set()
@@ -291,7 +309,8 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
         if cls.egress_class == "ROUTED" and (next_vdom is None or next_srcintf is None):
             # Eintritts-VDOM (Router-VDOM) + Ingress-Interface Richtung Quelle.
             rv, rintf = await _resolve_ingress(
-                client, inv, inv.adom_of(next_device), next_device, next_vdom, src_ip)
+                client, inv, inv.adom_of(next_device), next_device, next_vdom,
+                src_ip, overlay_re)
             next_vdom = next_vdom or rv
             next_srcintf = next_srcintf or rintf
             if next_srcintf is None:

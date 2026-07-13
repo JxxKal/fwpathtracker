@@ -97,6 +97,26 @@ def lab_snapshot_rows() -> list[dict]:
              "srcaddr": ["all"], "dstaddr": ["all"], "service": ["ALL"]},
         ]),
 
+        # Site C — Multi-VDOM wie im Feld: SD-WAN terminiert im 'Router'-VDOM,
+        # 'L2-Transfer0' liegt im 'root'-VDOM (hat zwar eine Route zur Quelle, aber
+        # dort kommt inter-site Traffic nie an → Eintritt muss 'Router' sein).
+        _row("device", "fw-c", {"name": "fw-c", "vdom": [{"name": "root"}, {"name": "Router"}]}),
+        _row("interface", "fw-c", [
+            {"name": "L2-Transfer0", "ip": ["10.3.5.1", "255.255.255.0"], "vdom": ["root"]},
+            {"name": "vlc1", "type": "vdom-link", "vdom": ["root"]},
+            {"name": "sdwan-c", "type": "tunnel", "vdom": ["Router"]},
+            {"name": "vlc0", "type": "vdom-link", "vdom": ["Router"]},
+            {"name": "lan-c", "ip": ["10.3.9.1", "255.255.255.0"], "vdom": ["Router"]},
+        ]),
+        _row("package", "pkg-c-router", {"name": "pkg-c-router", "scope member": [
+            {"name": "fw-c", "vdom": "Router"},
+        ]}),
+        _row("policy", "pkg-c-router", [
+            {"policyid": 400, "name": "allow-inbound", "action": 1, "status": 1,
+             "srcintf": ["sdwan-c"], "dstintf": ["lan-c"],
+             "srcaddr": ["all"], "dstaddr": ["all"], "service": ["ALL"]},
+        ]),
+
         _row("address", "srv-db", {"name": "srv-db",
                                    "subnet": ["10.2.1.30", "255.255.255.255"]}),
         _row("address", "net-site-a", {"name": "net-site-a",
