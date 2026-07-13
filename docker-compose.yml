@@ -72,8 +72,9 @@ services:
     volumes:
       - certs:/certs:ro     # nginx liest cert.pem/key.pem/.hostname (read-only)
     ports:
-      - "80:80"
-      - "443:443"
+      # Host-Ports frei wählbar (Container lauscht intern weiter auf 80/443).
+      - "${HTTP_PORT:-8766}:80"
+      - "${HTTPS_PORT:-8443}:443"
 
   # FortiManager-JSON-RPC-Simulator (nur mit `--profile sim`).
   # Trocken-Testen des kompletten Stacks ohne echtes Lab. Im Tracker unter
