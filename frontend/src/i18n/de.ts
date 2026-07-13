@@ -4,12 +4,17 @@ export const de = {
   tabs: { tracker: 'Tracker', history: 'Verlauf', settings: 'Einstellungen' },
   login: {
     title: 'Anmelden',
+    tagline: 'Der Passierschein für jedes Paket.',
+    panel: 'Schalter // Anmeldung',
     username: 'Benutzername',
     password: 'Passwort',
+    showPassword: 'Passwort anzeigen',
     submit: 'Anmelden',
     failed: 'Anmeldung fehlgeschlagen',
     or: 'oder',
     saml: 'Mit SSO anmelden',
+    systemReady: 'system bereit',
+    formLine: 'Formular A38 · Ausgabe 2026',
   },
   trace: {
     src: 'Quelle (IP oder Name)',

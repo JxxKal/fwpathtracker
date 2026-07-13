@@ -5,3 +5,6 @@ __pycache__/
 node_modules/
 dist/
 .vite/
+
+# Entpacktes Design-Paket (Quelle: design/*.zip)
+design/a38-design/

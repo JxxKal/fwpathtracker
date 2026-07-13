@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 400" width="440" height="400" fill="none">
+  <defs>
+    <path id="lg-top" d="M 133.6 98.5 A 92 92 0 0 1 306.4 98.5"></path>
+    <path id="lg-bottom" d="M 140.3 176 A 92 92 0 0 0 299.7 176"></path>
+  </defs>
+
+  
+  <g transform="rotate(-5 220 130)">
+    
+    <circle cx="220" cy="130" r="118" stroke="#0ea5e9" stroke-width="3.5" opacity="0.9"></circle>
+    <circle cx="220" cy="130" r="106" stroke="#0ea5e9" stroke-width="1.5" opacity="0.5"></circle>
+
+    
+    <text font-family="Inter, system-ui, sans-serif" font-weight="800" font-size="19" letter-spacing="3.5" fill="#38bdf8">
+      <textPath href="#lg-top" startOffset="50%" text-anchor="middle">★ PASSIERSCHEIN ★</textPath>
+    </text>
+    <text font-family="Inter, system-ui, sans-serif" font-weight="700" font-size="13" letter-spacing="2.5" fill="#7dd3fc">
+      <textPath href="#lg-bottom" startOffset="50%" text-anchor="middle">★ AMTLICH GEPRÜFT ★</textPath>
+    </text>
+
+    
+    <g stroke="#0ea5e9" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+      
+      <path d="M190 122 C182 158 192 200 220 202 C248 200 258 158 250 122 Z" fill="#0f172a"></path>
+
+      
+      <path d="M184 122 H256" stroke-width="5"></path>
+      <path d="M191 120 Q220 82 249 120 Z" fill="#0b1120"></path>
+      
+      <circle cx="220" cy="98" r="4" fill="#38bdf8" stroke="none"></circle>
+      
+      <path d="M188 116 Q156 98 140 106 Q150 112 160 110 Q150 116 158 122 Q172 116 189 120 Z" fill="#0f172a"></path>
+      <path d="M252 116 Q284 98 300 106 Q290 112 280 110 Q290 116 282 122 Q268 116 251 120 Z" fill="#0f172a"></path>
+
+      
+      <path d="M199 138 Q207 133 214 138" fill="none" stroke-width="3"></path>
+      <path d="M226 138 Q233 133 241 138" fill="none" stroke-width="3"></path>
+      
+      <circle cx="207" cy="146" r="3.6" fill="#0ea5e9" stroke="none"></circle>
+      <circle cx="233" cy="146" r="3.6" fill="#0ea5e9" stroke="none"></circle>
+      
+      <circle cx="220" cy="160" r="9" fill="#0b1120"></circle>
+      
+      <path d="M220 168 C205 169 197 183 180 186 C197 190 213 183 220 176 C227 183 243 190 260 186 C243 183 235 169 220 168 Z" fill="#0ea5e9" stroke="#0ea5e9" stroke-width="2"></path>
+    </g>
+  </g>
+
+  
+  <text x="220" y="322" font-family="Inter, system-ui, sans-serif" font-weight="900" font-size="86" letter-spacing="-2" text-anchor="middle" fill="#e0f2fe">A38</text>
+  <text x="220" y="360" font-family="Inter, system-ui, sans-serif" font-weight="600" font-size="14.5" letter-spacing="5.5" text-anchor="middle" fill="#38bdf8">FIREWALL · PATH · TRACKER</text>
+</svg>

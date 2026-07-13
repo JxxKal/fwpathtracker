@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240" fill="none">
+  <defs>
+    <path id="a38-top" d="M 41.1 91.3 A 84 84 0 0 1 198.9 91.3"></path>
+    <path id="a38-bottom" d="M 47.3 162 A 84 84 0 0 0 192.7 162"></path>
+  </defs>
+  <g transform="rotate(-7 120 120)">
+    
+    <circle cx="120" cy="120" r="112" stroke="#0ea5e9" stroke-width="3.5" opacity="0.9"></circle>
+    <circle cx="120" cy="120" r="100" stroke="#0ea5e9" stroke-width="1.5" opacity="0.55"></circle>
+    
+    <text font-family="Inter, system-ui, sans-serif" font-weight="800" font-size="19" letter-spacing="3.5" fill="#38bdf8">
+      <textPath href="#a38-top" startOffset="50%" text-anchor="middle">★ PASSIERSCHEIN ★</textPath>
+    </text>
+    <text font-family="Inter, system-ui, sans-serif" font-weight="700" font-size="13" letter-spacing="2.5" fill="#7dd3fc">
+      <textPath href="#a38-bottom" startOffset="50%" text-anchor="middle">★ AMTLICH GEPRÜFT ★</textPath>
+    </text>
+    
+    <g stroke="#0ea5e9" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M104 74 Q120 56 136 74" fill="#0b1120"></path>
+      <path d="M100 74 H140"></path>
+      <path d="M104 66 Q84 58 70 66 Q84 66 100 71" fill="#0f172a"></path>
+      <path d="M136 66 Q156 58 170 66 Q156 66 140 71" fill="#0f172a"></path>
+    </g>
+    
+    <text x="120" y="150" font-family="Inter, system-ui, sans-serif" font-weight="900" font-size="76" letter-spacing="-2" text-anchor="middle" fill="#0ea5e9">A38</text>
+    
+    <g stroke="#38bdf8" stroke-width="3" stroke-linecap="round" fill="none">
+      <path d="M92 168 H108 V178 H132 V168 H148"></path>
+      <circle cx="92" cy="168" r="3.5" fill="#38bdf8" stroke="none"></circle>
+      <circle cx="148" cy="168" r="3.5" fill="#38bdf8" stroke="none"></circle>
+    </g>
+  </g>
+</svg>
