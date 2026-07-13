@@ -5,6 +5,7 @@ import LoginPage from './components/LoginPage';
 import HistoryList from './components/HistoryList';
 import PathGraph from './components/PathGraph';
 import ResultDrawer from './components/ResultDrawer';
+import RulesetPanel from './components/RulesetPanel';
 import SuggestionCard from './components/SuggestionCard';
 import TraceForm from './components/TraceForm';
 import DnsPanel from './components/settings/DnsPanel';
@@ -38,6 +39,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [suggestHop, setSuggestHop] = useState<Hop | null>(null);
+  const [rulesHop, setRulesHop] = useState<Hop | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
@@ -77,6 +79,7 @@ export default function App() {
     setBusy(true);
     setError(null);
     setSuggestHop(null);
+    setRulesHop(null);
     setTab('tracker');
     setPendingReq(req);
     try {
@@ -159,7 +162,8 @@ export default function App() {
                     </button>
                   </div>
                 )}
-                <PathGraph result={result} onSuggest={setSuggestHop} />
+                <PathGraph result={result} onSuggest={setSuggestHop} onShowRules={setRulesHop} />
+                {rulesHop && <RulesetPanel hop={rulesHop} onClose={() => setRulesHop(null)} />}
                 {suggestHop?.suggestion && <SuggestionCard suggestion={suggestHop.suggestion} />}
                 {drawerOpen && <ResultDrawer result={result} onClose={() => setDrawerOpen(false)} />}
               </>

@@ -1,13 +1,12 @@
 import { Handle, Position } from '@xyflow/react';
-import { ChevronDown, ChevronRight, CloudOff, Shield, TriangleAlert } from 'lucide-react';
-import { useState } from 'react';
+import { CloudOff, ListTree, Shield, TriangleAlert } from 'lucide-react';
 import { de } from '../../i18n/de';
 import type { Hop } from '../../types';
-import RulesetTable from '../RulesetTable';
 
 export interface FirewallNodeData {
   hop: Hop;
   onSuggest: (hop: Hop) => void;
+  onShowRules: (hop: Hop) => void;
   [key: string]: unknown;
 }
 
@@ -18,8 +17,7 @@ const verdictStyles: Record<string, string> = {
 };
 
 export default function FirewallNode({ data }: { data: FirewallNodeData }) {
-  const { hop, onSuggest } = data;
-  const [expanded, setExpanded] = useState(false);
+  const { hop, onSuggest, onShowRules } = data;
 
   return (
     <div className={`w-80 rounded-lg border bg-slate-900 shadow-lg ${
@@ -77,10 +75,11 @@ export default function FirewallNode({ data }: { data: FirewallNodeData }) {
         <div className="flex items-center gap-2 pt-1">
           <button
             type="button"
-            className="nodrag nopan pointer-events-auto flex items-center gap-1 text-slate-400 hover:text-cyan-400"
-            onClick={() => setExpanded(!expanded)}
+            className="nodrag nopan pointer-events-auto flex items-center gap-1 text-slate-400 hover:text-cyan-400 disabled:opacity-40"
+            onClick={() => onShowRules(hop)}
+            disabled={hop.candidates.length === 0}
           >
-            {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+            <ListTree size={13} />
             {de.hop.candidates} ({hop.candidates.length})
           </button>
           {hop.verdict === 'DENY' && hop.suggestion && (
@@ -94,12 +93,6 @@ export default function FirewallNode({ data }: { data: FirewallNodeData }) {
           )}
         </div>
       </div>
-
-      {expanded && (
-        <div className="nodrag nopan pointer-events-auto border-t border-slate-800">
-          <RulesetTable candidates={hop.candidates} />
-        </div>
-      )}
     </div>
   );
 }

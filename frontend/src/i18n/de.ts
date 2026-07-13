@@ -48,6 +48,7 @@ export const de = {
     matched: 'Treffer-Regel',
     implicitDeny: 'Implizites Deny (keine Regel matcht)',
     candidates: 'Kandidaten-Regeln',
+    candidatesHint: 'Regeln für dieses Interface-Paar in Reihenfolge der Policy-Tabelle — hervorgehoben ist die live getroffene Regel (die erste, die auch Quelle/Ziel/Dienst matcht). Die übrigen greifen nicht.',
     suggestion: 'Regelvorschlag',
     degraded: 'Gerät offline — Daten aus Cache',
     downstream: 'nachgelagert',
