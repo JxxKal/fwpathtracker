@@ -1,4 +1,4 @@
-import { Background, Edge, Node, ReactFlow, ReactFlowProvider, useReactFlow } from '@xyflow/react';
+import { Background, Controls, Edge, Node, ReactFlow, ReactFlowProvider, useReactFlow } from '@xyflow/react';
 import { useEffect, useMemo } from 'react';
 import { de } from '../i18n/de';
 import type { Hop, TraceResult } from '../types';
@@ -20,7 +20,7 @@ interface Props {
 
 // Linearer Pfad → manueller Horizontal-Layouter (kein dagre/elk nötig)
 const HOST_W = 176;
-const FW_W = 288;
+const FW_W = 320;
 const GAP = 90;
 
 function PathGraphInner({ result, onSuggest }: Props) {
@@ -89,7 +89,7 @@ function PathGraphInner({ result, onSuggest }: Props) {
   const { fitView } = useReactFlow();
   useEffect(() => {
     const raf = requestAnimationFrame(() =>
-      fitView({ padding: 0.18, duration: 200, maxZoom: 1 }));
+      fitView({ padding: 0.12, duration: 200, maxZoom: 1.5 }));
     return () => cancelAnimationFrame(raf);
   }, [result, fitView]);
 
@@ -99,7 +99,8 @@ function PathGraphInner({ result, onSuggest }: Props) {
       edges={edges}
       nodeTypes={nodeTypes}
       fitView
-      fitViewOptions={{ padding: 0.18, maxZoom: 1 }}
+      fitViewOptions={{ padding: 0.12, maxZoom: 1.5 }}
+      minZoom={0.2}
       proOptions={{ hideAttribution: true }}
       nodesDraggable={false}
       nodesConnectable={false}
@@ -107,13 +108,14 @@ function PathGraphInner({ result, onSuggest }: Props) {
       colorMode="dark"
     >
       <Background color="#1e293b" gap={24} />
+      <Controls showInteractive={false} />
     </ReactFlow>
   );
 }
 
 export default function PathGraph(props: Props) {
   return (
-    <div className="h-[420px] rounded-lg border border-slate-800 bg-slate-950">
+    <div className="h-[72vh] min-h-[480px] rounded-lg border border-slate-800 bg-slate-950">
       <ReactFlowProvider>
         <PathGraphInner {...props} />
       </ReactFlowProvider>

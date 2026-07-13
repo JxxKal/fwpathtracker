@@ -6,7 +6,7 @@ export default function RulesetTable({ candidates }: { candidates: Candidate[] }
     return <p className="p-2 text-xs text-slate-500">—</p>;
   }
   return (
-    <div className="max-h-56 overflow-auto">
+    <div className="max-h-80 overflow-auto">
       <table className="w-full text-left text-xs">
         <thead className="sticky top-0 bg-slate-900 text-slate-500">
           <tr>

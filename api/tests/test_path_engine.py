@@ -219,6 +219,23 @@ async def test_cross_site_multi_vdom_router_then_protect(inventory, prefixes):
     assert aggregate_verdict(hops) == "DENY"
 
 
+async def test_policy_zero_is_implicit_deny(inventory, prefixes):
+    """FortiOS policy-lookup mit policy_id 0 = implizites Deny (keine Regel greift
+    live, z.B. Policy-Package im FortiManager nicht installiert) → DENY + Hinweis,
+    NICHT UNKNOWN/'nicht im Cache'."""
+    client, t = make_client()
+    add_route(t, "fw-a", "root", "10.1.2.20", "lan2")
+    add_policy_lookup(t, "fw-a", "root",
+                      tcp_params("lan1", "10.1.1.10", "10.1.2.20", 443), 0)
+
+    hops = await _trace(inventory, prefixes, client, "10.1.1.10", "10.1.2.20")
+    assert len(hops) == 1
+    assert hops[0].verdict == "DENY"
+    assert hops[0].matched_policy is None
+    assert any("Policy 0" in w for w in hops[0].warnings)
+    assert aggregate_verdict(hops) == "DENY"
+
+
 async def test_device_offline_degraded(inventory, prefixes):
     client, t = make_client()
     add_route(t, "fw-a", "root", "10.2.1.30", "vpn-to-b", offline=True)

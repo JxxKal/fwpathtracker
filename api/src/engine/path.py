@@ -234,12 +234,21 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
         # ── d) Kandidaten + Verdict ──────────────────────────────────────────
         candidates = [Candidate(**p) for p in
                       inv.candidate_policies(device, vdom, srcintf, hop.egress)]
+        pid = lookup["policy_id"] if lookup else None
         if lookup is None:
             hop.verdict = "UNKNOWN"
-        elif not lookup["success"]:
-            hop.verdict = "DENY"  # implizites Deny (keine Policy matcht)
+        elif not lookup["success"] or pid in (0, "0", None):
+            # Implizites Deny: keine Regel greift live. FortiOS liefert dafür
+            # policy_id 0 (bzw. success=false).
+            hop.verdict = "DENY"
+            if lookup["success"] and pid in (0, "0"):
+                hop.warnings.append(
+                    "Implizites Deny (Policy 0): keine Regel greift auf dem Gerät. "
+                    "Falls A38 gerade gesynct wurde, ist das Policy-Package im "
+                    "FortiManager evtl. nicht auf das Gerät installiert — "
+                    "Policy-Install/-Sync im FortiManager prüfen."
+                )
         else:
-            pid = lookup["policy_id"]
             match = next((c for c in candidates if c.policyid == pid), None)
             if match is None:
                 # Nicht in den Kandidaten (Zonen-Filter oder Cache stale) →
@@ -250,8 +259,10 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
                     match = full
                     candidates.insert(0, full)
                     hop.warnings.append(
-                        f"Policy {pid} matcht live, war aber nicht in den "
-                        "Zonen-Kandidaten — Zonen-Mapping prüfen."
+                        f"Treffer-Regel #{pid} wurde live bestätigt, fehlt aber in "
+                        "der nach Zonen gefilterten Kandidatenliste — die Zonen-/"
+                        "Interface-Zuordnung im Sync ist evtl. unvollständig "
+                        "(Kandidaten-Anzeige lückenhaft, Verdict bleibt korrekt)."
                     )
             if match is not None:
                 match.hit = True
@@ -260,8 +271,9 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
             else:
                 hop.verdict = "UNKNOWN"
                 hop.warnings.append(
-                    f"Policy {pid} matcht live, ist aber nicht im FMG-Cache — "
-                    "Sync veraltet? Aktion unbekannt."
+                    f"Policy #{pid} matcht live, ist aber in A38 nicht bekannt — "
+                    "A38-Sync veraltet oder Policy-Package im FortiManager nicht "
+                    "synchronisiert (Aktion unbekannt)."
                 )
         hop.candidates = candidates
         if hop.verdict == "DENY":

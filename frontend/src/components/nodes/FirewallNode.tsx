@@ -22,7 +22,7 @@ export default function FirewallNode({ data }: { data: FirewallNodeData }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className={`w-72 rounded-lg border bg-slate-900 shadow-lg ${
+    <div className={`w-80 rounded-lg border bg-slate-900 shadow-lg ${
       hop.verdict === 'DENY' ? 'border-red-800' : hop.degraded ? 'border-amber-800' : 'border-slate-700'
     }`}>
       <Handle type="target" position={Position.Left} className="!bg-cyan-600" />

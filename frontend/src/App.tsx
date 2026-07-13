@@ -121,7 +121,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl space-y-4 p-4">
+      <main className="mx-auto max-w-[1800px] space-y-4 p-4">
         {tab === 'tracker' && (
           <>
             <TraceForm key={pendingReq ? JSON.stringify(pendingReq) : 'blank'}
