@@ -50,6 +50,26 @@ def find_ingress(prefixes: PrefixTable, inv: Inventory, src_ip: str) -> tuple[st
     return entry.device, entry.vdom, srcintf
 
 
+def _ingress_ambiguity(prefixes: PrefixTable, src_ip: str,
+                       device: str, vdom: str) -> str | None:
+    """Warnung, wenn die Quelle gleich spezifisch (gleicher Präfix) auf MEHREREN
+    VDOMs/Geräten connected/override ist — dann ist der Start-Hop mehrdeutig und
+    kann an der falschen Firewall beginnen (Site-Override löst es)."""
+    owners = [e for e in prefixes.lookup_all(src_ip)
+              if e.source in ("override", "connected")]
+    if not owners:
+        return None
+    top = owners[0].network.prefixlen
+    distinct = sorted({(e.device, e.vdom) for e in owners
+                       if e.network.prefixlen == top})
+    if len(distinct) <= 1:
+        return None
+    others = ", ".join(f"{d}/{v}" for (d, v) in distinct if (d, v) != (device, vdom))
+    return (f"Quelle {src_ip} ist gleich spezifisch auf mehreren VDOMs connected — "
+            f"Start {device}/{vdom} gewählt, ebenso möglich: {others}. Ingress "
+            "mehrdeutig; bei falschem Start Site-Override (Einstellungen → Standorte).")
+
+
 async def _live_route(client: FmgClient, adom: str, device: str, vdom: str,
                       dst_ip: str) -> dict | None:
     """router/lookup → {interface, gateway, ...} oder None (kein Treffer).
@@ -217,6 +237,7 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
                     overlay_pattern: str, max_hops: int = 8,
                     router_vdom_pattern: str = "(?i)(router|wan.?edge)") -> list[Hop]:
     device, vdom, srcintf = find_ingress(prefixes, inv, src_ip)
+    ingress_warn = _ingress_ambiguity(prefixes, src_ip, device, vdom)
     overlay_re = re.compile(overlay_pattern)
     router_re = re.compile(router_vdom_pattern)
 
@@ -236,6 +257,8 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
         hop = Hop(index=len(hops), device=device, vdom=vdom, adom=adom,
                   srcintf=srcintf, src_zone=inv.zone_of(device, vdom, srcintf),
                   after_deny=deny_seen)
+        if hop.index == 0 and ingress_warn:
+            hop.warnings.append(ingress_warn)
 
         # ── a) Route (live, sonst Cache) ─────────────────────────────────────
         route = None

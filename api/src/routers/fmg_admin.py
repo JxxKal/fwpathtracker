@@ -68,3 +68,34 @@ async def sync_status(request: Request, _user: dict = Depends(get_current_user))
 @router.get("/inventory/summary")
 async def inventory_summary(request: Request, _user: dict = Depends(get_current_user)) -> dict:
     return request.app.state.inventory.summary()
+
+
+@router.get("/inventory/owns/{ip}")
+async def inventory_owns(ip: str, request: Request,
+                         _user: dict = Depends(get_current_user)) -> dict:
+    """Welche VDOM/Firewall hält dieses Netz? Alle PrefixTable-Treffer für die IP
+    (connected/static/override, längster Präfix zuerst) plus der gewählte Start-Hop
+    — zum sauberen Prüfen der Netz→VDOM-Zuordnung."""
+    import ipaddress
+
+    from engine.path import TraceError, find_ingress
+
+    try:
+        ipaddress.IPv4Address(ip.strip())
+    except ipaddress.AddressValueError as exc:
+        raise HTTPException(422, f"Ungültige IPv4-Adresse: {ip}") from exc
+
+    state = request.app.state
+    matches = [
+        {"device": e.device, "vdom": e.vdom, "interface": e.interface,
+         "cidr": str(e.network), "prefixlen": e.network.prefixlen,
+         "source": e.source, "site_name": e.site_name}
+        for e in state.prefixes.lookup_all(ip.strip())
+    ]
+    ingress = None
+    try:
+        d, v, i = find_ingress(state.prefixes, state.inventory, ip.strip())
+        ingress = {"device": d, "vdom": v, "interface": i}
+    except TraceError:
+        pass
+    return {"ip": ip.strip(), "ingress": ingress, "matches": matches}

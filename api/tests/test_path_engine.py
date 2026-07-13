@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import pytest
 
-from engine.path import TraceError, find_ingress, run_trace
+from engine.path import TraceError, _ingress_ambiguity, find_ingress, run_trace
 from engine.verdict import aggregate_verdict
 from fmg.client import FmgClient
 from fmg.transport import FixtureTransport
 from fmg_fixtures import add_policy_lookup, add_route, tcp_params
+from inventory.prefixes import PrefixTable
 
 OVERLAY = "(?i)(vpn|ovl|sdwan|tun|ipsec)"
 
@@ -325,6 +326,20 @@ async def test_unknown_source_raises(inventory, prefixes):
     client, _ = make_client()
     with pytest.raises(TraceError, match="keinem bekannten Standort-Prefix"):
         await _trace(inventory, prefixes, client, "172.16.99.1", "10.1.1.10")
+
+
+def test_ingress_ambiguity_flags_multiple_owners():
+    """Ist dieselbe Quelle gleich spezifisch auf zwei VDOMs connected, warnt der
+    Trace (Start kann an der falschen Firewall beginnen) — Feld-Fall xha001/xha002."""
+    t = PrefixTable()
+    t.add("10.180.42.0/24", "connected", "xha001", "L3", "OT")
+    t.add("10.180.42.0/24", "connected", "xha002", "root", "OT")
+    warn = _ingress_ambiguity(t, "10.180.42.208", "xha001", "L3")
+    assert warn is not None and "xha002/root" in warn
+
+    unique = PrefixTable()
+    unique.add("10.180.42.0/24", "connected", "xha002", "root", "OT")
+    assert _ingress_ambiguity(unique, "10.180.42.208", "xha002", "root") is None
 
 
 def test_find_ingress_prefers_connected(inventory, prefixes):

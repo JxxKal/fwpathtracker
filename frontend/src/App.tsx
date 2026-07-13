@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { runTrace, setToken } from './api';
 import LoginPage from './components/LoginPage';
 import HistoryList from './components/HistoryList';
+import NetOwnership from './components/NetOwnership';
 import PathGraph from './components/PathGraph';
 import ResultDrawer from './components/ResultDrawer';
 import RulesetPanel from './components/RulesetPanel';
@@ -168,6 +169,7 @@ export default function App() {
                 {drawerOpen && <ResultDrawer result={result} onClose={() => setDrawerOpen(false)} />}
               </>
             )}
+            <NetOwnership />
           </>
         )}
 

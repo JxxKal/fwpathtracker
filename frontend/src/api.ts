@@ -117,6 +117,29 @@ export async function inventorySummary(): Promise<InventorySummary> {
   return request('/api/fmg/inventory/summary');
 }
 
+export interface OwnsMatch {
+  device: string; vdom: string; interface: string | null;
+  cidr: string; prefixlen: number; source: string; site_name: string | null;
+}
+export interface OwnsResult {
+  ip: string;
+  ingress: { device: string; vdom: string; interface: string } | null;
+  matches: OwnsMatch[];
+}
+
+export async function inventoryOwns(ip: string): Promise<OwnsResult> {
+  if (isDemoMode()) {
+    return {
+      ip, ingress: { device: 'fw-a', vdom: 'root', interface: 'lan1' },
+      matches: [
+        { device: 'fw-a', vdom: 'root', interface: 'lan1', cidr: '10.1.1.0/24', prefixlen: 24, source: 'connected', site_name: null },
+        { device: 'fw-a', vdom: 'root', interface: 'vpn-to-b', cidr: '10.1.0.0/20', prefixlen: 20, source: 'static', site_name: null },
+      ],
+    };
+  }
+  return request(`/api/fmg/inventory/owns/${encodeURIComponent(ip)}`);
+}
+
 export async function itopTest(): Promise<{ ok: boolean; organisations: string[] }> {
   if (isDemoMode()) return { ok: true, organisations: ['Demo Org'] };
   return request('/api/itop/test', { method: 'POST' });

@@ -54,6 +54,14 @@ export const de = {
     downstream: 'nachgelagert',
     downstreamHint: 'Hinter einer früheren Blockade — Verkehr erreicht diese Firewall erst, wenn die vorigen Hops geöffnet sind.',
   },
+  owns: {
+    title: 'Netz-Zugehörigkeit prüfen',
+    hint: 'Welche VDOM/Firewall hält ein Netz? Deckt falsche/mehrdeutige Zuordnungen auf.',
+    check: 'Prüfen',
+    ingressTag: 'Start-Hop',
+    none: 'Kein bekanntes Netz enthält diese IP — FMG-Sync aktuell? Site-Override möglich.',
+    ambiguous: 'Mehrere Geräte/VDOMs halten dasselbe Netz gleich spezifisch — der Start-Hop ist mehrdeutig.',
+  },
   suggestion: {
     title: 'Regelvorschlag',
     newObject: 'neu',
