@@ -212,32 +212,39 @@ class Inventory:
     def interface(self, device: str, name: str) -> dict | None:
         return (self.interfaces.get(device) or {}).get(name)
 
-    def interface_by_ip(self, ip: str | ipaddress.IPv4Address) -> tuple[str, str, str] | None:
+    def interface_by_ip(self, ip: str | ipaddress.IPv4Address,
+                        device: str | None = None) -> tuple[str, str, str] | None:
         """(device, vdom, intf) eines Interfaces mit exakt dieser Adresse.
 
-        Für Gateway→Firewall-Matching bei gerouteter Standortkopplung: ist der
-        Next-Hop einer Route die Interface-IP einer anderen FortiGate, ist das
-        der nächste Hop — ohne Owner-Tabelle.
+        Für Next-Hop→Firewall-Matching: ist der Gateway einer Route die
+        Interface-IP einer FortiGate, ist das der nächste Hop — ohne Owner-Tabelle.
+        Mit `device` auf ein Gerät beschränkt: Inter-VDOM-Link-Netze (z.B. 172.16er)
+        sind pro Gerät wiederverwendet und dürfen NICHT global gematcht werden.
         """
         try:
             addr = ipaddress.IPv4Address(ip) if isinstance(ip, str) else ip
         except (ipaddress.AddressValueError, ValueError):
             return None
-        for device, table in self.interfaces.items():
+        items = ([(device, self.interfaces.get(device) or {})] if device is not None
+                 else self.interfaces.items())
+        for dev, table in items:
             for intf in table.values():
                 if intf["ip"] is not None and intf["ip"].ip == addr:
-                    return device, intf["vdom"], intf["name"]
+                    return dev, intf["vdom"], intf["name"]
         return None
 
-    def interfaces_in_network(self, net: ipaddress.IPv4Network) -> list[tuple[str, str, str]]:
+    def interfaces_in_network(self, net: ipaddress.IPv4Network,
+                             device: str | None = None) -> list[tuple[str, str, str]]:
         """Alle (device, vdom, intf) mit einer Adresse in net — für Transit-
-        Segment-Peers: welche andere Firewall hängt im selben gerouteten
-        Übergangsnetz wie der Egress?"""
+        Segment-Peers: welcher VDOM/welche Firewall hängt im selben Übergangsnetz
+        wie der Egress? Mit `device` auf ein Gerät beschränkt (Inter-VDOM-Links)."""
         out = []
-        for device, table in self.interfaces.items():
+        items = ([(device, self.interfaces.get(device) or {})] if device is not None
+                 else self.interfaces.items())
+        for dev, table in items:
             for intf in table.values():
                 if intf["ip"] is not None and intf["ip"].ip in net:
-                    out.append((device, intf["vdom"], intf["name"]))
+                    out.append((dev, intf["vdom"], intf["name"]))
         return out
 
     def zone_of(self, device: str, vdom: str, intf: str) -> str:
@@ -267,6 +274,19 @@ class Inventory:
         if peer is None or peer["vdom"] == me["vdom"]:
             return None
         return peer_name, peer["vdom"]
+
+    def is_vdom_link(self, device: str, intf_name: str) -> bool:
+        """True, wenn das Interface ein Inter-VDOM-Link-Ende ist (Typ oder Name).
+
+        Für die Eintritts-VDOM-Wahl: der Router-/Ingress-VDOM ist der, dessen Weg
+        zur Quelle über ein 'echtes' Interface geht — nicht über einen VDOM-Link.
+        """
+        info = self.interface(device, intf_name)
+        if info is None:
+            return False
+        if info.get("type") in ("vdom-link", "npu-vlink"):
+            return True
+        return bool(re.search(r"(?i)(vlink|vd-?link|vdom)", intf_name))
 
     def find_address_for_ip(self, adom: str, ip: str) -> dict | None:
         """Engstes Adress-Objekt (type subnet/ipmask), das die IP enthält."""

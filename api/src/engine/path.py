@@ -92,22 +92,37 @@ def cached_route(inv: Inventory, device: str, vdom: str, dst_ip: str) -> dict | 
 
 
 async def _resolve_ingress(client: FmgClient, inv: Inventory, adom: str | None,
-                           device: str, vdom: str, src_ip: str) -> str | None:
-    """Ingress-Interface einer Transit-Firewall = Interface Richtung Quelle.
+                           device: str, vdom: str | None,
+                           src_ip: str) -> tuple[str | None, str | None]:
+    """Eintritts-(VDOM, Interface) einer Firewall Richtung Quelle bestimmen.
 
-    Bei gerouteter Standortkopplung (ROUTED) ist das Eingangs-Interface der
-    nächsten Firewall nicht vorgegeben. Reverse-Route-Lookup auf src_ip liefert
-    es (symmetrisches Routing angenommen); live bevorzugt, sonst Cache.
+    vdom gesetzt → Reverse-Route auf diesem VDOM → dessen Interface zur Quelle.
+    vdom None    → über alle VDOMs des Geräts den EINTRITTS-/Router-VDOM wählen:
+                   den, dessen Weg zur Quelle NICHT über einen VDOM-Link geht
+                   (dort terminiert die Site das SD-WAN/WAN). So wird auch dessen
+                   Policy geprüft, bevor es per VDOM-Link zum Schutz-VDOM geht.
+    Live bevorzugt, sonst Cache (symmetrisches Routing angenommen).
     """
-    route = None
-    if adom is not None:
-        try:
-            route = await _live_route(client, adom, device, vdom, src_ip)
-        except (FmgError, FmgTargetOffline):
-            route = None
-    if route is None:
-        route = cached_route(inv, device, vdom, src_ip)
-    return route["interface"] if route else None
+    vdoms = [vdom] if vdom is not None else (
+        (inv.devices.get(device) or {}).get("vdoms") or ["root"])
+    fallback: tuple[str, str] | None = None
+    for vd in vdoms:
+        route = None
+        if adom is not None:
+            try:
+                route = await _live_route(client, adom, device, vd, src_ip)
+            except (FmgError, FmgTargetOffline):
+                route = None
+        if route is None:
+            route = cached_route(inv, device, vd, src_ip)
+        if route is None:
+            continue
+        intf = route["interface"]
+        if fallback is None:
+            fallback = (vd, intf)
+        if not inv.is_vdom_link(device, intf):   # Router-/Eintritts-VDOM gefunden
+            return vd, intf
+    return fallback if fallback is not None else (vdom, None)
 
 
 async def _live_policy_lookup(client: FmgClient, adom: str, device: str, vdom: str,
@@ -256,20 +271,23 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
         # ── e) Nächster Hop ──────────────────────────────────────────────────
         if cls.egress_class in ("LOCAL", "DEFAULT"):
             break
-        if cls.next_device is None or cls.next_vdom is None:
+        if cls.next_device is None:   # next_vdom=None ⇒ Eintritts-VDOM wird ermittelt
             break
+        next_device = cls.next_device
+        next_vdom = cls.next_vdom
         next_srcintf = cls.next_srcintf
-        if next_srcintf is None and cls.egress_class == "ROUTED":
-            # Ingress der Transit-Firewall = Interface Richtung Quelle.
-            next_srcintf = await _resolve_ingress(
-                client, inv, inv.adom_of(cls.next_device),
-                cls.next_device, cls.next_vdom, src_ip)
+        if cls.egress_class == "ROUTED" and (next_vdom is None or next_srcintf is None):
+            # Eintritts-VDOM (Router-VDOM) + Ingress-Interface Richtung Quelle.
+            rv, rintf = await _resolve_ingress(
+                client, inv, inv.adom_of(next_device), next_device, next_vdom, src_ip)
+            next_vdom = next_vdom or rv
+            next_srcintf = next_srcintf or rintf
             if next_srcintf is None:
                 hop.warnings.append(
-                    f"Ingress-Interface auf {cls.next_device}/{cls.next_vdom} "
-                    "nicht bestimmbar (Reverse-Route zur Quelle fehlt) — 'any'."
+                    f"Ingress auf {next_device}/{next_vdom or '?'} nicht bestimmbar "
+                    "(Reverse-Route zur Quelle fehlt) — 'any'."
                 )
-        device, vdom = cls.next_device, cls.next_vdom
+        device, vdom = next_device, next_vdom or "root"
         srcintf = next_srcintf or "any"
     else:
         if hops:

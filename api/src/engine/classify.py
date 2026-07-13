@@ -2,15 +2,17 @@
 
 Entscheidet, wie es nach einem Hop weitergeht. Reihenfolge der Prüfungen:
   1. LOCAL     – connected Subnet des Egress enthält das Ziel → letzter Hop
-  2. VDOM_LINK – Egress ist ein vdom-link → nächster Hop = Peer-VDOM, gleiches Gerät
+  2. VDOM_LINK – Egress ist ein vdom-link (Typ/Name) → Peer-VDOM, gleiches Gerät
   3. OVERLAY   – Tunnel-/SD-WAN-Interface (Typ oder Name-Pattern) → nächster Hop =
                  Ziel-Site-Firewall via PrefixTable
-  4. ROUTED    – Egress ist kein Overlay → nächste Firewall direkt aus dem
-                 Routing (Standortkopplung über MPLS/L3, kein Tunnel):
-                 (a) Next-Hop-Gateway == Interface-IP einer anderen FW, oder
-                 (b) andere FW im selben Transit-Segment wie der Egress.
-                 Fallback: bekanntes Ziel-Präfix (Override/connected) via
-                 PrefixTable, Ingress dort ermittelt die Path-Engine.
+  4. Routing   – Egress ist kein Overlay → nächsten Hop aus dem Routing ableiten:
+                 (a) Next-Hop-Gateway == Interface-IP eines anderen VDOM/Geräts,
+                 (b) anderer VDOM/andere FW im selben Transit-Segment.
+                 Selbes Gerät → VDOM_LINK (172.16er Inter-VDOM, geräte-lokal
+                 matchen!), anderes Gerät → ROUTED. Fallback: bekanntes Ziel-
+                 Präfix via PrefixTable; die Path-Engine wählt dort den EINTRITTS-
+                 VDOM (Router-VDOM) per Reverse-Route, damit beide VDOM-Policies
+                 (Router- und Schutz-VDOM) geprüft werden.
   5. DEFAULT   – Ziel gehört keinem gemanagten Gerät → Richtung Internet/unbekannt
 """
 from __future__ import annotations
@@ -100,32 +102,38 @@ def classify_egress(inv: Inventory, prefixes: PrefixTable, overlay_pattern: str,
         cls.next_srcintf = remote_intf
         return cls
 
-    # 4. ROUTED: kein Overlay — nächste Firewall direkt aus dem Routing ableiten
-    #    (keine Owner-Tabelle nötig, iTop hat keine FW-Zuordnung):
-    #    a) Next-Hop-Gateway ist die Interface-IP einer ANDEREN Firewall
-    #    b) sonst: eine andere Firewall hängt im selben Transit-Segment wie der Egress
-    nxt = _next_fw_via_routing(inv, device, vdom, egress_intf, gateway)
+    # 4. Nächsten Hop direkt aus dem Routing ableiten (keine Owner-Tabelle nötig):
+    #    a) Next-Hop-Gateway == Interface-IP eines anderen VDOM/Geräts
+    #    b) sonst: anderer VDOM/andere FW im selben Transit-Segment wie der Egress
+    #    Landet der Hop auf demselben Gerät (anderer VDOM) → VDOM_LINK (z.B. der
+    #    172.16er Inter-VDOM-Link Richtung Router-VDOM), sonst ROUTED.
+    nxt = _next_hop_via_routing(inv, device, vdom, egress_intf, gateway)
     if nxt is not None:
         nd, nv, nintf = nxt
+        same_dev = nd == device
         return Classification(
-            egress_class="ROUTED",
+            egress_class="VDOM_LINK" if same_dev else "ROUTED",
             next_device=nd, next_vdom=nv, next_srcintf=nintf,
             warnings=[
-                f"Nächster Hop {nd}/{nv} via '{egress_intf}' "
-                f"(Gateway {gateway or '—'}) — geroutete Standortkopplung."
+                (f"Nächster VDOM {nd}/{nv} via '{egress_intf}'"
+                 if same_dev else
+                 f"Nächster Hop {nd}/{nv} via '{egress_intf}' "
+                 f"(Gateway {gateway or '—'}) — geroutete Standortkopplung.")
             ],
         )
 
-    # 5. Fallback: bekanntes Ziel-Präfix (manueller Site-Override, oder connected
-    #    einer anderen FW hinter einem L3-Switch, wo Routing-Discovery nicht greift).
+    # 5. Fallback: bekanntes Ziel-Präfix (Site-Override, oder connected einer
+    #    anderen FW hinter einem L3-Switch, wo Routing-Discovery nicht greift).
+    #    next_vdom=None ⇒ Path-Engine wählt den EINTRITTS-VDOM (Router-VDOM) per
+    #    Reverse-Route zur Quelle, damit auch dessen Policy geprüft wird.
     entry = prefixes.lookup(dst_ip)
-    if entry is not None and (entry.device, entry.vdom) != (device, vdom):
+    if entry is not None and entry.device != device:
         site = f" ({entry.site_name})" if entry.site_name else ""
         return Classification(
             egress_class="ROUTED",
-            next_device=entry.device, next_vdom=entry.vdom, next_srcintf=None,
+            next_device=entry.device, next_vdom=None, next_srcintf=None,
             warnings=[
-                f"Ziel {dst_ip} liegt hinter {entry.device}/{entry.vdom}{site} "
+                f"Ziel {dst_ip} liegt hinter {entry.device}{site} "
                 "(Präfix-Zuordnung) — geroutete Standortkopplung, verfolge weiter."
             ],
         )
@@ -134,23 +142,30 @@ def classify_egress(inv: Inventory, prefixes: PrefixTable, overlay_pattern: str,
     return Classification(egress_class="DEFAULT")
 
 
-def _next_fw_via_routing(inv: Inventory, device: str, vdom: str, egress_intf: str,
-                         gateway: str | None) -> tuple[str, str, str] | None:
-    """Nächste Firewall aus dem Routing bestimmen, ohne Owner-Tabelle.
+def _next_hop_via_routing(inv: Inventory, device: str, vdom: str, egress_intf: str,
+                          gateway: str | None) -> tuple[str, str, str] | None:
+    """Nächsten Hop (VDOM oder Firewall) aus dem Routing bestimmen.
 
-    a) Gateway == Interface-IP einer anderen Firewall → das ist der nächste Hop,
-       das Interface ist zugleich dessen Ingress.
-    b) sonst: eine andere Firewall hat ein Interface im selben Netz wie der Egress
-       (gemeinsames Transit-Segment) → dorthin.
-    Rückgabe: (next_device, next_vdom, next_srcintf) oder None.
+    Reihenfolge: erst SELBES Gerät (Inter-VDOM-Link — dessen 172.16er Netze sind
+    pro Gerät wiederverwendet und dürfen NICHT global gematcht werden), dann
+    andere Geräte. a) Gateway == Interface-IP; b) gemeinsames Transit-Segment.
+    Rückgabe: (next_device, next_vdom, next_srcintf) oder None; das gefundene
+    Interface ist zugleich der Ingress des nächsten Hops.
     """
     if gateway and gateway not in ("0.0.0.0", "::", ""):
-        hit = inv.interface_by_ip(gateway)
-        if hit is not None and (hit[0], hit[1]) != (device, vdom):
-            return hit
+        local = inv.interface_by_ip(gateway, device=device)   # selbes Gerät (VDOM-Link)
+        if local is not None and local[1] != vdom:
+            return local
+        glob = inv.interface_by_ip(gateway)                   # anderes Gerät
+        if glob is not None and (glob[0], glob[1]) != (device, vdom):
+            return glob
     eg = inv.interface(device, egress_intf)
     if eg is not None and eg.get("ip") is not None:
-        for dev, vd, intf in inv.interfaces_in_network(eg["ip"].network):
+        net = eg["ip"].network
+        for dev, vd, intf in inv.interfaces_in_network(net, device=device):
+            if vd != vdom:
+                return dev, vd, intf
+        for dev, vd, intf in inv.interfaces_in_network(net):
             if (dev, vd) != (device, vdom):
                 return dev, vd, intf
     return None

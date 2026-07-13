@@ -31,7 +31,7 @@ def _row(kind: str, key: str, data) -> dict:
 def lab_snapshot_rows() -> list[dict]:
     return [
         _row("device", "fw-a", {"name": "fw-a", "vdom": [{"name": "root"}, {"name": "dmz"}]}),
-        _row("device", "fw-b", {"name": "fw-b", "vdom": [{"name": "root"}]}),
+        _row("device", "fw-b", {"name": "fw-b", "vdom": [{"name": "root"}, {"name": "prot"}]}),
 
         _row("interface", "fw-a", [
             {"name": "lan1", "ip": ["10.1.1.1", "255.255.255.0"], "vdom": ["root"]},
@@ -48,6 +48,10 @@ def lab_snapshot_rows() -> list[dict]:
             {"name": "vpn-to-a", "type": "tunnel", "vdom": ["root"]},
             {"name": "wan", "ip": ["198.51.100.1", "255.255.255.252"], "vdom": ["root"]},
             {"name": "xlink1", "ip": ["10.99.0.2", "255.255.255.252"], "vdom": ["root"]},
+            # Multi-VDOM: root=Router-VDOM → VDOM-Link vlb0/vlb1 → prot=Schutz-VDOM
+            {"name": "vlb0", "type": "vdom-link", "vdom": ["root"]},
+            {"name": "vlb1", "type": "vdom-link", "vdom": ["prot"]},
+            {"name": "lan-prot", "ip": ["10.2.9.1", "255.255.255.0"], "vdom": ["prot"]},
         ]),
 
         _row("zone", "inside-a", {"name": "inside-a", "dynamic_mapping": [
@@ -64,6 +68,9 @@ def lab_snapshot_rows() -> list[dict]:
         _row("package", "pkg-b", {"name": "pkg-b", "scope member": [
             {"name": "fw-b", "vdom": "root"},
         ]}),
+        _row("package", "pkg-b-prot", {"name": "pkg-b-prot", "scope member": [
+            {"name": "fw-b", "vdom": "prot"},
+        ]}),
 
         _row("policy", "pkg-a", [
             {"policyid": 100, "name": "allow-inside", "action": 1, "status": 1,
@@ -79,6 +86,14 @@ def lab_snapshot_rows() -> list[dict]:
              "srcaddr": ["all"], "dstaddr": ["all"], "service": ["ALL"]},
             {"policyid": 210, "name": "deny-legacy", "action": 0, "status": 1,
              "srcintf": ["any"], "dstintf": ["any"],
+             "srcaddr": ["all"], "dstaddr": ["all"], "service": ["ALL"]},
+            {"policyid": 220, "name": "deny-router-transit", "action": 0, "status": 1,
+             "srcintf": ["any"], "dstintf": ["vlb0"],
+             "srcaddr": ["all"], "dstaddr": ["all"], "service": ["ALL"]},
+        ]),
+        _row("policy", "pkg-b-prot", [
+            {"policyid": 300, "name": "allow-to-server", "action": 1, "status": 1,
+             "srcintf": ["vlb1"], "dstintf": ["lan-prot"],
              "srcaddr": ["all"], "dstaddr": ["all"], "service": ["ALL"]},
         ]),
 

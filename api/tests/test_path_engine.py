@@ -187,6 +187,38 @@ async def test_cross_site_routed_prefix_fallback(inventory, prefixes):
     assert aggregate_verdict(hops) == "ALLOW"
 
 
+async def test_cross_site_multi_vdom_router_then_protect(inventory, prefixes):
+    """Zielstandort mit Router-VDOM → VDOM-Link → Schutz-VDOM: der Trace tritt am
+    Router-VDOM ein (Reverse-Route zur Quelle geht über 'wan', KEIN VDOM-Link) und
+    läuft per VDOM-Link zum Schutz-VDOM. BEIDE VDOM-Policies werden geprüft — der
+    Deny auf der Router-VDOM (Policy 220) wird erkannt, nicht erst am Ziel-VDOM."""
+    client, t = make_client()
+    # fw-a: Ziel via wan, Gateway extern → Routing-Discovery greift nicht → Fallback
+    add_route(t, "fw-a", "root", "10.2.9.20", "wan", gateway="203.0.113.2")
+    add_policy_lookup(t, "fw-a", "root",
+                      tcp_params("lan1", "10.1.1.10", "10.2.9.20", 443), 100)
+    # fw-b/root (Router-VDOM): Reverse-Route zur Quelle (Ingress) + Vorwärts-Route
+    # über den VDOM-Link vlb0 + DENY-Policy 220
+    add_route(t, "fw-b", "root", "10.1.1.10", "wan")
+    add_route(t, "fw-b", "root", "10.2.9.20", "vlb0")
+    add_policy_lookup(t, "fw-b", "root",
+                      tcp_params("wan", "10.1.1.10", "10.2.9.20", 443), 220)
+    # fw-b/prot (Schutz-VDOM): Ziel connected hinter vlb1
+    add_route(t, "fw-b", "prot", "10.2.9.20", "lan-prot")
+    add_policy_lookup(t, "fw-b", "prot",
+                      tcp_params("vlb1", "10.1.1.10", "10.2.9.20", 443), 300)
+
+    hops = await _trace(inventory, prefixes, client, "10.1.1.10", "10.2.9.20")
+    assert len(hops) == 3
+    assert (hops[1].device, hops[1].vdom, hops[1].srcintf) == ("fw-b", "root", "wan")
+    assert hops[1].egress_class == "VDOM_LINK"       # Router-VDOM → Schutz-VDOM
+    assert hops[1].verdict == "DENY" and hops[1].matched_policy.policyid == 220
+    assert (hops[2].device, hops[2].vdom, hops[2].srcintf) == ("fw-b", "prot", "vlb1")
+    assert hops[2].egress_class == "LOCAL"
+    assert hops[2].after_deny                        # best-effort weiter nach Deny
+    assert aggregate_verdict(hops) == "DENY"
+
+
 async def test_device_offline_degraded(inventory, prefixes):
     client, t = make_client()
     add_route(t, "fw-a", "root", "10.2.1.30", "vpn-to-b", offline=True)
