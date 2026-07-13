@@ -66,6 +66,7 @@ async def trace(body: TraceRequest, request: Request,
             icmp_type=body.icmp_type, icmp_code=body.icmp_code,
             inv=inv, prefixes=prefixes, client=client,
             overlay_pattern=tracker_cfg.get("overlay_pattern", "(?i)(vpn|ovl|sdwan|tun|ipsec)"),
+            router_vdom_pattern=tracker_cfg.get("router_vdom_pattern", "(?i)(router|wan.?edge)"),
             max_hops=int(tracker_cfg.get("max_hops", 8)),
         )
     except TraceError as exc:

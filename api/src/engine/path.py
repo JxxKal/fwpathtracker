@@ -92,6 +92,18 @@ def cached_route(inv: Inventory, device: str, vdom: str, dst_ip: str) -> dict | 
     return best[1] if best else None
 
 
+def _router_vdom(inv: Inventory, device: str, router_re: re.Pattern) -> str | None:
+    """VDOM, dessen NAME auf den Router-/Edge-VDOM hindeutet (z.B. 'Router').
+    Zuverlässigstes Signal bei konsistenter Benennung — greift auch dann, wenn die
+    Default-Route dynamisch (BGP übers SD-WAN) und damit nicht in router/static
+    sichtbar ist. Pattern konfigurierbar (router_vdom_pattern).
+    """
+    for vdom in (inv.devices.get(device) or {}).get("vdoms", []):
+        if router_re.search(vdom):
+            return vdom
+    return None
+
+
 def _edge_vdom(inv: Inventory, device: str) -> str | None:
     """VDOM, dessen Default-Route (0/0) über ein echtes (Nicht-VDOM-Link-)
     Interface geht — der WAN/SD-WAN-Edge- bzw. Router-VDOM, an dem inter-site
@@ -122,7 +134,8 @@ def _overlay_vdom(inv: Inventory, device: str, overlay_re: re.Pattern) -> str | 
 
 async def _resolve_ingress(client: FmgClient, inv: Inventory, adom: str | None,
                            device: str, vdom: str | None, src_ip: str,
-                           overlay_re: re.Pattern) -> tuple[str | None, str | None]:
+                           overlay_re: re.Pattern,
+                           router_re: re.Pattern) -> tuple[str | None, str | None]:
     """Eintritts-(VDOM, Interface) einer Firewall Richtung Quelle bestimmen.
 
     vdom gesetzt → Reverse-Route auf diesem VDOM → dessen Interface zur Quelle.
@@ -136,9 +149,11 @@ async def _resolve_ingress(client: FmgClient, inv: Inventory, adom: str | None,
     Live bevorzugt, sonst Cache (symmetrisches Routing angenommen).
     """
     if vdom is None:
-        # Router-/Edge-VDOM zuerst über die Default-Route (funktioniert auch bei
-        # gerouteter Kopplung), sonst über ein Overlay-/SD-WAN-Interface.
-        vdom = _edge_vdom(inv, device) or _overlay_vdom(inv, device, overlay_re)
+        # Router-/Edge-VDOM bestimmen — zuerst per Name (robust, auch bei
+        # dynamischem Routing), dann Default-Route-Edge, dann Overlay/SD-WAN.
+        vdom = (_router_vdom(inv, device, router_re)
+                or _edge_vdom(inv, device)
+                or _overlay_vdom(inv, device, overlay_re))
     vdoms = [vdom] if vdom is not None else (
         (inv.devices.get(device) or {}).get("vdoms") or ["root"])
     fallback: tuple[str, str] | None = None
@@ -199,9 +214,11 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
                     dst_port: int | None = None, src_port: int | None = None,
                     icmp_type: int | None = None, icmp_code: int | None = None,
                     inv: Inventory, prefixes: PrefixTable, client: FmgClient,
-                    overlay_pattern: str, max_hops: int = 8) -> list[Hop]:
+                    overlay_pattern: str, max_hops: int = 8,
+                    router_vdom_pattern: str = "(?i)(router|wan.?edge)") -> list[Hop]:
     device, vdom, srcintf = find_ingress(prefixes, inv, src_ip)
     overlay_re = re.compile(overlay_pattern)
+    router_re = re.compile(router_vdom_pattern)
 
     hops: list[Hop] = []
     visited: set[tuple[str, str]] = set()
@@ -329,7 +346,7 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
             # Eintritts-VDOM (Router-VDOM) + Ingress-Interface Richtung Quelle.
             rv, rintf = await _resolve_ingress(
                 client, inv, inv.adom_of(next_device), next_device, next_vdom,
-                src_ip, overlay_re)
+                src_ip, overlay_re, router_re)
             next_vdom = next_vdom or rv
             next_srcintf = next_srcintf or rintf
             if next_srcintf is None:

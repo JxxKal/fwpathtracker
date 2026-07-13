@@ -265,6 +265,27 @@ async def test_multi_vdom_entry_prefers_edge_vdom_routed(inventory, prefixes):
     assert aggregate_verdict(hops) == "ALLOW"
 
 
+async def test_multi_vdom_entry_prefers_named_router_vdom(inventory, prefixes):
+    """Dynamisches Routing (keine statische Default-Route): der Eintritts-VDOM
+    wird über den NAMEN 'Router' bestimmt, nicht 'root' (das via L2-Transfer0 eine
+    Route zur Quelle hat). Deckt den Feld-Fall ab (BGP übers SD-WAN)."""
+    client, t = make_client()
+    add_route(t, "fw-a", "root", "10.5.9.20", "wan", gateway="203.0.113.2")
+    add_policy_lookup(t, "fw-a", "root",
+                      tcp_params("lan1", "10.1.1.10", "10.5.9.20", 443), 100)
+    add_route(t, "fw-e", "Router", "10.1.1.10", "wan-e")
+    add_route(t, "fw-e", "Router", "10.5.9.20", "lan-e")
+    add_policy_lookup(t, "fw-e", "Router",
+                      tcp_params("wan-e", "10.1.1.10", "10.5.9.20", 443), 600)
+
+    hops = await _trace(inventory, prefixes, client, "10.1.1.10", "10.5.9.20")
+    assert len(hops) == 2
+    assert (hops[1].device, hops[1].vdom, hops[1].srcintf) == ("fw-e", "Router", "wan-e")
+    assert hops[1].egress_class == "LOCAL"
+    assert hops[1].verdict == "ALLOW"
+    assert aggregate_verdict(hops) == "ALLOW"
+
+
 async def test_policy_zero_is_implicit_deny(inventory, prefixes):
     """FortiOS policy-lookup mit policy_id 0 = implizites Deny (keine Regel greift
     live, z.B. Policy-Package im FortiManager nicht installiert) → DENY + Hinweis,

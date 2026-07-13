@@ -145,6 +145,26 @@ def lab_snapshot_rows() -> list[dict]:
              "srcaddr": ["all"], "dstaddr": ["all"], "service": ["ALL"]},
         ]),
 
+        # Site E — wie das Feld: dynamisches Routing (BGP), also KEINE statische
+        # Default-Route sichtbar. Der Eintritts-VDOM ist über den Namen 'Router'
+        # zu erkennen; 'root' hat L2-Transfer0 mit Route zur Quelle (Falle).
+        _row("device", "fw-e", {"name": "fw-e", "vdom": [{"name": "root"}, {"name": "Router"}]}),
+        _row("interface", "fw-e", [
+            {"name": "L2-Transfer0", "ip": ["10.5.5.1", "255.255.255.0"], "vdom": ["root"]},
+            {"name": "vle1", "type": "vdom-link", "vdom": ["root"]},
+            {"name": "wan-e", "ip": ["10.5.0.1", "255.255.255.252"], "vdom": ["Router"]},
+            {"name": "vle0", "type": "vdom-link", "vdom": ["Router"]},
+            {"name": "lan-e", "ip": ["10.5.9.1", "255.255.255.0"], "vdom": ["Router"]},
+        ]),
+        _row("package", "pkg-e-router", {"name": "pkg-e-router", "scope member": [
+            {"name": "fw-e", "vdom": "Router"},
+        ]}),
+        _row("policy", "pkg-e-router", [
+            {"policyid": 600, "name": "allow-bgp-site", "action": 1, "status": 1,
+             "srcintf": ["wan-e"], "dstintf": ["lan-e"],
+             "srcaddr": ["all"], "dstaddr": ["all"], "service": ["ALL"]},
+        ]),
+
         _row("address", "srv-db", {"name": "srv-db",
                                    "subnet": ["10.2.1.30", "255.255.255.255"]}),
         _row("address", "net-site-a", {"name": "net-site-a",
