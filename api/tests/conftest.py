@@ -2,11 +2,13 @@
 
 Topologie:
   Site A (10.1.0.0/20) — fw-a (VDOMs root + dmz, ADOM corp)
-    root: lan1 10.1.1.1/24, lan2 10.1.2.1/24, vpn-to-b (tunnel), wan, vlink0
+    root: lan1 10.1.1.1/24, lan2 10.1.2.1/24, vpn-to-b (tunnel), wan,
+          xlink1 10.99.0.1/30 (Transit zu fw-b, geroutet), vlink0
     dmz:  vlink1, dmz-lan 10.1.8.1/24
   Site B (10.2.0.0/20) — fw-b (VDOM root, ADOM corp)
-    root: lan1 10.2.1.1/24, vpn-to-a (tunnel), wan
-  Full-Mesh: statische Routen über die vpn-Tunnel; Default-Route via wan.
+    root: lan1 10.2.1.1/24, vpn-to-a (tunnel), wan, xlink1 10.99.0.2/30
+  Full-Mesh: statische Routen über die vpn-Tunnel; Default-Route via wan;
+  gerouteter Underlay-Transit fw-a↔fw-b über xlink1 (10.99.0.0/30).
 """
 from __future__ import annotations
 
@@ -36,6 +38,7 @@ def lab_snapshot_rows() -> list[dict]:
             {"name": "lan2", "ip": ["10.1.2.1", "255.255.255.0"], "vdom": ["root"]},
             {"name": "vpn-to-b", "type": "tunnel", "vdom": ["root"]},
             {"name": "wan", "ip": ["203.0.113.1", "255.255.255.252"], "vdom": ["root"]},
+            {"name": "xlink1", "ip": ["10.99.0.1", "255.255.255.252"], "vdom": ["root"]},
             {"name": "vlink0", "type": "vdom-link", "vdom": ["root"]},
             {"name": "vlink1", "type": "vdom-link", "vdom": ["dmz"]},
             {"name": "dmz-lan", "ip": ["10.1.8.1", "255.255.255.0"], "vdom": ["dmz"]},
@@ -44,6 +47,7 @@ def lab_snapshot_rows() -> list[dict]:
             {"name": "lan1", "ip": ["10.2.1.1", "255.255.255.0"], "vdom": ["root"]},
             {"name": "vpn-to-a", "type": "tunnel", "vdom": ["root"]},
             {"name": "wan", "ip": ["198.51.100.1", "255.255.255.252"], "vdom": ["root"]},
+            {"name": "xlink1", "ip": ["10.99.0.2", "255.255.255.252"], "vdom": ["root"]},
         ]),
 
         _row("zone", "inside-a", {"name": "inside-a", "dynamic_mapping": [

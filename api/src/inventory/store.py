@@ -212,6 +212,34 @@ class Inventory:
     def interface(self, device: str, name: str) -> dict | None:
         return (self.interfaces.get(device) or {}).get(name)
 
+    def interface_by_ip(self, ip: str | ipaddress.IPv4Address) -> tuple[str, str, str] | None:
+        """(device, vdom, intf) eines Interfaces mit exakt dieser Adresse.
+
+        Für Gateway→Firewall-Matching bei gerouteter Standortkopplung: ist der
+        Next-Hop einer Route die Interface-IP einer anderen FortiGate, ist das
+        der nächste Hop — ohne Owner-Tabelle.
+        """
+        try:
+            addr = ipaddress.IPv4Address(ip) if isinstance(ip, str) else ip
+        except (ipaddress.AddressValueError, ValueError):
+            return None
+        for device, table in self.interfaces.items():
+            for intf in table.values():
+                if intf["ip"] is not None and intf["ip"].ip == addr:
+                    return device, intf["vdom"], intf["name"]
+        return None
+
+    def interfaces_in_network(self, net: ipaddress.IPv4Network) -> list[tuple[str, str, str]]:
+        """Alle (device, vdom, intf) mit einer Adresse in net — für Transit-
+        Segment-Peers: welche andere Firewall hängt im selben gerouteten
+        Übergangsnetz wie der Egress?"""
+        out = []
+        for device, table in self.interfaces.items():
+            for intf in table.values():
+                if intf["ip"] is not None and intf["ip"].ip in net:
+                    out.append((device, intf["vdom"], intf["name"]))
+        return out
+
     def zone_of(self, device: str, vdom: str, intf: str) -> str:
         """Zone, die das Interface enthält — sonst das Interface selbst."""
         for zname, members in (self.zones.get((device, vdom)) or {}).items():

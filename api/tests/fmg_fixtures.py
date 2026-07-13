@@ -50,14 +50,15 @@ def proxy_offline(device: str) -> dict:
 
 
 def add_route(t: FixtureTransport, device: str, vdom: str, dst: str,
-              interface: str | None, offline: bool = False) -> None:
+              interface: str | None, offline: bool = False,
+              gateway: str = "0.0.0.0") -> None:
     req = proxy_request(device, vdom, "router/lookup", {"destination": dst})
     if offline:
         t.add(req, proxy_offline(device))
     elif interface is None:
         t.add(req, proxy_ok(device, {}))
     else:
-        t.add(req, proxy_ok(device, {"interface": interface, "gateway": "0.0.0.0"}))
+        t.add(req, proxy_ok(device, {"interface": interface, "gateway": gateway}))
 
 
 def add_policy_lookup(t: FixtureTransport, device: str, vdom: str, params: dict,

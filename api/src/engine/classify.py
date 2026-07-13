@@ -5,10 +5,12 @@ Entscheidet, wie es nach einem Hop weitergeht. Reihenfolge der Prüfungen:
   2. VDOM_LINK – Egress ist ein vdom-link → nächster Hop = Peer-VDOM, gleiches Gerät
   3. OVERLAY   – Tunnel-/SD-WAN-Interface (Typ oder Name-Pattern) → nächster Hop =
                  Ziel-Site-Firewall via PrefixTable
-  4. ROUTED    – Egress ist kein Overlay, aber das Ziel gehört einer ANDEREN
-                 bekannten Firewall (PrefixTable) → Standortkopplung über
-                 gerouteten Underlay (MPLS/L3, kein Tunnel) → nächster Hop =
-                 diese Firewall. Ingress dort ermittelt die Path-Engine.
+  4. ROUTED    – Egress ist kein Overlay → nächste Firewall direkt aus dem
+                 Routing (Standortkopplung über MPLS/L3, kein Tunnel):
+                 (a) Next-Hop-Gateway == Interface-IP einer anderen FW, oder
+                 (b) andere FW im selben Transit-Segment wie der Egress.
+                 Fallback: bekanntes Ziel-Präfix (Override/connected) via
+                 PrefixTable, Ingress dort ermittelt die Path-Engine.
   5. DEFAULT   – Ziel gehört keinem gemanagten Gerät → Richtung Internet/unbekannt
 """
 from __future__ import annotations
@@ -60,7 +62,7 @@ def _remote_overlay_intf(inv: Inventory, device: str, vdom: str,
 
 def classify_egress(inv: Inventory, prefixes: PrefixTable, overlay_pattern: str,
                     device: str, vdom: str, egress_intf: str,
-                    dst_ip: str) -> Classification:
+                    dst_ip: str, gateway: str | None = None) -> Classification:
     overlay_re = re.compile(overlay_pattern)
     dst = ipaddress.IPv4Address(dst_ip)
     intf_info = inv.interface(device, egress_intf)
@@ -98,9 +100,24 @@ def classify_egress(inv: Inventory, prefixes: PrefixTable, overlay_pattern: str,
         cls.next_srcintf = remote_intf
         return cls
 
-    # 4. ROUTED: kein Overlay, aber das Ziel gehört einer ANDEREN bekannten
-    #    Firewall — Standortkopplung über gerouteten Underlay (MPLS/L3). Weiter
-    #    zu dieser Firewall; next_srcintf bleibt offen (Reverse-Lookup in path.py).
+    # 4. ROUTED: kein Overlay — nächste Firewall direkt aus dem Routing ableiten
+    #    (keine Owner-Tabelle nötig, iTop hat keine FW-Zuordnung):
+    #    a) Next-Hop-Gateway ist die Interface-IP einer ANDEREN Firewall
+    #    b) sonst: eine andere Firewall hängt im selben Transit-Segment wie der Egress
+    nxt = _next_fw_via_routing(inv, device, vdom, egress_intf, gateway)
+    if nxt is not None:
+        nd, nv, nintf = nxt
+        return Classification(
+            egress_class="ROUTED",
+            next_device=nd, next_vdom=nv, next_srcintf=nintf,
+            warnings=[
+                f"Nächster Hop {nd}/{nv} via '{egress_intf}' "
+                f"(Gateway {gateway or '—'}) — geroutete Standortkopplung."
+            ],
+        )
+
+    # 5. Fallback: bekanntes Ziel-Präfix (manueller Site-Override, oder connected
+    #    einer anderen FW hinter einem L3-Switch, wo Routing-Discovery nicht greift).
     entry = prefixes.lookup(dst_ip)
     if entry is not None and (entry.device, entry.vdom) != (device, vdom):
         site = f" ({entry.site_name})" if entry.site_name else ""
@@ -108,13 +125,35 @@ def classify_egress(inv: Inventory, prefixes: PrefixTable, overlay_pattern: str,
             egress_class="ROUTED",
             next_device=entry.device, next_vdom=entry.vdom, next_srcintf=None,
             warnings=[
-                f"Ziel {dst_ip} liegt hinter {entry.device}/{entry.vdom}{site} — "
-                "geroutete Standortkopplung, verfolge weiter."
+                f"Ziel {dst_ip} liegt hinter {entry.device}/{entry.vdom}{site} "
+                "(Präfix-Zuordnung) — geroutete Standortkopplung, verfolge weiter."
             ],
         )
 
-    # 5. DEFAULT
+    # 6. DEFAULT
     return Classification(egress_class="DEFAULT")
+
+
+def _next_fw_via_routing(inv: Inventory, device: str, vdom: str, egress_intf: str,
+                         gateway: str | None) -> tuple[str, str, str] | None:
+    """Nächste Firewall aus dem Routing bestimmen, ohne Owner-Tabelle.
+
+    a) Gateway == Interface-IP einer anderen Firewall → das ist der nächste Hop,
+       das Interface ist zugleich dessen Ingress.
+    b) sonst: eine andere Firewall hat ein Interface im selben Netz wie der Egress
+       (gemeinsames Transit-Segment) → dorthin.
+    Rückgabe: (next_device, next_vdom, next_srcintf) oder None.
+    """
+    if gateway and gateway not in ("0.0.0.0", "::", ""):
+        hit = inv.interface_by_ip(gateway)
+        if hit is not None and (hit[0], hit[1]) != (device, vdom):
+            return hit
+    eg = inv.interface(device, egress_intf)
+    if eg is not None and eg.get("ip") is not None:
+        for dev, vd, intf in inv.interfaces_in_network(eg["ip"].network):
+            if (dev, vd) != (device, vdom):
+                return dev, vd, intf
+    return None
 
 
 def _looks_like_vdom_link(name: str) -> bool:

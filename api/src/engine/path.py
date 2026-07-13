@@ -199,7 +199,7 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
 
         # ── b) Klassifikation ────────────────────────────────────────────────
         cls = classify_egress(inv, prefixes, overlay_pattern, device, vdom,
-                              hop.egress, dst_ip)
+                              hop.egress, dst_ip, gateway=route.get("gateway"))
         hop.egress_class = cls.egress_class
         hop.warnings.extend(cls.warnings)
 
