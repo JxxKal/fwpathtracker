@@ -86,6 +86,13 @@ class ItopSource:
         self._loaded_at = time.monotonic()
         return hosts
 
+    async def refresh(self, cfg: dict) -> int:
+        """Host-Index sofort neu laden (Cache invalidieren) — für den manuellen
+        Refresh-Button und den täglichen Auto-Refresh. Gibt die Anzahl Hosts zurück.
+        """
+        self._loaded_at = 0.0
+        return len(await self._index(cfg))
+
     async def resolve_name(self, cfg: dict, name: str) -> dict | None:
         needle = name.strip().lower()
         for h in await self._index(cfg):

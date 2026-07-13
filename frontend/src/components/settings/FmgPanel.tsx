@@ -6,6 +6,7 @@ import type { SyncStatus } from '../../types';
 
 export default function FmgPanel() {
   const [cfg, setCfg] = useState<Record<string, unknown>>({});
+  const [tracker, setTracker] = useState<Record<string, unknown>>({});
   const [status, setStatus] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ ok: boolean; text: string; adoms: string[] } | null>(null);
   const [sync, setSync] = useState<SyncStatus | null>(null);
@@ -13,8 +14,19 @@ export default function FmgPanel() {
 
   useEffect(() => {
     getConfig('fmg').then(setCfg);
+    getConfig('tracker').then(setTracker);
     fmgSyncStatus().then(setSync).catch(() => undefined);
   }, []);
+
+  async function setInterval_(value: number) {
+    const next = { ...tracker, sync_interval_s: value };
+    try {
+      setTracker(await patchConfig('tracker', next));
+      setStatus(de.settings.saved);
+    } catch (e) {
+      setStatus(`${de.common.error}: ${e instanceof Error ? e.message : e}`);
+    }
+  }
 
   useEffect(() => {
     if (sync?.phase !== 'running') return;
@@ -138,6 +150,20 @@ export default function FmgPanel() {
           <RefreshCw size={14} className={sync?.phase === 'running' ? 'animate-spin' : ''} />
           {sync?.phase === 'running' ? de.settings.syncRunning : de.settings.sync}
         </button>
+        <label className="ml-auto flex items-center gap-2 text-xs text-slate-400">
+          {de.settings.syncInterval}
+          <select
+            className="fwpt-input w-auto py-1"
+            value={String((tracker.sync_interval_s as number) ?? 86400)}
+            onChange={(e) => setInterval_(Number(e.target.value))}
+          >
+            <option value="86400">{de.settings.intervalDaily}</option>
+            <option value="21600">{de.settings.interval6h}</option>
+            <option value="3600">{de.settings.interval1h}</option>
+            <option value="1800">{de.settings.interval30m}</option>
+            <option value="0">{de.settings.intervalOff}</option>
+          </select>
+        </label>
         {status && <span className="text-sm text-slate-400">{status}</span>}
       </div>
 

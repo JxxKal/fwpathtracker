@@ -20,3 +20,16 @@ async def test_connection(request: Request, _admin: dict = Depends(require_admin
         raise
     except Exception as exc:
         raise HTTPException(502, f"Verbindung fehlgeschlagen: {exc}") from exc
+
+
+@router.post("/refresh")
+async def refresh_index(request: Request, _admin: dict = Depends(require_admin)) -> dict:
+    """Host-Index (Namensauflösung) sofort neu laden — Cache invalidieren."""
+    cfg = await read_config("itop")
+    if not cfg.get("base_url"):
+        raise HTTPException(400, "iTop nicht konfiguriert – bitte zuerst speichern.")
+    try:
+        count = await request.app.state.resolver.itop.refresh(cfg)
+        return {"ok": True, "count": count}
+    except Exception as exc:
+        raise HTTPException(502, f"iTop-Refresh fehlgeschlagen: {exc}") from exc

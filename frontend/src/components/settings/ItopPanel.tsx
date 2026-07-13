@@ -1,6 +1,6 @@
-import { CheckCircle2, XCircle } from 'lucide-react';
+import { CheckCircle2, RefreshCw, XCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { getConfig, itopTest, patchConfig } from '../../api';
+import { getConfig, itopRefresh, itopTest, patchConfig } from '../../api';
 import { de } from '../../i18n/de';
 
 export default function ItopPanel() {
@@ -28,6 +28,17 @@ export default function ItopPanel() {
     try {
       const r = await itopTest();
       setTest({ ok: true, text: `OK — Organisationen: ${r.organisations.join(', ')}` });
+    } catch (e) {
+      setTest({ ok: false, text: e instanceof Error ? e.message : String(e) });
+    } finally { setBusy(false); }
+  }
+
+  async function refresh() {
+    setBusy(true);
+    setTest(null);
+    try {
+      const r = await itopRefresh();
+      setTest({ ok: true, text: `${de.settings.itopRefreshed} (${r.count})` });
     } catch (e) {
       setTest({ ok: false, text: e instanceof Error ? e.message : String(e) });
     } finally { setBusy(false); }
@@ -72,6 +83,9 @@ export default function ItopPanel() {
       <div className="flex items-center gap-2">
         <button type="button" className="fwpt-btn" onClick={save} disabled={busy}>{de.settings.save}</button>
         <button type="button" className="fwpt-btn-ghost" onClick={runTest} disabled={busy}>{de.settings.test}</button>
+        <button type="button" className="fwpt-btn-ghost" onClick={refresh} disabled={busy}>
+          <RefreshCw size={14} /> {de.settings.itopRefresh}
+        </button>
         {status && <span className="text-sm text-slate-400">{status}</span>}
       </div>
     </div>

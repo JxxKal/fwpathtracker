@@ -54,11 +54,15 @@ async def _rebuild_state(app: FastAPI, inv: Inventory) -> None:
 
 
 async def _periodic_sync(app: FastAPI) -> None:
-    """Automatischer Re-Sync (Intervall aus system_config['tracker'])."""
+    """Automatischer FMG-Re-Sync (Intervall aus system_config['tracker'],
+    Default täglich). sync_interval_s <= 0 → aus (Config wird weiter gepollt)."""
     from fmg.factory import build_fmg_client
     while True:
         tracker_cfg = await read_config("tracker")
-        interval = int(tracker_cfg.get("sync_interval_s", 1800))
+        interval = int(tracker_cfg.get("sync_interval_s", 86400))
+        if interval <= 0:                 # "aus" — Config regelmäßig neu prüfen
+            await asyncio.sleep(300)
+            continue
         await asyncio.sleep(max(interval, 60))
         fmg_cfg = await read_config("fmg")
         adoms = fmg_cfg.get("adoms") or []
@@ -79,6 +83,26 @@ async def _periodic_sync(app: FastAPI) -> None:
             await client.close()
 
 
+async def _periodic_itop_refresh(app: FastAPI) -> None:
+    """Täglicher Refresh des iTop-Namens-Index (itop_refresh_interval_s, Default
+    täglich). <= 0 → aus. iTop ist nur Namensauflösung, kein Trace-Inventory."""
+    while True:
+        tracker_cfg = await read_config("tracker")
+        interval = int(tracker_cfg.get("itop_refresh_interval_s", 86400))
+        if interval <= 0:
+            await asyncio.sleep(300)
+            continue
+        await asyncio.sleep(max(interval, 60))
+        itop_cfg = await read_config("itop")
+        if not itop_cfg.get("base_url"):
+            continue
+        try:
+            n = await app.state.resolver.itop.refresh(itop_cfg)
+            log.info("Periodischer iTop-Refresh: %d Hosts.", n)
+        except Exception as exc:
+            log.warning("Periodischer iTop-Refresh fehlgeschlagen: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     cfg = Config()
@@ -93,10 +117,12 @@ async def lifespan(app: FastAPI):
     await _rebuild_state(app, await load_inventory(pool))
 
     sync_task = asyncio.create_task(_periodic_sync(app))
+    itop_task = asyncio.create_task(_periodic_itop_refresh(app))
     try:
         yield
     finally:
         sync_task.cancel()
+        itop_task.cancel()
         await database.close_pool()
 
 

@@ -122,6 +122,11 @@ export async function itopTest(): Promise<{ ok: boolean; organisations: string[]
   return request('/api/itop/test', { method: 'POST' });
 }
 
+export async function itopRefresh(): Promise<{ ok: boolean; count: number }> {
+  if (isDemoMode()) return { ok: true, count: 42 };
+  return request('/api/itop/refresh', { method: 'POST' });
+}
+
 // ── Users ─────────────────────────────────────────────────────────────────────
 
 export async function fetchUsers(): Promise<UserEntry[]> {
