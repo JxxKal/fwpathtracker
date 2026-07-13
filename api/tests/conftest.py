@@ -165,34 +165,6 @@ def lab_snapshot_rows() -> list[dict]:
              "srcaddr": ["all"], "dstaddr": ["all"], "service": ["ALL"]},
         ]),
 
-        # Site F — Feld-Fall: Eintritt am 'Router'-VDOM, aber das Ziel hängt hinter
-        # dem Nachbar-VDOM 'root' DESSELBEN Geräts. Der Router-VDOM routet das Ziel
-        # über seine Default-Route nach AUSSEN (gw 10.6.0.2) → ohne Fix springt der
-        # Trace zu einer anderen Firewall statt intern auf 'root'.
-        _row("device", "fw-f", {"name": "fw-f", "vdom": [{"name": "root"}, {"name": "Router"}]}),
-        _row("interface", "fw-f", [
-            {"name": "wan-f", "ip": ["10.6.0.1", "255.255.255.252"], "vdom": ["Router"]},
-            {"name": "vlf0", "type": "vdom-link", "vdom": ["Router"]},
-            {"name": "vlf1", "type": "vdom-link", "vdom": ["root"]},
-            {"name": "lan-f", "ip": ["10.6.9.1", "255.255.255.0"], "vdom": ["root"]},
-        ]),
-        _row("package", "pkg-f-router", {"name": "pkg-f-router", "scope member": [
-            {"name": "fw-f", "vdom": "Router"},
-        ]}),
-        _row("package", "pkg-f-root", {"name": "pkg-f-root", "scope member": [
-            {"name": "fw-f", "vdom": "root"},
-        ]}),
-        _row("policy", "pkg-f-router", [
-            {"policyid": 710, "name": "router-transit", "action": 1, "status": 1,
-             "srcintf": ["wan-f"], "dstintf": ["vlf0"],
-             "srcaddr": ["all"], "dstaddr": ["all"], "service": ["ALL"]},
-        ]),
-        _row("policy", "pkg-f-root", [
-            {"policyid": 700, "name": "allow-to-lan", "action": 1, "status": 1,
-             "srcintf": ["vlf1"], "dstintf": ["lan-f"],
-             "srcaddr": ["all"], "dstaddr": ["all"], "service": ["ALL"]},
-        ]),
-
         _row("address", "srv-db", {"name": "srv-db",
                                    "subnet": ["10.2.1.30", "255.255.255.255"]}),
         _row("address", "net-site-a", {"name": "net-site-a",

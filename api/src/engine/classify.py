@@ -104,22 +104,6 @@ def classify_egress(inv: Inventory, prefixes: PrefixTable, overlay_pattern: str,
         cls.next_srcintf = remote_intf
         return cls
 
-    # 3b. Ziel gehört einem ANDEREN VDOM DESSELBEN Geräts (PrefixTable) → intern
-    #     dorthin ketten, statt der (Default-)Route nach außen zu einer anderen FW
-    #     zu folgen. Sonst springt der Router-VDOM über seine Default-Route zur
-    #     nächsten Firewall ab, obwohl das Ziel lokal hinter einem Nachbar-VDOM
-    #     (z.B. 'root') hängt. Ingress ermittelt die Path-Engine (Reverse-Route).
-    owner = prefixes.lookup(dst_ip)
-    if owner is not None and owner.device == device and owner.vdom != vdom:
-        return Classification(
-            egress_class="VDOM_LINK",
-            next_device=device, next_vdom=owner.vdom, next_srcintf=None,
-            warnings=[
-                f"Ziel {dst_ip} gehört VDOM '{owner.vdom}' desselben Geräts — "
-                "intern weiter (nicht der Default-Route nach außen folgen)."
-            ],
-        )
-
     # 4. Nächsten Hop direkt aus dem Routing ableiten (keine Owner-Tabelle nötig):
     #    a) Next-Hop-Gateway == Interface-IP eines anderen VDOM/Geräts
     #    b) sonst: anderer VDOM/andere FW im selben Transit-Segment wie der Egress

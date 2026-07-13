@@ -342,10 +342,8 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
         next_device = cls.next_device
         next_vdom = cls.next_vdom
         next_srcintf = cls.next_srcintf
-        if next_vdom is None or next_srcintf is None:
-            # Eintritts-VDOM (Router-VDOM) und/oder Ingress-Interface Richtung
-            # Quelle ermitteln — für ROUTED (Site-Eintritt) wie für den internen
-            # VDOM-Handoff (Ziel gehört Nachbar-VDOM), wo next_srcintf offen ist.
+        if cls.egress_class == "ROUTED" and (next_vdom is None or next_srcintf is None):
+            # Eintritts-VDOM (Router-VDOM) + Ingress-Interface Richtung Quelle.
             rv, rintf = await _resolve_ingress(
                 client, inv, inv.adom_of(next_device), next_device, next_vdom,
                 src_ip, overlay_re, router_re)

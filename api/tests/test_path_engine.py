@@ -286,35 +286,6 @@ async def test_multi_vdom_entry_prefers_named_router_vdom(inventory, prefixes):
     assert aggregate_verdict(hops) == "ALLOW"
 
 
-async def test_dest_stays_on_device_for_sibling_vdom(inventory, prefixes):
-    """Feld-Fall: Eintritt am Ziel-'Router'-VDOM, aber das Ziel gehört dem Nachbar-
-    VDOM 'root' DESSELBEN Geräts. Der Router-VDOM routet das Ziel über die Default-
-    Route nach außen (gw 10.6.0.2) — der Trace darf NICHT zu einer anderen Firewall
-    abspringen, sondern muss intern auf fw-f/root ketten."""
-    client, t = make_client()
-    add_route(t, "fw-a", "root", "10.6.9.20", "wan", gateway="203.0.113.2")
-    add_policy_lookup(t, "fw-a", "root",
-                      tcp_params("lan1", "10.1.1.10", "10.6.9.20", 443), 100)
-    # fw-f/Router: Eintritt (Reverse-Route) + Default-Route zum Ziel (nach außen)
-    add_route(t, "fw-f", "Router", "10.1.1.10", "wan-f")
-    add_route(t, "fw-f", "Router", "10.6.9.20", "wan-f", gateway="10.6.0.2")
-    add_policy_lookup(t, "fw-f", "Router",
-                      tcp_params("wan-f", "10.1.1.10", "10.6.9.20", 443), 710)
-    # fw-f/root: internes Ingress (Reverse-Route) + Ziel connected
-    add_route(t, "fw-f", "root", "10.1.1.10", "vlf1")
-    add_route(t, "fw-f", "root", "10.6.9.20", "lan-f")
-    add_policy_lookup(t, "fw-f", "root",
-                      tcp_params("vlf1", "10.1.1.10", "10.6.9.20", 443), 700)
-
-    hops = await _trace(inventory, prefixes, client, "10.1.1.10", "10.6.9.20")
-    assert len(hops) == 3
-    assert (hops[1].device, hops[1].vdom) == ("fw-f", "Router")
-    assert hops[1].egress_class == "VDOM_LINK"          # intern statt Absprung
-    assert (hops[2].device, hops[2].vdom, hops[2].srcintf) == ("fw-f", "root", "vlf1")
-    assert hops[2].egress_class == "LOCAL"
-    assert aggregate_verdict(hops) == "ALLOW"
-
-
 async def test_policy_zero_is_implicit_deny(inventory, prefixes):
     """FortiOS policy-lookup mit policy_id 0 = implizites Deny (keine Regel greift
     live, z.B. Policy-Package im FortiManager nicht installiert) → DENY + Hinweis,
