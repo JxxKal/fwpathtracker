@@ -35,6 +35,7 @@ export const de = {
     LOCAL: 'lokal',
     VDOM_LINK: 'VDOM-Link',
     OVERLAY: 'SD-WAN Overlay',
+    ROUTED: 'Transit-Route (Standortkopplung)',
     DEFAULT: 'Default-Route',
     UNKNOWN: 'unbekannt',
   },

@@ -2,7 +2,7 @@
 
 export type HopVerdict = 'ALLOW' | 'DENY' | 'UNKNOWN';
 export type TraceVerdict = 'ALLOW' | 'DENY' | 'DEGRADED';
-export type EgressClass = 'LOCAL' | 'VDOM_LINK' | 'OVERLAY' | 'DEFAULT' | 'UNKNOWN';
+export type EgressClass = 'LOCAL' | 'VDOM_LINK' | 'OVERLAY' | 'ROUTED' | 'DEFAULT' | 'UNKNOWN';
 export type Provenance = 'fmg' | 'itop' | 'dns' | 'ip';
 
 export interface NameEntry {

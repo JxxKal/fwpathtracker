@@ -125,6 +125,32 @@ async def test_internet_default_route(inventory, prefixes):
     assert hops[0].verdict == "ALLOW"
 
 
+async def test_cross_site_routed_underlay(inventory, prefixes):
+    """Standortkopplung über gerouteten Underlay (MPLS/L3, KEIN Tunnel):
+    fw-a erreicht 10.2.1.30 über 'wan' (kein Overlay/vdom-link), aber das Ziel
+    gehört fw-b (PrefixTable) → ROUTED-Kette statt fälschlich 'Internet'.
+    Der Ingress auf fw-b wird per Reverse-Route zur Quelle ermittelt."""
+    client, t = make_client()
+    # fw-a: Live-Route zum Ziel via wan (nicht-Overlay) — nicht die vpn-Cache-Route
+    add_route(t, "fw-a", "root", "10.2.1.30", "wan")
+    add_policy_lookup(t, "fw-a", "root",
+                      tcp_params("lan1", "10.1.1.10", "10.2.1.30", 443), 100)
+    # fw-b: Reverse-Route zur Quelle (Ingress-Ermittlung) + Vorwärts-Route + Policy
+    add_route(t, "fw-b", "root", "10.1.1.10", "wan")
+    add_route(t, "fw-b", "root", "10.2.1.30", "lan1")
+    add_policy_lookup(t, "fw-b", "root",
+                      tcp_params("wan", "10.1.1.10", "10.2.1.30", 443), 200)
+
+    hops = await _trace(inventory, prefixes, client, "10.1.1.10", "10.2.1.30")
+    assert len(hops) == 2
+    assert hops[0].egress == "wan"
+    assert hops[0].egress_class == "ROUTED"
+    assert (hops[1].device, hops[1].vdom, hops[1].srcintf) == ("fw-b", "root", "wan")
+    assert hops[1].egress_class == "LOCAL"
+    assert [h.verdict for h in hops] == ["ALLOW", "ALLOW"]
+    assert aggregate_verdict(hops) == "ALLOW"
+
+
 async def test_device_offline_degraded(inventory, prefixes):
     client, t = make_client()
     add_route(t, "fw-a", "root", "10.2.1.30", "vpn-to-b", offline=True)

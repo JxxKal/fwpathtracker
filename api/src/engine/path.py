@@ -91,6 +91,25 @@ def cached_route(inv: Inventory, device: str, vdom: str, dst_ip: str) -> dict | 
     return best[1] if best else None
 
 
+async def _resolve_ingress(client: FmgClient, inv: Inventory, adom: str | None,
+                           device: str, vdom: str, src_ip: str) -> str | None:
+    """Ingress-Interface einer Transit-Firewall = Interface Richtung Quelle.
+
+    Bei gerouteter Standortkopplung (ROUTED) ist das Eingangs-Interface der
+    nächsten Firewall nicht vorgegeben. Reverse-Route-Lookup auf src_ip liefert
+    es (symmetrisches Routing angenommen); live bevorzugt, sonst Cache.
+    """
+    route = None
+    if adom is not None:
+        try:
+            route = await _live_route(client, adom, device, vdom, src_ip)
+        except (FmgError, FmgTargetOffline):
+            route = None
+    if route is None:
+        route = cached_route(inv, device, vdom, src_ip)
+    return route["interface"] if route else None
+
+
 async def _live_policy_lookup(client: FmgClient, adom: str, device: str, vdom: str,
                               srcintf: str, src_ip: str, dst_ip: str, protocol: str,
                               dst_port: int | None, src_port: int | None,
@@ -239,8 +258,19 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
             break
         if cls.next_device is None or cls.next_vdom is None:
             break
+        next_srcintf = cls.next_srcintf
+        if next_srcintf is None and cls.egress_class == "ROUTED":
+            # Ingress der Transit-Firewall = Interface Richtung Quelle.
+            next_srcintf = await _resolve_ingress(
+                client, inv, inv.adom_of(cls.next_device),
+                cls.next_device, cls.next_vdom, src_ip)
+            if next_srcintf is None:
+                hop.warnings.append(
+                    f"Ingress-Interface auf {cls.next_device}/{cls.next_vdom} "
+                    "nicht bestimmbar (Reverse-Route zur Quelle fehlt) — 'any'."
+                )
         device, vdom = cls.next_device, cls.next_vdom
-        srcintf = cls.next_srcintf or "any"
+        srcintf = next_srcintf or "any"
     else:
         if hops:
             hops[-1].warnings.append(f"max_hops={max_hops} erreicht — Trace abgebrochen.")

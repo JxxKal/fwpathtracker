@@ -37,7 +37,7 @@ class Hop(BaseModel):
     src_zone: str | None = None
     egress: str | None = None
     egress_zone: str | None = None
-    egress_class: Literal["LOCAL", "VDOM_LINK", "OVERLAY", "DEFAULT", "UNKNOWN"] = "UNKNOWN"
+    egress_class: Literal["LOCAL", "VDOM_LINK", "OVERLAY", "ROUTED", "DEFAULT", "UNKNOWN"] = "UNKNOWN"
     route: dict | None = None
     verdict: HopVerdict = "UNKNOWN"
     matched_policy: Candidate | None = None

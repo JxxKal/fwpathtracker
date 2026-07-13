@@ -1,11 +1,15 @@
-"""Egress-Interface-Klassifikation: LOCAL | VDOM_LINK | OVERLAY | DEFAULT.
+"""Egress-Interface-Klassifikation: LOCAL | VDOM_LINK | OVERLAY | ROUTED | DEFAULT.
 
 Entscheidet, wie es nach einem Hop weitergeht. Reihenfolge der Prüfungen:
   1. LOCAL     – connected Subnet des Egress enthält das Ziel → letzter Hop
   2. VDOM_LINK – Egress ist ein vdom-link → nächster Hop = Peer-VDOM, gleiches Gerät
   3. OVERLAY   – Tunnel-/SD-WAN-Interface (Typ oder Name-Pattern) → nächster Hop =
                  Ziel-Site-Firewall via PrefixTable
-  4. DEFAULT   – nichts davon → Default-Route Richtung Internet/unbekannt
+  4. ROUTED    – Egress ist kein Overlay, aber das Ziel gehört einer ANDEREN
+                 bekannten Firewall (PrefixTable) → Standortkopplung über
+                 gerouteten Underlay (MPLS/L3, kein Tunnel) → nächster Hop =
+                 diese Firewall. Ingress dort ermittelt die Path-Engine.
+  5. DEFAULT   – Ziel gehört keinem gemanagten Gerät → Richtung Internet/unbekannt
 """
 from __future__ import annotations
 
@@ -94,7 +98,22 @@ def classify_egress(inv: Inventory, prefixes: PrefixTable, overlay_pattern: str,
         cls.next_srcintf = remote_intf
         return cls
 
-    # 4. DEFAULT
+    # 4. ROUTED: kein Overlay, aber das Ziel gehört einer ANDEREN bekannten
+    #    Firewall — Standortkopplung über gerouteten Underlay (MPLS/L3). Weiter
+    #    zu dieser Firewall; next_srcintf bleibt offen (Reverse-Lookup in path.py).
+    entry = prefixes.lookup(dst_ip)
+    if entry is not None and (entry.device, entry.vdom) != (device, vdom):
+        site = f" ({entry.site_name})" if entry.site_name else ""
+        return Classification(
+            egress_class="ROUTED",
+            next_device=entry.device, next_vdom=entry.vdom, next_srcintf=None,
+            warnings=[
+                f"Ziel {dst_ip} liegt hinter {entry.device}/{entry.vdom}{site} — "
+                "geroutete Standortkopplung, verfolge weiter."
+            ],
+        )
+
+    # 5. DEFAULT
     return Classification(egress_class="DEFAULT")
 
 
