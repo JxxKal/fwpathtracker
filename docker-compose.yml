@@ -12,6 +12,18 @@ x-default-logging: &default-logging
     max-size: "50m"
     max-file: "5"
 
+# Proxy-Build-Args (Corporate-Proxy). Default-leer → ohne gesetzte HTTP_PROXY-
+# Env baut es wie bisher direkt. Werte kommen aus .env / Shell-Env. Wirkt nur für
+# RUN (apt/pip/npm); der FROM-Pull braucht den Daemon-Proxy (daemon.json bzw.
+# systemd-Drop-in auf dem Host). Vordefinierte Build-Args → nicht im Image.
+x-proxy-args: &proxy-args
+  HTTP_PROXY: ${HTTP_PROXY:-}
+  HTTPS_PROXY: ${HTTPS_PROXY:-}
+  NO_PROXY: ${NO_PROXY:-}
+  http_proxy: ${HTTP_PROXY:-}
+  https_proxy: ${HTTPS_PROXY:-}
+  no_proxy: ${NO_PROXY:-}
+
 volumes:
   db-data:
   fmg-fixtures:   # Aufgezeichnete FMG-Antworten (FMG_RECORD_FIXTURES=1 / Demo)
@@ -37,7 +49,9 @@ services:
       retries: 5
 
   api:
-    build: ./api
+    build:
+      context: ./api
+      args: *proxy-args
     container_name: fwpt-api
     restart: unless-stopped
     logging: *default-logging
@@ -62,7 +76,9 @@ services:
       start_period: 30s
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args: *proxy-args
     container_name: fwpt-frontend
     restart: unless-stopped
     logging: *default-logging
@@ -81,7 +97,9 @@ services:
   # Einstellungen → FortiManager konfigurieren: host=fmg-sim, ssl_verify=false,
   # auth_mode=token, token=<beliebig>, adoms=[corp]. Topologie: fmg-sim/lab.yaml.
   fmg-sim:
-    build: ./fmg-sim
+    build:
+      context: ./fmg-sim
+      args: *proxy-args
     container_name: fwpt-fmg-sim
     restart: unless-stopped
     logging: *default-logging
