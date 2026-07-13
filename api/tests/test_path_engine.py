@@ -243,6 +243,28 @@ async def test_multi_vdom_entry_prefers_sdwan_vdom(inventory, prefixes):
     assert aggregate_verdict(hops) == "ALLOW"
 
 
+async def test_multi_vdom_entry_prefers_edge_vdom_routed(inventory, prefixes):
+    """Gerouteter Underlay (kein Tunnel): der Eintritts-VDOM ist der mit der
+    Default-Route über ein echtes WAN-Interface ('Router'), NICHT 'root' (das via
+    L2-Transfer0 eine Route zur Quelle hat, wo das Paket aber nie ankommt).
+    Regression zum Feld-Report 'Lookup lief in der falschen VDOM (root)'."""
+    client, t = make_client()
+    add_route(t, "fw-a", "root", "10.4.9.20", "wan", gateway="203.0.113.2")
+    add_policy_lookup(t, "fw-a", "root",
+                      tcp_params("lan1", "10.1.1.10", "10.4.9.20", 443), 100)
+    add_route(t, "fw-d", "Router", "10.1.1.10", "wan-d")
+    add_route(t, "fw-d", "Router", "10.4.9.20", "lan-d")
+    add_policy_lookup(t, "fw-d", "Router",
+                      tcp_params("wan-d", "10.1.1.10", "10.4.9.20", 443), 500)
+
+    hops = await _trace(inventory, prefixes, client, "10.1.1.10", "10.4.9.20")
+    assert len(hops) == 2
+    assert (hops[1].device, hops[1].vdom, hops[1].srcintf) == ("fw-d", "Router", "wan-d")
+    assert hops[1].egress_class == "LOCAL"
+    assert hops[1].verdict == "ALLOW"
+    assert aggregate_verdict(hops) == "ALLOW"
+
+
 async def test_policy_zero_is_implicit_deny(inventory, prefixes):
     """FortiOS policy-lookup mit policy_id 0 = implizites Deny (keine Regel greift
     live, z.B. Policy-Package im FortiManager nicht installiert) → DENY + Hinweis,

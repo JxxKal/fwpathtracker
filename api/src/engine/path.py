@@ -92,6 +92,23 @@ def cached_route(inv: Inventory, device: str, vdom: str, dst_ip: str) -> dict | 
     return best[1] if best else None
 
 
+def _edge_vdom(inv: Inventory, device: str) -> str | None:
+    """VDOM, dessen Default-Route (0/0) über ein echtes (Nicht-VDOM-Link-)
+    Interface geht — der WAN/SD-WAN-Edge- bzw. Router-VDOM, an dem inter-site
+    Traffic eintritt. Funktioniert auch bei GEROUTETEM Underlay (kein Tunnel):
+    interne VDOMs (root, L3) default-routen per VDOM-Link zum Router-VDOM und
+    scheiden aus. None bei 0 oder >1 Kandidaten (dann weitere Signale/Fallback).
+    """
+    hits = []
+    for vdom in (inv.devices.get(device) or {}).get("vdoms", []):
+        for rt in inv.static_routes.get((device, vdom), []):
+            if (rt["network"].prefixlen == 0 and rt.get("interface")
+                    and not inv.is_vdom_link(device, rt["interface"])):
+                hits.append(vdom)
+                break
+    return hits[0] if len(hits) == 1 else None
+
+
 def _overlay_vdom(inv: Inventory, device: str, overlay_re: re.Pattern) -> str | None:
     """VDOM des Geräts, das ein Overlay/SD-WAN-Interface terminiert — der Router-/
     Eintritts-VDOM, an dem inter-site Traffic ankommt. None, wenn keins vorhanden
@@ -119,7 +136,9 @@ async def _resolve_ingress(client: FmgClient, inv: Inventory, adom: str | None,
     Live bevorzugt, sonst Cache (symmetrisches Routing angenommen).
     """
     if vdom is None:
-        vdom = _overlay_vdom(inv, device, overlay_re)
+        # Router-/Edge-VDOM zuerst über die Default-Route (funktioniert auch bei
+        # gerouteter Kopplung), sonst über ein Overlay-/SD-WAN-Interface.
+        vdom = _edge_vdom(inv, device) or _overlay_vdom(inv, device, overlay_re)
     vdoms = [vdom] if vdom is not None else (
         (inv.devices.get(device) or {}).get("vdoms") or ["root"])
     fallback: tuple[str, str] | None = None

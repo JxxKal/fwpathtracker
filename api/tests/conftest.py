@@ -117,6 +117,34 @@ def lab_snapshot_rows() -> list[dict]:
              "srcaddr": ["all"], "dstaddr": ["all"], "service": ["ALL"]},
         ]),
 
+        # Site D — GEROUTETES Underlay (kein Tunnel): der 'Router'-VDOM hält die
+        # Default-Route über ein echtes WAN-Interface; 'root' hat L2-Transfer0 mit
+        # einer Route zur Quelle (aber dort kommt inter-site Traffic nie an) und
+        # default-routet per VDOM-Link zum Router-VDOM.
+        _row("device", "fw-d", {"name": "fw-d", "vdom": [{"name": "root"}, {"name": "Router"}]}),
+        _row("interface", "fw-d", [
+            {"name": "L2-Transfer0", "ip": ["10.4.5.1", "255.255.255.0"], "vdom": ["root"]},
+            {"name": "vld1", "type": "vdom-link", "vdom": ["root"]},
+            {"name": "wan-d", "ip": ["10.4.0.1", "255.255.255.252"], "vdom": ["Router"]},
+            {"name": "vld0", "type": "vdom-link", "vdom": ["Router"]},
+            {"name": "lan-d", "ip": ["10.4.9.1", "255.255.255.0"], "vdom": ["Router"]},
+        ]),
+        _row("route", "fw-d|root", [
+            {"dst": ["10.1.0.0", "255.255.0.0"], "device": ["L2-Transfer0"], "gateway": "10.4.5.2"},
+            {"dst": ["0.0.0.0", "0.0.0.0"], "device": ["vld1"], "gateway": "0.0.0.0"},
+        ]),
+        _row("route", "fw-d|Router", [
+            {"dst": ["0.0.0.0", "0.0.0.0"], "device": ["wan-d"], "gateway": "10.4.0.2"},
+        ]),
+        _row("package", "pkg-d-router", {"name": "pkg-d-router", "scope member": [
+            {"name": "fw-d", "vdom": "Router"},
+        ]}),
+        _row("policy", "pkg-d-router", [
+            {"policyid": 500, "name": "allow-routed-in", "action": 1, "status": 1,
+             "srcintf": ["wan-d"], "dstintf": ["lan-d"],
+             "srcaddr": ["all"], "dstaddr": ["all"], "service": ["ALL"]},
+        ]),
+
         _row("address", "srv-db", {"name": "srv-db",
                                    "subnet": ["10.2.1.30", "255.255.255.255"]}),
         _row("address", "net-site-a", {"name": "net-site-a",
