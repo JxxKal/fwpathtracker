@@ -56,3 +56,20 @@ class PrefixTable:
         matches = [e for e in self.entries if addr in e.network]
         matches.sort(key=lambda e: (-e.network.prefixlen, _SOURCE_PRIO[e.source]))
         return matches
+
+    def lookup_owner(self, ip: str | ipaddress.IPv4Address) -> PrefixEntry | None:
+        """BESITZER eines Ziels (nicht bloß Erreichbarkeit): connected/override
+        schlägt static UNABHÄNGIG von der Maske. Eine spezifischere statische Route
+        (reiner Transit zu einer anderen FW) darf ein connected-Netz NICHT
+        überstimmen — sonst wird die Transit-FW als falscher Owner-Hop eingefügt.
+        Gibt es keinen connected/override-Treffer, fällt es auf die längste static
+        (Ziel hinter L3-Switch/Downstream-Router) zurück.
+        """
+        addr = ipaddress.IPv4Address(ip) if isinstance(ip, str) else ip
+        matches = [e for e in self.entries if addr in e.network]
+        if not matches:
+            return None
+        owned = [e for e in matches if e.source in ("override", "connected")]
+        pool = owned or matches
+        pool.sort(key=lambda e: (-e.network.prefixlen, _SOURCE_PRIO[e.source]))
+        return pool[0]

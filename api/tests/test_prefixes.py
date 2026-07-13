@@ -47,6 +47,23 @@ def test_lab_inventory_prefixes(inventory, prefixes):
     assert (hit.device, hit.vdom) == ("fw-a", "dmz")
 
 
+def test_lookup_owner_prefers_connected_over_specific_static():
+    """Besitz: connected/override schlägt static UNABHÄNGIG von der Maske. Eine
+    spezifischere statische Transit-Route darf das connected-Netz nicht überstimmen
+    (sonst falscher Owner-Hop) — Feld-Fall xha001(static /26) vs xha002(connected /25)."""
+    t = PrefixTable()
+    t.add("10.180.42.192/26", "static", "xha001", "Router", "wan1")  # spezifischer, nur Transit
+    t.add("10.180.42.128/25", "connected", "xha002", "L3", "lan")    # echter Owner
+    owner = t.lookup_owner("10.180.42.208")
+    assert (owner.device, owner.source) == ("xha002", "connected")
+
+    # Kein connected/override → längste static (Ziel hinter L3-Switch/Downstream)
+    only_static = PrefixTable()
+    only_static.add("10.9.0.0/24", "static", "fw-x", "root", "lan")
+    assert only_static.lookup_owner("10.9.0.5").device == "fw-x"
+    assert only_static.lookup_owner("192.168.1.1") is None
+
+
 def test_site_override_wins(inventory):
     table = inventory.build_prefix_table(
         [{"name": "Sonderfall", "cidr": "10.1.1.0/24", "device": "fw-x", "vdom": "root"}]

@@ -90,7 +90,7 @@ def classify_egress(inv: Inventory, prefixes: PrefixTable, overlay_pattern: str,
     # 3. OVERLAY: nächste Site-Firewall über die PrefixTable
     if _is_overlay(intf_info, egress_intf, overlay_re):
         cls = Classification(egress_class="OVERLAY")
-        entry = prefixes.lookup(dst_ip)
+        entry = prefixes.lookup_owner(dst_ip)
         if entry is None or (entry.device == device and entry.vdom == vdom):
             cls.warnings.append(
                 f"Ziel {dst_ip} hinter Overlay '{egress_intf}', aber keine "
@@ -124,11 +124,11 @@ def classify_egress(inv: Inventory, prefixes: PrefixTable, overlay_pattern: str,
             ],
         )
 
-    # 5. Fallback: bekanntes Ziel-Präfix (Site-Override, oder connected einer
-    #    anderen FW hinter einem L3-Switch, wo Routing-Discovery nicht greift).
+    # 5. Fallback: BESITZER des Ziels (connected/override schlägt static — eine
+    #    statische Transit-Route zu einer anderen FW macht diese NICHT zum Owner).
     #    next_vdom=None ⇒ Path-Engine wählt den EINTRITTS-VDOM (Router-VDOM) per
     #    Reverse-Route zur Quelle, damit auch dessen Policy geprüft wird.
-    entry = prefixes.lookup(dst_ip)
+    entry = prefixes.lookup_owner(dst_ip)
     if entry is not None and entry.device != device:
         site = f" ({entry.site_name})" if entry.site_name else ""
         return Classification(
