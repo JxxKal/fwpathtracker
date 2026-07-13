@@ -137,6 +137,9 @@ class Inventory:
                     "secondary_ips": secondaries,
                     "vdom": _first(intf.get("vdom")) or "root",
                     "type": intf.get("type"),
+                    # Deaktivierte Interfaces tragen keinen Verkehr → nicht als
+                    # connected zählen (sonst falscher Owner/Ingress). Default: up.
+                    "enabled": intf.get("status") not in ("down", "disable", 0, "0", False),
                 }
             inv.interfaces[device] = table
 
@@ -212,7 +215,7 @@ class Inventory:
     def connected_networks(self, device: str, vdom: str) -> list[tuple[ipaddress.IPv4Network, str]]:
         out = []
         for intf in (self.interfaces.get(device) or {}).values():
-            if intf["vdom"] != vdom:
+            if intf["vdom"] != vdom or not intf.get("enabled", True):
                 continue
             if intf["ip"] is not None:
                 out.append((intf["ip"].network, intf["name"]))
@@ -240,6 +243,8 @@ class Inventory:
                  else self.interfaces.items())
         for dev, table in items:
             for intf in table.values():
+                if not intf.get("enabled", True):
+                    continue
                 if intf["ip"] is not None and intf["ip"].ip == addr:
                     return dev, intf["vdom"], intf["name"]
         return None
@@ -254,6 +259,8 @@ class Inventory:
                  else self.interfaces.items())
         for dev, table in items:
             for intf in table.values():
+                if not intf.get("enabled", True):
+                    continue
                 if intf["ip"] is not None and intf["ip"].ip in net:
                     out.append((dev, intf["vdom"], intf["name"]))
         return out

@@ -86,6 +86,27 @@ def test_secondary_ip_becomes_connected():
     assert (owner.device, owner.source) == ("fw-s", "connected")
 
 
+def test_disabled_interface_not_connected():
+    """Ein DEAKTIVIERTES Interface trägt keinen Verkehr → sein Netz ist kein
+    connected-Owner (Feld-Fall: dasselbe Netz an einem disabled Interface auf
+    xha001 zog den Trace fälschlich dorthin)."""
+    rows = [
+        {"adom": "corp", "kind": "device", "key": "fw-x",
+         "data": {"name": "fw-x", "vdom": [{"name": "root"}]}},
+        {"adom": "corp", "kind": "interface", "key": "fw-x", "data": [
+            {"name": "port1", "ip": ["10.8.0.1", "255.255.255.0"], "vdom": ["root"], "status": "down"},
+            {"name": "port2", "ip": ["10.8.9.1", "255.255.255.0"], "vdom": ["root"], "status": "up"},
+        ]},
+    ]
+    inv = Inventory.build(rows, synced_at="2026-07-13T00:00:00+00:00")
+    nets = {n for n, _ in inv.connected_networks("fw-x", "root")}
+    assert ipaddress.IPv4Network("10.8.0.0/24") not in nets   # disabled → nicht connected
+    assert ipaddress.IPv4Network("10.8.9.0/24") in nets       # enabled
+    pt = inv.build_prefix_table()
+    assert pt.lookup_owner("10.8.0.5") is None                # kein Owner (disabled)
+    assert pt.lookup_owner("10.8.9.5").device == "fw-x"
+
+
 def test_site_override_wins(inventory):
     table = inventory.build_prefix_table(
         [{"name": "Sonderfall", "cidr": "10.1.1.0/24", "device": "fw-x", "vdom": "root"}]
