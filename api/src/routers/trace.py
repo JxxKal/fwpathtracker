@@ -46,10 +46,12 @@ class TraceRequest(BaseModel):
     icmp_code: int | None = Field(default=None, ge=0, le=255)
 
 
-@router.post("/trace", response_model=TraceResult)
-async def trace(body: TraceRequest, request: Request,
-                user: dict = Depends(get_current_user)) -> TraceResult:
-    state = request.app.state
+async def _execute_trace(state, body: "TraceRequest", *, fmg_cfg: dict,
+                         tracker_cfg: dict, itop_cfg: dict, dns_cfg: dict,
+                         client) -> TraceResult:
+    """Führt einen Trace aus und liefert das TraceResult (ohne History-Persistenz).
+    Wiederverwendbar für Einzel-Trace und Batch-Check. Der Client wird NICHT hier
+    geschlossen (Aufrufer verwaltet ihn — beim Batch einer für alle Checks)."""
     started = time.monotonic()
 
     for value in (body.src, body.dst):
@@ -58,11 +60,6 @@ async def trace(body: TraceRequest, request: Request,
     proto = body.protocol.lower()
     if proto in ("tcp", "udp") and body.dst_port is None:
         raise HTTPException(400, f"Für {proto.upper()} ist ein Ziel-Port erforderlich.")
-
-    itop_cfg = await read_config("itop")
-    dns_cfg = await read_config("dns")
-    tracker_cfg = await read_config("tracker")
-    fmg_cfg = await read_config("fmg")
 
     inv = state.inventory
     prefixes = state.prefixes
@@ -75,7 +72,6 @@ async def trace(body: TraceRequest, request: Request,
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
 
-    client = build_fmg_client(fmg_cfg, state.cfg)
     try:
         hops = await run_trace(
             src_ip=src_ep["ip"], dst_ip=dst_ep["ip"], protocol=proto,
@@ -90,8 +86,6 @@ async def trace(body: TraceRequest, request: Request,
         raise HTTPException(422, str(exc)) from exc
     except FmgError as exc:
         raise HTTPException(502, f"FMG-Fehler: {exc}") from exc
-    finally:
-        await client.close()
 
     warnings: list[str] = []
     # VIP/NAT-Erkennung: Ziel ist externe VIP-Adresse → Re-Trace-Hinweis
@@ -134,6 +128,25 @@ async def trace(body: TraceRequest, request: Request,
         duration_ms=int((time.monotonic() - started) * 1000),
         inventory_synced_at=inv.synced_at,
     )
+    return result
+
+
+@router.post("/trace", response_model=TraceResult)
+async def trace(body: TraceRequest, request: Request,
+                user: dict = Depends(get_current_user)) -> TraceResult:
+    state = request.app.state
+    fmg_cfg = await read_config("fmg")
+    tracker_cfg = await read_config("tracker")
+    itop_cfg = await read_config("itop")
+    dns_cfg = await read_config("dns")
+
+    client = build_fmg_client(fmg_cfg, state.cfg)
+    try:
+        result = await _execute_trace(
+            state, body, fmg_cfg=fmg_cfg, tracker_cfg=tracker_cfg,
+            itop_cfg=itop_cfg, dns_cfg=dns_cfg, client=client)
+    finally:
+        await client.close()
 
     pool = get_pool()
     async with pool.acquire() as conn:

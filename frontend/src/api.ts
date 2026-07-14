@@ -128,6 +128,48 @@ export interface OwnsResult {
   matches: OwnsMatch[];
 }
 
+// ── Check-Gruppen (Batch-Regressions-Checks) ────────────────────────────────────
+
+export interface CheckItem {
+  id?: string; label?: string; src: string; dst: string; protocol: string;
+  dst_port?: number | null; src_port?: number | null;
+  icmp_type?: number | null; icmp_code?: number | null; expect: 'ALLOW' | 'DENY';
+}
+export interface CheckGroup { id: string; name: string; checks: CheckItem[]; }
+export interface ChecksDoc { groups: CheckGroup[]; }
+export interface CheckResult {
+  id?: string | null; label?: string | null; src: string; dst: string;
+  protocol: string; dst_port: number | null; expect: string;
+  actual: string | null; ok: boolean; error: string | null;
+}
+
+export async function getChecks(): Promise<ChecksDoc> {
+  if (isDemoMode()) {
+    return { groups: [{ id: 'demo', name: 'OT-Freigaben', checks: [
+      { id: '1', label: 'Admin→DB', src: '10.1.1.10', dst: '10.2.1.30', protocol: 'tcp', dst_port: 443, expect: 'ALLOW' },
+      { id: '2', label: 'Legacy→DB (soll blocken)', src: '10.1.1.10', dst: '10.2.9.9', protocol: 'tcp', dst_port: 23, expect: 'DENY' },
+    ] }] };
+  }
+  return request('/api/checks');
+}
+export async function saveChecks(doc: ChecksDoc): Promise<ChecksDoc> {
+  if (isDemoMode()) return doc;
+  return request('/api/checks', { method: 'PUT', body: JSON.stringify(doc) });
+}
+export async function runChecks(checks: CheckItem[]): Promise<{
+  results: CheckResult[]; passed: number; total: number; synced_at: string;
+}> {
+  if (isDemoMode()) {
+    const results = checks.map((c) => ({
+      id: c.id ?? null, label: c.label ?? null, src: c.src, dst: c.dst,
+      protocol: c.protocol, dst_port: c.dst_port ?? null, expect: c.expect,
+      actual: c.expect, ok: true, error: null,
+    }));
+    return { results, passed: results.length, total: results.length, synced_at: new Date().toISOString() };
+  }
+  return request('/api/checks/run', { method: 'POST', body: JSON.stringify({ checks }) });
+}
+
 export async function inventoryOwns(ip: string): Promise<OwnsResult> {
   if (isDemoMode()) {
     return {

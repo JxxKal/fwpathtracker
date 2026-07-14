@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react';
 import { runTrace, setToken } from './api';
 import LoginPage from './components/LoginPage';
 import HistoryList from './components/HistoryList';
+import AddToChecks from './components/AddToChecks';
+import ChecksPanel from './components/ChecksPanel';
 import HopDetailPanel from './components/HopDetailPanel';
 import NetOwnership from './components/NetOwnership';
 import PathGraph from './components/PathGraph';
@@ -18,7 +20,7 @@ import UsersPanel from './components/settings/UsersPanel';
 import { de } from './i18n/de';
 import type { Hop, Session, TraceRequest, TraceResult } from './types';
 
-type Tab = 'tracker' | 'verlauf' | 'einstellungen';
+type Tab = 'tracker' | 'checks' | 'verlauf' | 'einstellungen';
 
 const verdictBanner: Record<string, string> = {
   ALLOW: 'border-emerald-800 bg-emerald-950/60 text-emerald-300',
@@ -100,7 +102,7 @@ export default function App() {
           <span className="font-semibold text-slate-100">{de.appTitle}</span>
         </div>
         <nav className="flex gap-1">
-          {(['tracker', 'verlauf', 'einstellungen'] as Tab[])
+          {(['tracker', 'checks', 'verlauf', 'einstellungen'] as Tab[])
             .filter((t) => t !== 'einstellungen' || session.role === 'admin')
             .map((t) => (
               <button
@@ -110,7 +112,8 @@ export default function App() {
                 }`}
                 onClick={() => setTab(t)}
               >
-                {t === 'tracker' ? de.tabs.tracker : t === 'verlauf' ? de.tabs.history : de.tabs.settings}
+                {t === 'tracker' ? de.tabs.tracker : t === 'checks' ? de.tabs.checks
+                  : t === 'verlauf' ? de.tabs.history : de.tabs.settings}
               </button>
             ))}
         </nav>
@@ -142,12 +145,19 @@ export default function App() {
                     {result.src.ip} → {result.dst.ip} · {result.protocol.toUpperCase()}
                     {result.dst_port ? `/${result.dst_port}` : ''} · {result.duration_ms} ms
                   </span>
-                  <button
-                    type="button" className="ml-auto text-slate-400 hover:text-slate-200"
-                    onClick={() => setDrawerOpen(true)} title={de.drawer.title}
-                  >
-                    <Info size={16} />
-                  </button>
+                  <div className="ml-auto flex items-center gap-3 text-slate-400">
+                    {session.role === 'admin' && pendingReq && (
+                      <AddToChecks src={result.src.ip} dst={result.dst.ip}
+                        protocol={result.protocol} dstPort={result.dst_port ?? null}
+                        verdict={result.verdict} />
+                    )}
+                    <button
+                      type="button" className="hover:text-slate-200"
+                      onClick={() => setDrawerOpen(true)} title={de.drawer.title}
+                    >
+                      <Info size={16} />
+                    </button>
+                  </div>
                 </div>
                 {result.vip && result.vip.mappedip && (
                   <div className="flex items-center gap-3 rounded-md border border-amber-800 bg-amber-950/60 p-3 text-sm text-amber-300">
@@ -171,6 +181,8 @@ export default function App() {
             <NetOwnership />
           </>
         )}
+
+        {tab === 'checks' && <ChecksPanel isAdmin={session.role === 'admin'} />}
 
         {tab === 'verlauf' && <HistoryList onReplay={execute} />}
 

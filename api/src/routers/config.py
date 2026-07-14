@@ -60,3 +60,17 @@ async def read_config(key: str) -> dict:
     async with pool.acquire() as conn:
         row = await conn.fetchrow("SELECT value FROM system_config WHERE key = $1", key)
     return dict(row["value"]) if row else {}
+
+
+async def write_config(key: str, value: dict) -> None:
+    """Interner Helper: Config-Key schreiben (kein Secret-Masking — für Nicht-
+    Secret-Keys wie 'checks')."""
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO system_config (key, value) VALUES ($1, $2)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+            """,
+            key, value,
+        )

@@ -1,7 +1,7 @@
 // Zentrale deutsche UI-Strings (Single-Language-App).
 export const de = {
   appTitle: 'A38',
-  tabs: { tracker: 'Tracker', history: 'Verlauf', settings: 'Einstellungen' },
+  tabs: { tracker: 'Tracker', checks: 'Checks', history: 'Verlauf', settings: 'Einstellungen' },
   login: {
     title: 'Anmelden',
     tagline: 'Der Passierschein für jedes Paket.',
@@ -76,6 +76,27 @@ export const de = {
     matchedRule: 'Treffer-Regel',
     implicitDeny: 'Implizites Deny — keine Regel matcht auf diesem VDOM.',
     hint: 'Klicke eine Firewall im Graphen, um die greifende Regel dieses VDOMs zu sehen.',
+  },
+  checks: {
+    title: 'Check-Gruppen',
+    hint: 'Flow-Sets als Batch prüfen (Soll vs. Ist) — vor und nach der Umsetzung im FortiManager.',
+    newGroup: 'Neue Gruppe',
+    groupName: 'Gruppenname',
+    add: 'Hinzufügen',
+    run: 'Gruppe prüfen',
+    running: 'Prüfe …',
+    save: 'Speichern',
+    saved: 'Gespeichert.',
+    deleteGroup: 'Gruppe löschen',
+    expect: 'Soll',
+    actual: 'Ist',
+    result: 'Ergebnis',
+    passed: 'bestanden',
+    empty: 'Noch keine Checks — Flow unten hinzufügen oder aus einem Trace übernehmen.',
+    noGroups: 'Keine Check-Gruppen angelegt.',
+    label: 'Bezeichnung',
+    addToGroup: 'Zu Check-Gruppe',
+    added: 'Zur Gruppe hinzugefügt.',
   },
   drawer: {
     title: 'Details',
