@@ -137,6 +137,7 @@ class Inventory:
                     "secondary_ips": secondaries,
                     "vdom": _first(intf.get("vdom")) or "root",
                     "type": intf.get("type"),
+                    "vlanid": intf.get("vlanid"),
                     # Deaktivierte Interfaces tragen keinen Verkehr → nicht als
                     # connected zählen (sonst falscher Owner/Ingress). Default: up.
                     "enabled": intf.get("status") not in ("down", "disable", 0, "0", False),

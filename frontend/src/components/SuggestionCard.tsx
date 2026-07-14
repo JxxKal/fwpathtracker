@@ -1,4 +1,4 @@
-import { Check, Copy, TriangleAlert } from 'lucide-react';
+import { Check, Copy, ExternalLink, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 import { de } from '../i18n/de';
 import type { Suggestion } from '../types';
@@ -50,6 +50,12 @@ export default function SuggestionCard({ suggestion }: { suggestion: Suggestion 
         <h3 className="font-medium text-slate-100">
           {de.suggestion.title} — {suggestion.device}/{suggestion.vdom}
         </h3>
+        {suggestion.fmg_url && (
+          <a href={suggestion.fmg_url} target="_blank" rel="noopener noreferrer"
+            className="ml-auto flex items-center gap-1 rounded-md border border-cyan-800/60 px-2 py-1 text-xs text-cyan-300 hover:bg-cyan-950/40">
+            <ExternalLink size={13} /> {de.suggestion.openFmg}
+          </a>
+        )}
       </div>
       <div className="grid gap-1.5 sm:grid-cols-2">
         <ObjBadge label="Quelle" obj={suggestion.src_obj} />

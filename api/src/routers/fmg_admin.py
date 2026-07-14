@@ -86,12 +86,28 @@ async def inventory_owns(ip: str, request: Request,
         raise HTTPException(422, f"Ungültige IPv4-Adresse: {ip}") from exc
 
     state = request.app.state
-    matches = [
-        {"device": e.device, "vdom": e.vdom, "interface": e.interface,
-         "cidr": str(e.network), "prefixlen": e.network.prefixlen,
-         "source": e.source, "site_name": e.site_name}
-        for e in state.prefixes.lookup_all(ip.strip())
-    ]
+    inv = state.inventory
+    # Nur connected/override zeigen den URSPRUNG des Netzes — statische Routen
+    # (bloße Erreichbarkeit) sind hier uninteressant.
+    matches = []
+    for e in state.prefixes.lookup_all(ip.strip()):
+        if e.source not in ("connected", "override"):
+            continue
+        info = inv.interface(e.device, e.interface) if e.interface else None
+        gateway = None
+        if info:
+            candidates = ([info["ip"]] if info.get("ip") else []) + info.get("secondary_ips", [])
+            for iface in candidates:
+                if iface is not None and iface.network == e.network:
+                    gateway = str(iface.ip)   # Interface-IP = Gateway des Segments
+                    break
+        matches.append({
+            "device": e.device, "vdom": e.vdom, "interface": e.interface,
+            "vlan": (info or {}).get("vlanid"),
+            "cidr": str(e.network), "prefixlen": e.network.prefixlen,
+            "netmask": str(e.network.netmask), "gateway": gateway,
+            "source": e.source, "site_name": e.site_name,
+        })
     ingress = None
     try:
         d, v, i = find_ingress(state.prefixes, state.inventory, ip.strip())

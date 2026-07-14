@@ -56,11 +56,11 @@ export const de = {
   },
   owns: {
     title: 'Netz-Zugehörigkeit prüfen',
-    hint: 'Welche VDOM/Firewall hält ein Netz? Deckt falsche/mehrdeutige Zuordnungen auf.',
+    hint: 'An welchem VDOM/Interface ist das Netz connected (der Ursprung)? Mit VLAN, Maske und Gateway.',
     check: 'Prüfen',
     ingressTag: 'Start-Hop',
-    none: 'Kein bekanntes Netz enthält diese IP — FMG-Sync aktuell? Site-Override möglich.',
-    ambiguous: 'Mehrere Geräte/VDOMs halten dasselbe Netz gleich spezifisch — der Start-Hop ist mehrdeutig.',
+    none: 'Kein connected-Netz (Ursprung) für diese IP — nur per Routing erreichbar oder nicht synchronisiert. FMG-Sync/Site-Override prüfen.',
+    ambiguous: 'Dasselbe Netz ist an mehreren VDOMs connected — der Start-Hop ist mehrdeutig (ggf. deaktiviertes Interface? Site-Override).',
   },
   suggestion: {
     title: 'Regelvorschlag',
@@ -70,6 +70,12 @@ export const de = {
     jsonrpc: 'FortiManager JSON-RPC',
     copy: 'Kopieren',
     copied: 'Kopiert!',
+    openFmg: 'Im FortiManager öffnen',
+  },
+  hopDetail: {
+    matchedRule: 'Treffer-Regel',
+    implicitDeny: 'Implizites Deny — keine Regel matcht auf diesem VDOM.',
+    hint: 'Klicke eine Firewall im Graphen, um die greifende Regel dieses VDOMs zu sehen.',
   },
   drawer: {
     title: 'Details',

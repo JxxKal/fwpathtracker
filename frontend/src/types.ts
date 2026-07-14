@@ -43,6 +43,7 @@ export interface Suggestion {
   cli: string;
   jsonrpc: string[];
   note: string;
+  fmg_url?: string | null;
 }
 
 export interface Hop {

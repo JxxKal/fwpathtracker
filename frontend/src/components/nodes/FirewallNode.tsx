@@ -1,12 +1,12 @@
 import { Handle, Position } from '@xyflow/react';
-import { CloudOff, ListTree, Shield, TriangleAlert } from 'lucide-react';
+import { CloudOff, Shield, TriangleAlert } from 'lucide-react';
 import { de } from '../../i18n/de';
 import type { Hop } from '../../types';
 
 export interface FirewallNodeData {
   hop: Hop;
-  onSuggest: (hop: Hop) => void;
-  onShowRules: (hop: Hop) => void;
+  onSelect: (hop: Hop) => void;
+  selected?: boolean;
   [key: string]: unknown;
 }
 
@@ -17,15 +17,16 @@ const verdictStyles: Record<string, string> = {
 };
 
 export default function FirewallNode({ data }: { data: FirewallNodeData }) {
-  const { hop, onSuggest, onShowRules } = data;
-  // Kandidaten nur bei DENY/UNKNOWN (Diagnose) — bei ALLOW genügt die Treffer-Regel.
-  const showCandidates = hop.verdict !== 'ALLOW' && hop.candidates.length > 0;
-  const showSuggestion = hop.verdict === 'DENY' && Boolean(hop.suggestion);
+  const { hop, onSelect, selected } = data;
 
   return (
-    <div className={`w-80 rounded-lg border bg-slate-900 shadow-lg ${
-      hop.verdict === 'DENY' ? 'border-red-800' : hop.degraded ? 'border-amber-800' : 'border-slate-700'
-    }`}>
+    <div
+      onClick={() => onSelect(hop)}
+      title={de.hopDetail.hint}
+      className={`nodrag nopan pointer-events-auto w-80 cursor-pointer rounded-lg border bg-slate-900 shadow-lg transition-shadow hover:ring-1 hover:ring-cyan-700 ${
+        selected ? 'ring-2 ring-cyan-500' : ''
+      } ${hop.verdict === 'DENY' ? 'border-red-800' : hop.degraded ? 'border-amber-800' : 'border-slate-700'}`}
+    >
       <Handle type="target" position={Position.Left} className="!bg-cyan-600" />
       <Handle type="source" position={Position.Right} className="!bg-cyan-600" />
 
@@ -75,29 +76,6 @@ export default function FirewallNode({ data }: { data: FirewallNodeData }) {
             <span>{w}</span>
           </p>
         ))}
-        {(showCandidates || showSuggestion) && (
-          <div className="flex items-center gap-2 pt-1">
-            {showCandidates && (
-              <button
-                type="button"
-                className="nodrag nopan pointer-events-auto flex items-center gap-1 text-slate-400 hover:text-cyan-400"
-                onClick={() => onShowRules(hop)}
-              >
-                <ListTree size={13} />
-                {de.hop.candidates} ({hop.candidates.length})
-              </button>
-            )}
-            {showSuggestion && (
-              <button
-                type="button"
-                className="nodrag nopan pointer-events-auto ml-auto rounded bg-amber-900/60 px-2 py-0.5 text-[11px] font-medium text-amber-300 hover:bg-amber-800/60"
-                onClick={() => onSuggest(hop)}
-              >
-                {de.hop.suggestion}
-              </button>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );

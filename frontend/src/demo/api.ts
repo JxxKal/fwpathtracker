@@ -66,6 +66,7 @@ export function trace(req: TraceRequest): TraceResult {
           cli: 'config firewall address\n    edit "h-10.2.9.9"\n        set subnet 10.2.9.9 255.255.255.255\n    next\nend\nconfig firewall policy\n    edit 0\n        set name "allow-net-site-a-to-h-10.2.9.9-svc-tcp-23"\n        set srcintf "overlay"\n        set dstintf "lan1"\n        set srcaddr "net-site-a"\n        set dstaddr "h-10.2.9.9"\n        set service "svc-tcp-23"\n        set action accept\n        set schedule always\n    next\nend',
           jsonrpc: ['{\n  "method": "add",\n  "params": [{"url": "/pm/config/adom/corp/pkg/pkg-b/firewall/policy", "data": {"name": "allow-…"}}]\n}'],
           note: 'Nur Vorschlag — Installation via FortiManager erforderlich. Der Tracker hat keinen Schreibzugriff.',
+          fmg_url: 'https://fmg.example.net/p/app/#!/pm/config/adom/corp/pkg/pkg-b/firewall/policy',
         } : null,
         warnings: [], degraded: false, after_deny: false,
       },

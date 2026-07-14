@@ -68,8 +68,9 @@ export default function NetOwnership() {
                 <tr>
                   <th className="px-3 py-1.5 font-medium">Gerät / VDOM</th>
                   <th className="px-3 py-1.5 font-medium">Interface</th>
-                  <th className="px-3 py-1.5 font-medium">Netz</th>
-                  <th className="px-3 py-1.5 font-medium">Quelle</th>
+                  <th className="px-3 py-1.5 font-medium">VLAN</th>
+                  <th className="px-3 py-1.5 font-medium">Netz / Maske</th>
+                  <th className="px-3 py-1.5 font-medium">Gateway</th>
                 </tr>
               </thead>
               <tbody>
@@ -81,6 +82,9 @@ export default function NetOwnership() {
                     <td className="whitespace-nowrap px-3 py-1.5">
                       <span className="text-slate-200">{m.device}</span>
                       <span className="text-slate-500"> / {m.vdom}</span>
+                      {m.source === 'override' && (
+                        <span className="ml-2 rounded bg-slate-700 px-1.5 py-0.5 text-[10px]">Override</span>
+                      )}
                       {isIngress(m) && (
                         <span className="ml-2 rounded bg-cyan-900/70 px-1.5 py-0.5 text-[10px] text-cyan-200">
                           {de.owns.ingressTag}
@@ -88,8 +92,11 @@ export default function NetOwnership() {
                       )}
                     </td>
                     <td className="whitespace-nowrap px-3 py-1.5 font-mono">{m.interface ?? '—'}</td>
-                    <td className="whitespace-nowrap px-3 py-1.5 font-mono">{m.cidr}</td>
-                    <td className="whitespace-nowrap px-3 py-1.5">{m.source}</td>
+                    <td className="whitespace-nowrap px-3 py-1.5 font-mono">{m.vlan ?? '—'}</td>
+                    <td className="whitespace-nowrap px-3 py-1.5 font-mono">
+                      {m.cidr} <span className="text-slate-500">({m.netmask})</span>
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-1.5 font-mono">{m.gateway ?? '—'}</td>
                   </tr>
                 ))}
               </tbody>

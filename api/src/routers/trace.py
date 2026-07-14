@@ -19,6 +19,23 @@ from suggest.builder import build_suggestion
 router = APIRouter(prefix="/api", tags=["trace"])
 
 
+def _fmg_policy_url(fmg_cfg: dict, adom: str | None, pkg: str | None) -> str | None:
+    """Best-effort Deep-Link ins FortiManager-Policy-Package (Stelle zum Anlegen).
+    Basis aus fmg.gui_url bzw. https://<host>; Template über fmg.policy_url_template
+    anpassbar (FMG-Version-abhängig). {base}/{adom}/{pkg} als Platzhalter.
+    """
+    host = (fmg_cfg.get("host") or "").strip()
+    base = (fmg_cfg.get("gui_url") or (f"https://{host}" if host else "")).strip()
+    if not base or not pkg or not adom:
+        return None
+    tmpl = fmg_cfg.get("policy_url_template") or \
+        "{base}/p/app/#!/pm/config/adom/{adom}/pkg/{pkg}/firewall/policy"
+    try:
+        return tmpl.format(base=base.rstrip("/"), adom=adom, pkg=pkg)
+    except (KeyError, IndexError, ValueError):
+        return base.rstrip("/")
+
+
 class TraceRequest(BaseModel):
     src: str = Field(min_length=1, max_length=255)
     dst: str = Field(min_length=1, max_length=255)
@@ -104,6 +121,9 @@ async def trace(body: TraceRequest, request: Request,
                 protocol=proto, dst_port=body.dst_port,
                 src_names=src_ep["names"], dst_names=dst_ep["names"],
             )
+            if hop.suggestion:
+                hop.suggestion["fmg_url"] = _fmg_policy_url(
+                    fmg_cfg, hop.suggestion["adom"], hop.suggestion.get("package"))
 
     result = TraceResult(
         verdict=aggregate_verdict(hops),

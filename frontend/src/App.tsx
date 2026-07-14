@@ -3,11 +3,10 @@ import { useEffect, useState } from 'react';
 import { runTrace, setToken } from './api';
 import LoginPage from './components/LoginPage';
 import HistoryList from './components/HistoryList';
+import HopDetailPanel from './components/HopDetailPanel';
 import NetOwnership from './components/NetOwnership';
 import PathGraph from './components/PathGraph';
 import ResultDrawer from './components/ResultDrawer';
-import RulesetPanel from './components/RulesetPanel';
-import SuggestionCard from './components/SuggestionCard';
 import TraceForm from './components/TraceForm';
 import DnsPanel from './components/settings/DnsPanel';
 import FmgPanel from './components/settings/FmgPanel';
@@ -39,8 +38,7 @@ export default function App() {
   const [pendingReq, setPendingReq] = useState<TraceRequest | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [suggestHop, setSuggestHop] = useState<Hop | null>(null);
-  const [rulesHop, setRulesHop] = useState<Hop | null>(null);
+  const [selectedHop, setSelectedHop] = useState<Hop | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
@@ -79,8 +77,7 @@ export default function App() {
   async function execute(req: TraceRequest) {
     setBusy(true);
     setError(null);
-    setSuggestHop(null);
-    setRulesHop(null);
+    setSelectedHop(null);
     setTab('tracker');
     setPendingReq(req);
     try {
@@ -163,9 +160,11 @@ export default function App() {
                     </button>
                   </div>
                 )}
-                <PathGraph result={result} onSuggest={setSuggestHop} onShowRules={setRulesHop} />
-                {rulesHop && <RulesetPanel hop={rulesHop} onClose={() => setRulesHop(null)} />}
-                {suggestHop?.suggestion && <SuggestionCard suggestion={suggestHop.suggestion} />}
+                <PathGraph result={result} onSelect={setSelectedHop}
+                  selectedIndex={selectedHop?.index ?? null} />
+                {selectedHop
+                  ? <HopDetailPanel hop={selectedHop} onClose={() => setSelectedHop(null)} />
+                  : <p className="text-sm text-slate-500">{de.hopDetail.hint}</p>}
                 {drawerOpen && <ResultDrawer result={result} onClose={() => setDrawerOpen(false)} />}
               </>
             )}

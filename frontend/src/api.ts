@@ -119,7 +119,8 @@ export async function inventorySummary(): Promise<InventorySummary> {
 
 export interface OwnsMatch {
   device: string; vdom: string; interface: string | null;
-  cidr: string; prefixlen: number; source: string; site_name: string | null;
+  vlan: string | number | null; cidr: string; prefixlen: number;
+  netmask: string; gateway: string | null; source: string; site_name: string | null;
 }
 export interface OwnsResult {
   ip: string;
@@ -132,8 +133,7 @@ export async function inventoryOwns(ip: string): Promise<OwnsResult> {
     return {
       ip, ingress: { device: 'fw-a', vdom: 'root', interface: 'lan1' },
       matches: [
-        { device: 'fw-a', vdom: 'root', interface: 'lan1', cidr: '10.1.1.0/24', prefixlen: 24, source: 'connected', site_name: null },
-        { device: 'fw-a', vdom: 'root', interface: 'vpn-to-b', cidr: '10.1.0.0/20', prefixlen: 20, source: 'static', site_name: null },
+        { device: 'fw-a', vdom: 'root', interface: 'lan1', vlan: 42, cidr: '10.1.1.0/24', prefixlen: 24, netmask: '255.255.255.0', gateway: '10.1.1.1', source: 'connected', site_name: null },
       ],
     };
   }

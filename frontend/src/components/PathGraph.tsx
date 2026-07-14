@@ -15,8 +15,8 @@ const edgeColor: Record<string, string> = {
 
 interface Props {
   result: TraceResult;
-  onSuggest: (hop: Hop) => void;
-  onShowRules: (hop: Hop) => void;
+  onSelect: (hop: Hop) => void;
+  selectedIndex: number | null;
 }
 
 // Linearer Pfad → manueller Horizontal-Layouter (kein dagre/elk nötig)
@@ -24,7 +24,7 @@ const HOST_W = 176;
 const FW_W = 320;
 const GAP = 90;
 
-function PathGraphInner({ result, onSuggest, onShowRules }: Props) {
+function PathGraphInner({ result, onSelect, selectedIndex }: Props) {
   const { nodes, edges } = useMemo(() => {
     const nodes: Node[] = [];
     const edges: Edge[] = [];
@@ -39,7 +39,7 @@ function PathGraphInner({ result, onSuggest, onShowRules }: Props) {
     result.hops.forEach((hop, i) => {
       nodes.push({
         id: `hop-${i}`, type: 'firewall', position: { x, y: 0 },
-        data: { hop, onSuggest, onShowRules },
+        data: { hop, onSelect, selected: selectedIndex === i },
       });
       x += FW_W + GAP;
     });
@@ -82,7 +82,7 @@ function PathGraphInner({ result, onSuggest, onShowRules }: Props) {
       });
     }
     return { nodes, edges };
-  }, [result, onSuggest, onShowRules]);
+  }, [result, onSelect, selectedIndex]);
 
   // fitView als Prop greift nur beim ersten Mount. Bei jedem neuen Trace (und
   // nach dem Auf-/Zuklappen der Kandidaten-Regeln) die Ansicht neu einpassen,
