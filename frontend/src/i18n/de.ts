@@ -97,6 +97,7 @@ export const de = {
     label: 'Bezeichnung',
     addToGroup: 'Zu Check-Gruppe',
     added: 'Zur Gruppe hinzugefügt.',
+    details: 'Grafischer Trace / Details',
   },
   drawer: {
     title: 'Details',

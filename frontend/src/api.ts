@@ -141,6 +141,7 @@ export interface CheckResult {
   id?: string | null; label?: string | null; src: string; dst: string;
   protocol: string; dst_port: number | null; expect: string;
   actual: string | null; ok: boolean; error: string | null;
+  result: TraceResult | null;
 }
 
 export async function getChecks(): Promise<ChecksDoc> {
@@ -160,12 +161,18 @@ export async function runChecks(checks: CheckItem[]): Promise<{
   results: CheckResult[]; passed: number; total: number; synced_at: string;
 }> {
   if (isDemoMode()) {
-    const results = checks.map((c) => ({
-      id: c.id ?? null, label: c.label ?? null, src: c.src, dst: c.dst,
-      protocol: c.protocol, dst_port: c.dst_port ?? null, expect: c.expect,
-      actual: c.expect, ok: true, error: null,
-    }));
-    return { results, passed: results.length, total: results.length, synced_at: new Date().toISOString() };
+    const results = checks.map((c) => {
+      const r = demo.trace({
+        src: c.src, dst: c.dst, protocol: c.protocol,
+        dst_port: c.dst_port ?? null, src_port: null, icmp_type: null, icmp_code: null,
+      });
+      return {
+        id: c.id ?? null, label: c.label ?? null, src: c.src, dst: c.dst,
+        protocol: c.protocol, dst_port: c.dst_port ?? null, expect: c.expect,
+        actual: r.verdict, ok: r.verdict === c.expect, error: null, result: r,
+      };
+    });
+    return { results, passed: results.filter((x) => x.ok).length, total: results.length, synced_at: new Date().toISOString() };
   }
   return request('/api/checks/run', { method: 'POST', body: JSON.stringify({ checks }) });
 }

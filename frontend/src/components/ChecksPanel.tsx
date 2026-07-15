@@ -1,8 +1,11 @@
-import { CheckCircle2, Play, Plus, Trash2, XCircle } from 'lucide-react';
+import { CheckCircle2, Network, Play, Plus, Trash2, XCircle } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { getChecks, runChecks, saveChecks } from '../api';
 import type { CheckGroup, CheckItem, CheckResult, ChecksDoc } from '../api';
+import type { TraceResult } from '../types';
 import { de } from '../i18n/de';
+import CheckResultModal from './CheckResultModal';
+import EndpointAutocomplete from './EndpointAutocomplete';
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()));
 
@@ -17,6 +20,7 @@ export default function ChecksPanel({ isAdmin }: { isAdmin: boolean }) {
   const [results, setResults] = useState<CheckResult[] | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [modal, setModal] = useState<TraceResult | null>(null);
 
   useEffect(() => {
     getChecks().then((d: ChecksDoc) => {
@@ -146,10 +150,18 @@ export default function ChecksPanel({ isAdmin }: { isAdmin: boolean }) {
                         <td className="px-2 py-1.5">{c.expect}</td>
                         <td className="px-2 py-1.5">
                           {r ? (
-                            <span className={`inline-flex items-center gap-1 ${r.ok ? 'text-emerald-400' : 'text-red-400'}`}
-                              title={r.error ?? undefined}>
-                              {r.ok ? <CheckCircle2 size={13} /> : <XCircle size={13} />}
-                              {r.actual ?? (r.error ? 'Fehler' : '—')}
+                            <span className="inline-flex items-center gap-2">
+                              <span className={`inline-flex items-center gap-1 ${r.ok ? 'text-emerald-400' : 'text-red-400'}`}
+                                title={r.error ?? undefined}>
+                                {r.ok ? <CheckCircle2 size={13} /> : <XCircle size={13} />}
+                                {r.actual ?? (r.error ? 'Fehler' : '—')}
+                              </span>
+                              {r.result && (
+                                <button type="button" className="text-slate-500 hover:text-cyan-400"
+                                  title={de.checks.details} onClick={() => setModal(r.result)}>
+                                  <Network size={13} />
+                                </button>
+                              )}
                             </span>
                           ) : <span className="text-slate-600">—</span>}
                         </td>
@@ -179,13 +191,17 @@ export default function ChecksPanel({ isAdmin }: { isAdmin: boolean }) {
               </label>
               <label className="flex flex-col gap-1">
                 <span className="text-[11px] text-slate-500">Quelle</span>
-                <input className="fwpt-input w-40" value={draft.src}
-                  onChange={(e) => setDraft({ ...draft, src: e.target.value })} placeholder="IP/Name" />
+                <div className="w-44">
+                  <EndpointAutocomplete value={draft.src}
+                    onChange={(v) => setDraft({ ...draft, src: v })} placeholder="IP/Name/Objekt" />
+                </div>
               </label>
               <label className="flex flex-col gap-1">
                 <span className="text-[11px] text-slate-500">Ziel</span>
-                <input className="fwpt-input w-40" value={draft.dst}
-                  onChange={(e) => setDraft({ ...draft, dst: e.target.value })} placeholder="IP/Name" />
+                <div className="w-44">
+                  <EndpointAutocomplete value={draft.dst}
+                    onChange={(v) => setDraft({ ...draft, dst: v })} placeholder="IP/Name/Objekt" />
+                </div>
               </label>
               <label className="flex flex-col gap-1">
                 <span className="text-[11px] text-slate-500">Proto</span>
@@ -214,6 +230,8 @@ export default function ChecksPanel({ isAdmin }: { isAdmin: boolean }) {
           )}
         </>
       )}
+
+      {modal && <CheckResultModal result={modal} onClose={() => setModal(null)} />}
     </div>
   );
 }

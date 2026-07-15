@@ -83,11 +83,16 @@ async def run_checks(body: RunRequest, request: Request,
                     state, req, fmg_cfg=fmg_cfg, tracker_cfg=tracker_cfg,
                     itop_cfg=itop_cfg, dns_cfg=dns_cfg, client=client)
                 results.append({**base, "actual": res.verdict,
-                                "ok": res.verdict == c.expect, "error": None})
+                                "ok": res.verdict == c.expect, "error": None,
+                                # Volles Ergebnis: aufgelöste Endpunkte (FMG/iTop/DNS),
+                                # Hops, Deny-Details + Regelvorschlag, Graph-Daten.
+                                "result": res.model_dump()})
             except HTTPException as exc:
-                results.append({**base, "actual": None, "ok": False, "error": str(exc.detail)})
+                results.append({**base, "actual": None, "ok": False,
+                                "error": str(exc.detail), "result": None})
             except Exception as exc:  # ein fehlerhafter Check darf den Rest nicht kippen
-                results.append({**base, "actual": None, "ok": False, "error": str(exc)})
+                results.append({**base, "actual": None, "ok": False,
+                                "error": str(exc), "result": None})
     finally:
         await client.close()
 
