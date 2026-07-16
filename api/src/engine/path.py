@@ -13,7 +13,7 @@ import re
 from engine.classify import classify_egress
 from engine.verdict import Candidate, Hop
 from fmg.client import FmgClient, FmgError, FmgTargetOffline
-from fmg.proxy import fortios_results, monitor_get
+from fmg.proxy import build_monitor_request, fortios_results, monitor_get
 from inventory.prefixes import PrefixTable
 from inventory.store import Inventory
 
@@ -227,7 +227,7 @@ async def _live_policy_lookup(client: FmgClient, adom: str, device: str, vdom: s
         results = resp if isinstance(resp, dict) else {}
     success = bool(results.get("success"))
     policy_id = results.get("policy_id", results.get("policyid"))
-    return {"success": success, "policy_id": policy_id}
+    return {"success": success, "policy_id": policy_id, "params": params, "raw": results}
 
 
 async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
@@ -353,6 +353,26 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
                     "synchronisiert (Aktion unbekannt)."
                 )
         hop.candidates = candidates
+
+        # ── Debug: die tatsächlichen FortiOS-Monitor-Lookups (Router + Policy) —
+        # zum Kopieren/Reproduzieren, wenn ein Hop hakt.
+        if adom is not None:
+            hop.debug = {
+                "router_lookup": {
+                    "proxy": build_monitor_request(adom, device, vdom, "router/lookup",
+                                                   {"destination": dst_ip}),
+                    "source": (route or {}).get("source"),
+                    "response": (route or {}).get("raw"),
+                },
+            }
+            if lookup is not None:
+                hop.debug["policy_lookup"] = {
+                    "proxy": build_monitor_request(adom, device, vdom,
+                                                   "firewall/policy-lookup",
+                                                   lookup.get("params", {})),
+                    "response": lookup.get("raw"),
+                }
+
         if hop.verdict == "DENY":
             deny_seen = True
         hops.append(hop)

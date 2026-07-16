@@ -45,6 +45,7 @@ class Hop(BaseModel):
     candidates: list[Candidate] = Field(default_factory=list)
     suggestion: dict | None = None
     warnings: list[str] = Field(default_factory=list)
+    debug: dict = Field(default_factory=dict)   # Router-/Policy-Lookup (Requests+Responses)
     degraded: bool = False
     after_deny: bool = False
 

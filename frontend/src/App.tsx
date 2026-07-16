@@ -16,6 +16,7 @@ import DnsPanel from './components/settings/DnsPanel';
 import FmgPanel from './components/settings/FmgPanel';
 import ItopPanel from './components/settings/ItopPanel';
 import SamlPanel from './components/settings/SamlPanel';
+import SiteSupernetsPanel from './components/settings/SiteSupernetsPanel';
 import SitesPanel from './components/settings/SitesPanel';
 import SslPanel from './components/settings/SslPanel';
 import UsersPanel from './components/settings/UsersPanel';
@@ -198,6 +199,7 @@ export default function App() {
             <ItopPanel />
             <DnsPanel />
             <SitesPanel />
+            <SiteSupernetsPanel />
             <UsersPanel />
             <SslPanel />
             <SamlPanel />

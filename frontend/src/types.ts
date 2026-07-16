@@ -65,6 +65,10 @@ export interface Hop {
   warnings: string[];
   degraded: boolean;
   after_deny: boolean;
+  debug?: {
+    router_lookup?: { proxy: unknown; source?: string | null; response?: unknown };
+    policy_lookup?: { proxy: unknown; response?: unknown };
+  };
 }
 
 export interface TraceResult {
