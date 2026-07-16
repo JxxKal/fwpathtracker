@@ -66,6 +66,42 @@ class TraceResult(BaseModel):
     inventory_synced_at: str | None = None
 
 
+class PortHop(BaseModel):
+    """Ein Hop im Deep-Tracker: die an dieser Firewall erlaubten TCP/UDP-Ranges
+    (statisch aus dem Cache). Ranges als [lo, hi]-Paare (inklusiv)."""
+    index: int
+    device: str
+    vdom: str
+    label: str
+    srcintf: str
+    egress: str | None = None
+    egress_class: str = "UNKNOWN"
+    tcp: list[list[int]] = Field(default_factory=list)
+    udp: list[list[int]] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    reachable: bool = True
+
+
+class PortLimit(BaseModel):
+    range: list[int]            # [lo, hi]
+    hop: str | None = None      # Label des Hops, der diesen Bereich blockt
+
+
+class PortTraceResult(BaseModel):
+    """Deep-Tracker-Ergebnis: alle end-to-end erlaubten TCP/UDP-Ports Quelle→Ziel,
+    plus je Hop die Hop-Portmenge und je Proto der limitierende Hop pro Range."""
+    src: Endpoint
+    dst: Endpoint
+    reachable: bool = True
+    hops: list[PortHop] = Field(default_factory=list)
+    tcp: list[list[int]] = Field(default_factory=list)   # end-to-end offen
+    udp: list[list[int]] = Field(default_factory=list)
+    limits: dict[str, list[PortLimit]] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    duration_ms: int = 0
+    inventory_synced_at: str | None = None
+
+
 def aggregate_verdict(hops: list[Hop]) -> TraceVerdict:
     """ALLOW nur wenn alle Hops ALLOW; DENY am ersten Deny;
     DEGRADED wenn ein Hop UNKNOWN ist (Gerät offline o.ä.)."""

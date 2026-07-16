@@ -8,8 +8,8 @@ from pydantic import BaseModel, Field
 
 from database import get_pool
 from deps import get_current_user
-from engine.path import TraceError, run_trace
-from engine.verdict import Endpoint, TraceResult, aggregate_verdict
+from engine.path import TraceError, run_port_trace, run_trace
+from engine.verdict import Endpoint, PortTraceResult, TraceResult, aggregate_verdict
 from fmg.client import FmgError
 from fmg.factory import build_fmg_client
 from resolver.chain import is_ipv6
@@ -167,6 +167,64 @@ async def trace(body: TraceRequest, request: Request,
             result.verdict, result.duration_ms,
         )
     return result
+
+
+class PortTraceRequest(BaseModel):
+    src: str = Field(min_length=1, max_length=255)
+    dst: str = Field(min_length=1, max_length=255)
+
+
+@router.post("/trace/ports", response_model=PortTraceResult)
+async def trace_ports(body: PortTraceRequest, request: Request,
+                      _user: dict = Depends(get_current_user)) -> PortTraceResult:
+    """Deep-Tracker: Quelle+Ziel → alle end-to-end erlaubten TCP/UDP-Ports.
+    Statisch aus dem Cache (kein Live-Policy-Lookup), gleicher Pfad wie /trace."""
+    state = request.app.state
+    fmg_cfg = await read_config("fmg")
+    tracker_cfg = await read_config("tracker")
+    itop_cfg = await read_config("itop")
+    dns_cfg = await read_config("dns")
+
+    for value in (body.src, body.dst):
+        if is_ipv6(value):
+            raise HTTPException(400, "IPv6 wird in V1 nicht unterstützt.")
+
+    inv = state.inventory
+    prefixes = state.prefixes
+    if not inv.devices:
+        raise HTTPException(409, "Kein FMG-Inventar vorhanden — zuerst Sync ausführen.")
+
+    try:
+        src_ep = await state.resolver.resolve_endpoint(body.src, inv, itop_cfg, dns_cfg)
+        dst_ep = await state.resolver.resolve_endpoint(body.dst, inv, itop_cfg, dns_cfg)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    started = time.monotonic()
+    client = build_fmg_client(fmg_cfg, state.cfg)
+    try:
+        data = await run_port_trace(
+            src_ip=src_ep["ip"], dst_ip=dst_ep["ip"],
+            inv=inv, prefixes=prefixes, client=client,
+            overlay_pattern=tracker_cfg.get("overlay_pattern", "(?i)(vpn|ovl|sdwan|tun|ipsec)"),
+            router_vdom_pattern=tracker_cfg.get("router_vdom_pattern", "(?i)(router|wan.?edge)"),
+            max_hops=int(tracker_cfg.get("max_hops", 8)),
+        )
+    except TraceError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except FmgError as exc:
+        raise HTTPException(502, f"FMG-Fehler: {exc}") from exc
+    finally:
+        await client.close()
+
+    return PortTraceResult(
+        src=Endpoint(**src_ep), dst=Endpoint(**dst_ep),
+        reachable=data["reachable"], hops=data["hops"],
+        tcp=data["tcp"], udp=data["udp"], limits=data["limits"],
+        warnings=data["warnings"],
+        duration_ms=int((time.monotonic() - started) * 1000),
+        inventory_synced_at=inv.synced_at,
+    )
 
 
 @router.get("/traces")

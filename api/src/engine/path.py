@@ -11,6 +11,7 @@ import logging
 import re
 
 from engine.classify import classify_egress
+from engine.ports import combine, hop_allowed
 from engine.verdict import Candidate, Hop
 from fmg.client import FmgClient, FmgError, FmgTargetOffline
 from fmg.proxy import build_monitor_request, fortios_results, monitor_get
@@ -230,70 +231,147 @@ async def _live_policy_lookup(client: FmgClient, adom: str, device: str, vdom: s
     return {"success": success, "policy_id": policy_id, "params": params, "raw": results}
 
 
+class PathStep:
+    """Ein Hop auf dem (portunabhängigen) Pfad Quelle→Ziel: Routing/Egress ohne
+    Verdict. Von `_walk_path` erzeugt und von `run_trace` (Live-Policy-Lookup)
+    wie `run_port_trace` (Alle-Ports-Analyse) gemeinsam genutzt — so kann der
+    Pfad nicht zwischen den Modi divergieren."""
+    __slots__ = ("index", "device", "vdom", "adom", "srcintf", "src_zone",
+                 "egress", "egress_zone", "egress_class", "route", "degraded",
+                 "warnings")
+
+    def __init__(self, index: int, device: str, vdom: str, adom: str | None, srcintf: str):
+        self.index = index
+        self.device = device
+        self.vdom = vdom
+        self.adom = adom
+        self.srcintf = srcintf
+        self.src_zone: str | None = None
+        self.egress: str | None = None
+        self.egress_zone: str | None = None
+        self.egress_class: str = "UNKNOWN"
+        self.route: dict | None = None
+        self.degraded: bool = False
+        self.warnings: list[str] = []
+
+
+async def _walk_path(*, src_ip: str, dst_ip: str, inv: Inventory, prefixes: PrefixTable,
+                     client: FmgClient, overlay_pattern: str, router_vdom_pattern: str,
+                     max_hops: int) -> list[PathStep]:
+    """Läuft den Pfad Quelle→Ziel ab (Ingress → Routing → Egress → nächster Hop)
+    und liefert die Hop-Kette OHNE Verdict. Route live (sonst Cache); Klassifikation
+    und Eintritts-VDOM-Wahl wie gehabt. Enthält Loop-Guard und max_hops."""
+    device, vdom, srcintf = find_ingress(prefixes, inv, src_ip)
+    ingress_warn = _ingress_ambiguity(prefixes, src_ip, device, vdom)
+    overlay_re = re.compile(overlay_pattern)
+    router_re = re.compile(router_vdom_pattern)
+
+    steps: list[PathStep] = []
+    visited: set[tuple[str, str]] = set()
+
+    while len(steps) < max_hops:
+        if (device, vdom) in visited:
+            if steps:
+                steps[-1].warnings.append(
+                    f"Routing-Schleife erkannt: {device}/{vdom} bereits besucht — Abbruch."
+                )
+            break
+        visited.add((device, vdom))
+        adom = inv.adom_of(device)
+        step = PathStep(len(steps), device, vdom, adom, srcintf)
+        step.src_zone = inv.zone_of(device, vdom, srcintf)
+        if step.index == 0 and ingress_warn:
+            step.warnings.append(ingress_warn)
+
+        # ── a) Route (live, sonst Cache) ─────────────────────────────────────
+        route = None
+        if adom is None:
+            step.warnings.append(f"Gerät {device} nicht im FMG-Snapshot — Sync nötig.")
+        else:
+            try:
+                route = await _live_route(client, adom, device, vdom, dst_ip)
+            except FmgTargetOffline as exc:
+                step.degraded = True
+                step.warnings.append(f"{exc} — nutze gecachte Routen (Degraded Mode).")
+            except FmgError as exc:
+                step.degraded = True
+                step.warnings.append(f"Route-Lookup fehlgeschlagen: {exc}")
+        if route is None:
+            route = cached_route(inv, device, vdom, dst_ip)
+            if route is not None and not step.degraded and adom is not None:
+                step.warnings.append("Live-Route ohne Treffer — Cache-Route verwendet.")
+        step.route = route
+        if route is None:
+            step.egress_class = "DEFAULT"
+            step.warnings.append(
+                f"Keine Route zu {dst_ip} auf {device}/{vdom} — Ziel unerreichbar?"
+            )
+            steps.append(step)
+            break
+        step.egress = route["interface"]
+        step.egress_zone = inv.zone_of(device, vdom, step.egress)
+
+        # ── b) Klassifikation ────────────────────────────────────────────────
+        cls = classify_egress(inv, prefixes, overlay_pattern, device, vdom,
+                              step.egress, dst_ip, gateway=route.get("gateway"))
+        step.egress_class = cls.egress_class
+        step.warnings.extend(cls.warnings)
+        steps.append(step)
+
+        # ── c) Nächster Hop ──────────────────────────────────────────────────
+        if cls.egress_class in ("LOCAL", "DEFAULT"):
+            break
+        if cls.next_device is None:   # next_vdom=None ⇒ Eintritts-VDOM wird ermittelt
+            break
+        next_device = cls.next_device
+        next_vdom = cls.next_vdom
+        next_srcintf = cls.next_srcintf
+        if cls.egress_class == "ROUTED" and (next_vdom is None or next_srcintf is None):
+            # Eintritts-VDOM (Router-VDOM) + Ingress-Interface Richtung Quelle.
+            rv, rintf = await _resolve_ingress(
+                client, inv, inv.adom_of(next_device), next_device, next_vdom,
+                src_ip, overlay_re, router_re)
+            next_vdom = next_vdom or rv
+            next_srcintf = next_srcintf or rintf
+            if next_srcintf is None:
+                step.warnings.append(
+                    f"Ingress auf {next_device}/{next_vdom or '?'} nicht bestimmbar "
+                    "(Reverse-Route zur Quelle fehlt) — 'any'."
+                )
+        device, vdom = next_device, next_vdom or "root"
+        srcintf = next_srcintf or "any"
+    else:
+        if steps:
+            steps[-1].warnings.append(f"max_hops={max_hops} erreicht — Trace abgebrochen.")
+
+    return steps
+
+
 async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
                     dst_port: int | None = None, src_port: int | None = None,
                     icmp_type: int | None = None, icmp_code: int | None = None,
                     inv: Inventory, prefixes: PrefixTable, client: FmgClient,
                     overlay_pattern: str, max_hops: int = 8,
                     router_vdom_pattern: str = "(?i)(router|wan.?edge)") -> list[Hop]:
-    device, vdom, srcintf = find_ingress(prefixes, inv, src_ip)
-    ingress_warn = _ingress_ambiguity(prefixes, src_ip, device, vdom)
-    overlay_re = re.compile(overlay_pattern)
-    router_re = re.compile(router_vdom_pattern)
+    steps = await _walk_path(
+        src_ip=src_ip, dst_ip=dst_ip, inv=inv, prefixes=prefixes, client=client,
+        overlay_pattern=overlay_pattern, router_vdom_pattern=router_vdom_pattern,
+        max_hops=max_hops)
 
     hops: list[Hop] = []
-    visited: set[tuple[str, str]] = set()
     deny_seen = False
+    for step in steps:
+        hop = Hop(index=step.index, device=step.device, vdom=step.vdom, adom=step.adom,
+                  srcintf=step.srcintf, src_zone=step.src_zone, after_deny=deny_seen,
+                  egress=step.egress, egress_zone=step.egress_zone,
+                  egress_class=step.egress_class, route=step.route,
+                  degraded=step.degraded, warnings=list(step.warnings))
+        device, vdom, srcintf, adom = step.device, step.vdom, step.srcintf, step.adom
 
-    while len(hops) < max_hops:
-        if (device, vdom) in visited:
-            if hops:
-                hops[-1].warnings.append(
-                    f"Routing-Schleife erkannt: {device}/{vdom} bereits besucht — Abbruch."
-                )
-            break
-        visited.add((device, vdom))
-        adom = inv.adom_of(device)
-        hop = Hop(index=len(hops), device=device, vdom=vdom, adom=adom,
-                  srcintf=srcintf, src_zone=inv.zone_of(device, vdom, srcintf),
-                  after_deny=deny_seen)
-        if hop.index == 0 and ingress_warn:
-            hop.warnings.append(ingress_warn)
-
-        # ── a) Route (live, sonst Cache) ─────────────────────────────────────
-        route = None
-        if adom is None:
-            hop.warnings.append(f"Gerät {device} nicht im FMG-Snapshot — Sync nötig.")
-        else:
-            try:
-                route = await _live_route(client, adom, device, vdom, dst_ip)
-            except FmgTargetOffline as exc:
-                hop.degraded = True
-                hop.warnings.append(f"{exc} — nutze gecachte Routen (Degraded Mode).")
-            except FmgError as exc:
-                hop.degraded = True
-                hop.warnings.append(f"Route-Lookup fehlgeschlagen: {exc}")
-        if route is None:
-            route = cached_route(inv, device, vdom, dst_ip)
-            if route is not None and not hop.degraded and adom is not None:
-                hop.warnings.append("Live-Route ohne Treffer — Cache-Route verwendet.")
-        hop.route = route
-        if route is None:
-            hop.egress_class = "DEFAULT"
-            hop.warnings.append(
-                f"Keine Route zu {dst_ip} auf {device}/{vdom} — Ziel unerreichbar?"
-            )
+        if step.route is None:   # unerreichbar → terminaler Hop
             hop.verdict = "UNKNOWN"
             hops.append(hop)
-            break
-        hop.egress = route["interface"]
-        hop.egress_zone = inv.zone_of(device, vdom, hop.egress)
-
-        # ── b) Klassifikation ────────────────────────────────────────────────
-        cls = classify_egress(inv, prefixes, overlay_pattern, device, vdom,
-                              hop.egress, dst_ip, gateway=route.get("gateway"))
-        hop.egress_class = cls.egress_class
-        hop.warnings.extend(cls.warnings)
+            continue
 
         # ── c) Policy-Lookup (live) ──────────────────────────────────────────
         lookup = None
@@ -361,8 +439,8 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
                 "router_lookup": {
                     "proxy": build_monitor_request(adom, device, vdom, "router/lookup",
                                                    {"destination": dst_ip}),
-                    "source": (route or {}).get("source"),
-                    "response": (route or {}).get("raw"),
+                    "source": (step.route or {}).get("source"),
+                    "response": (step.route or {}).get("raw"),
                 },
             }
             if lookup is not None:
@@ -377,30 +455,68 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
             deny_seen = True
         hops.append(hop)
 
-        # ── e) Nächster Hop ──────────────────────────────────────────────────
-        if cls.egress_class in ("LOCAL", "DEFAULT"):
-            break
-        if cls.next_device is None:   # next_vdom=None ⇒ Eintritts-VDOM wird ermittelt
-            break
-        next_device = cls.next_device
-        next_vdom = cls.next_vdom
-        next_srcintf = cls.next_srcintf
-        if cls.egress_class == "ROUTED" and (next_vdom is None or next_srcintf is None):
-            # Eintritts-VDOM (Router-VDOM) + Ingress-Interface Richtung Quelle.
-            rv, rintf = await _resolve_ingress(
-                client, inv, inv.adom_of(next_device), next_device, next_vdom,
-                src_ip, overlay_re, router_re)
-            next_vdom = next_vdom or rv
-            next_srcintf = next_srcintf or rintf
-            if next_srcintf is None:
-                hop.warnings.append(
-                    f"Ingress auf {next_device}/{next_vdom or '?'} nicht bestimmbar "
-                    "(Reverse-Route zur Quelle fehlt) — 'any'."
-                )
-        device, vdom = next_device, next_vdom or "root"
-        srcintf = next_srcintf or "any"
-    else:
-        if hops:
-            hops[-1].warnings.append(f"max_hops={max_hops} erreicht — Trace abgebrochen.")
-
     return hops
+
+
+async def run_port_trace(*, src_ip: str, dst_ip: str,
+                         inv: Inventory, prefixes: PrefixTable, client: FmgClient,
+                         overlay_pattern: str, max_hops: int = 8,
+                         router_vdom_pattern: str = "(?i)(router|wan.?edge)") -> dict:
+    """Deep-Tracker: derselbe Pfad wie `run_trace`, aber pro Hop wird STATISCH aus
+    dem Cache die komplette erlaubte TCP/UDP-Portmenge bestimmt (kein Live-Policy-
+    Lookup) und über den Pfad geschnitten. Liefert die end-to-end offenen Ranges
+    plus je Hop die Hop-Portmenge und den limitierenden Hop je Bereich."""
+    steps = await _walk_path(
+        src_ip=src_ip, dst_ip=dst_ip, inv=inv, prefixes=prefixes, client=client,
+        overlay_pattern=overlay_pattern, router_vdom_pattern=router_vdom_pattern,
+        max_hops=max_hops)
+
+    port_hops: list[dict] = []
+    warnings: list[str] = []
+    combine_input: list[dict] = []
+    reachable = True
+
+    for step in steps:
+        label = f"{step.device}/{step.vdom}"
+        ph = {"index": step.index, "device": step.device, "vdom": step.vdom,
+              "label": label, "srcintf": step.srcintf, "egress": step.egress,
+              "egress_class": step.egress_class, "tcp": [], "udp": [],
+              "warnings": list(step.warnings), "reachable": True}
+
+        if step.route is None:
+            ph["reachable"] = False
+            reachable = False
+            port_hops.append(ph)
+            break
+        if step.adom is None:
+            ph["reachable"] = False
+            reachable = False
+            ph["warnings"].append("Kein ADOM/Sync — Ports nicht aus dem Cache bestimmbar.")
+            port_hops.append(ph)
+            break
+
+        vip = inv.vip_for(step.adom, dst_ip)
+        if vip is not None:
+            w = (f"Ziel {dst_ip} ist VIP '{vip.get('name')}' (DNAT) auf {label} — "
+                 "Port-Analyse kann durch Port-Forwarding abweichen.")
+            ph["warnings"].append(w)
+            warnings.append(w)
+
+        pols = inv.candidate_policies(step.device, step.vdom, step.srcintf, step.egress)
+        allowed = hop_allowed(inv, step.adom, pols, src_ip, dst_ip)
+        ph["tcp"] = [list(iv) for iv in allowed["tcp"]]
+        ph["udp"] = [list(iv) for iv in allowed["udp"]]
+        ph["warnings"].extend(allowed["warnings"])
+        port_hops.append(ph)
+        combine_input.append({"label": label, "tcp": allowed["tcp"], "udp": allowed["udp"]})
+
+    combined = combine(combine_input) if combine_input else {
+        "tcp": [], "udp": [], "limits": {"tcp": [], "udp": []}}
+    return {
+        "reachable": reachable,
+        "hops": port_hops,
+        "tcp": [list(iv) for iv in combined["tcp"]],
+        "udp": [list(iv) for iv in combined["udp"]],
+        "limits": combined["limits"],
+        "warnings": warnings,
+    }

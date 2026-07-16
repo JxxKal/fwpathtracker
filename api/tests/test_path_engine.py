@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import pytest
 
-from engine.path import TraceError, _ingress_ambiguity, find_ingress, run_trace
+from engine.path import (
+    TraceError, _ingress_ambiguity, find_ingress, run_port_trace, run_trace,
+)
 from engine.verdict import aggregate_verdict
 from fmg.client import FmgClient
 from fmg.transport import FixtureTransport
@@ -345,6 +347,37 @@ def test_ingress_ambiguity_flags_multiple_owners():
 def test_find_ingress_prefers_connected(inventory, prefixes):
     assert find_ingress(prefixes, inventory, "10.1.1.10") == ("fw-a", "root", "lan1")
     assert find_ingress(prefixes, inventory, "10.2.1.30") == ("fw-b", "root", "lan1")
+
+
+async def _port_trace(inventory, prefixes, client, src, dst):
+    return await run_port_trace(
+        src_ip=src, dst_ip=dst, inv=inventory, prefixes=prefixes, client=client,
+        overlay_pattern=OVERLAY, max_hops=8)
+
+
+async def test_port_trace_intra_allow_all(inventory, prefixes):
+    """Deep-Tracker teilt den Pfad mit run_trace (nur router/lookup, KEIN
+    policy-lookup) und liest die Ports statisch aus dem Cache."""
+    client, t = make_client()
+    add_route(t, "fw-a", "root", "10.1.2.20", "lan2")
+    res = await _port_trace(inventory, prefixes, client, "10.1.1.10", "10.1.2.20")
+    assert res["reachable"] is True
+    assert len(res["hops"]) == 1 and res["hops"][0]["egress_class"] == "LOCAL"
+    # Policy 100 (allow inside-a, service ALL) → alles offen
+    assert res["tcp"] == [[1, 65535]] and res["udp"] == [[1, 65535]]
+    assert res["limits"]["tcp"] == [] and res["limits"]["udp"] == []
+
+
+async def test_port_trace_cross_site_two_hops(inventory, prefixes):
+    """Zwei-Hop-Pfad (Overlay) → Schnittmenge über beide Hops; kein
+    policy-lookup nötig, funktioniert also auch offline aus dem Cache."""
+    client, t = make_client()
+    add_route(t, "fw-a", "root", "10.2.1.30", "vpn-to-b")
+    add_route(t, "fw-b", "root", "10.2.1.30", "lan1")
+    res = await _port_trace(inventory, prefixes, client, "10.1.1.10", "10.2.1.30")
+    assert res["reachable"] is True
+    assert [h["label"] for h in res["hops"]] == ["fw-a/root", "fw-b/root"]
+    assert res["tcp"] == [[1, 65535]]        # beide Hops allow ALL
 
 
 async def test_candidates_ordered_with_hit(inventory, prefixes):
