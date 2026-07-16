@@ -471,6 +471,40 @@ class Inventory:
                 out.append(p)
         return out
 
+    def flow_policies(self, device: str, vdom: str, srcintf: str, egress: str,
+                      adom: str, src_ip: str, dst_ip: str) -> tuple[list[dict], bool]:
+        """Policy-Kandidaten für den Deep-Tracker (Alle-Ports-Analyse).
+
+        Normalfall: die zonen-gefilterte `candidate_policies` (Quell- UND
+        Ziel-Interface müssen passen) — präzise. Existiert aber eine
+        adress-passende Policy, die NUR der Quell-Interface-Zonenfilter verwirft,
+        deutet das auf unvollständige Zonen-/Interface-Sync-Daten hin (genau der
+        Fall, den der Einzel-Dienst-Modus per Live-Lookup + Volltext-Fallback
+        auffängt). Dann wird auf die breitere, adressverankerte Auswahl
+        umgeschaltet: Ziel-Interface + Quell-/Ziel-Adresse matchen, das (im Cache
+        unzuverlässige) Quell-Interface-Pinning wird nicht erzwungen.
+
+        Rückgabe (policies_in_order, widened)."""
+        strict = self.candidate_policies(device, vdom, srcintf, egress)
+        dst_zone = self.zone_of(device, vdom, egress)
+        wide: list[dict] = []
+        for p in self.policies.get((device, vdom), []):
+            if p["status"] != "enable":
+                continue
+            dst_ok = (not p["dstintf"]
+                      or any(z in ("any", egress, dst_zone) for z in p["dstintf"]))
+            if not dst_ok:
+                continue
+            if not self.addr_matches(adom, p["srcaddr"], src_ip):
+                continue
+            if not self.addr_matches(adom, p["dstaddr"], dst_ip):
+                continue
+            wide.append(p)
+        strict_pids = {p["policyid"] for p in strict}
+        if any(p["policyid"] not in strict_pids for p in wide):
+            return wide, True
+        return strict, False
+
     def object_names(self, adom: str) -> list[dict]:
         """Namensindex für Autocomplete: Adress-Objekte mit /32-Subnet o. FQDN.
 

@@ -502,7 +502,16 @@ async def run_port_trace(*, src_ip: str, dst_ip: str,
             ph["warnings"].append(w)
             warnings.append(w)
 
-        pols = inv.candidate_policies(step.device, step.vdom, step.srcintf, step.egress)
+        pols, widened = inv.flow_policies(step.device, step.vdom, step.srcintf,
+                                          step.egress, step.adom, src_ip, dst_ip)
+        if widened:
+            w = (f"{label}: Quell-Interface-Zonen im Cache unvollständig — Ports "
+                 "adressbasiert ausgewertet (Ziel-Interface + Quell-/Ziel-Objekt, "
+                 "Quell-Interface-Pinning nicht erzwungen). Deckt sich mit dem "
+                 "Live-Treffer des Einzel-Dienst-Modus, kann aber leicht über-melden.")
+            ph["warnings"].append(w)
+            if w not in warnings:
+                warnings.append(w)
         allowed = hop_allowed(inv, step.adom, pols, src_ip, dst_ip)
         ph["tcp"] = [list(iv) for iv in allowed["tcp"]]
         ph["udp"] = [list(iv) for iv in allowed["udp"]]

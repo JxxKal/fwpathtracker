@@ -128,6 +128,36 @@ def test_hop_allowed_dst_address_filters():
     assert hop_allowed(inv, ADOM, pols, "10.0.0.10", "10.0.9.10")["tcp"] == [(1, 65535)]
 
 
+def test_flow_policies_widens_on_incomplete_zone_data():
+    """Feld-Fall: die erlaubende Policy matcht per Adresse + Ziel-Interface, ihr
+    Quell-Interface (Zone) fehlt aber im Cache → strict verwirft sie, flow_policies
+    schaltet auf die breitere Auswahl (widened=True) und nimmt sie mit."""
+    inv = _inv([
+        # Policy erlaubt host-a → srv-1 (HTTPS), aber srcintf ist eine Zone, die auf
+        # diesem VDOM im Cache NICHT dem Ingress 'lan' zugeordnet ist.
+        _pol(816, 1, ["host-a"], ["srv-1"], ["HTTPS"],
+             srcintf=["OT-Restrict-Zone"], dstintf=["wan"]),
+    ])
+    strict = inv.candidate_policies("fw", "root", "lan", "wan")
+    assert strict == []                                   # Quell-Zone matcht nicht
+    pols, widened = inv.flow_policies("fw", "root", "lan", "wan", ADOM,
+                                      "10.0.0.10", "10.0.9.10")
+    assert widened is True
+    assert [p["policyid"] for p in pols] == [816]
+    r = hop_allowed(inv, ADOM, pols, "10.0.0.10", "10.0.9.10")
+    assert r["tcp"] == [(443, 443)]                       # nun konsistent erlaubt
+
+
+def test_flow_policies_strict_when_zone_matches():
+    """Passt der Zonenfilter (srcintf 'any'), bleibt es bei der präzisen strict-
+    Auswahl (widened=False) — kein Über-Melden."""
+    inv = _inv([_pol(1, 1, ["host-a"], ["srv-1"], ["HTTPS"], dstintf=["wan"])])
+    pols, widened = inv.flow_policies("fw", "root", "lan", "wan", ADOM,
+                                      "10.0.0.10", "10.0.9.10")
+    assert widened is False
+    assert [p["policyid"] for p in pols] == [1]
+
+
 def test_hop_allowed_warns_on_isdb_and_negate():
     inv = _inv([
         _pol(1, 1, ["all"], ["all"], ["ALL"], **{"internet-service": "enable"}),
