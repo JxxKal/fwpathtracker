@@ -163,6 +163,34 @@ def test_candidate_policies_matches_any_interface_alias():
     assert widened is False
 
 
+def test_zones_of_resolves_default_mapping():
+    """obj/dynamic/interface kann statt per-Gerät dynamic_mapping ein
+    geräteübergreifendes Default-Mapping (defmap-intf) tragen — dann muss zones_of
+    das normalisierte Interface trotzdem als Alias des physischen Egress liefern.
+    Genau das fehlte (Feld-Fall Transfer/WD_OT_AD ↔ L3-WAN0)."""
+    rows = [
+        _row("device", "fw", {"name": "fw", "vdom": [{"name": "L3"}]}),
+        _row("interface", "fw", [
+            {"name": "L3-WAN0", "ip": ["10.0.0.1", "255.255.255.0"], "vdom": ["L3"]},
+        ]),
+        # 'Transfer' hat KEIN per-Gerät-Mapping, nur ein Default-Mapping auf L3-WAN0
+        _row("zone", "Transfer", {"name": "Transfer", "default-mapping": "enable",
+                                  "defmap-intf": "L3-WAN0"}),
+        _row("package", "pkg", {"name": "pkg", "scope member": [{"name": "fw", "vdom": "L3"}]}),
+        _row("policy", "pkg", [
+            {"policyid": 816, "name": "WD-OT-2-AD", "action": 1, "status": 1,
+             "srcintf": ["any"], "dstintf": ["Transfer"],   # normalisiertes Ziel-Interface
+             "srcaddr": ["all"], "dstaddr": ["all"], "service": ["ALL"]},
+        ]),
+    ]
+    inv = Inventory.build(rows)
+    assert inv.dyn_default.get("Transfer") == ["L3-WAN0"]
+    assert "Transfer" in inv.zones_of("fw", "L3", "L3-WAN0")
+    # → Policy matcht jetzt strikt über den Default-Mapping-Alias, kein Widen nötig
+    cands = inv.candidate_policies("fw", "L3", "any", "L3-WAN0")
+    assert [p["policyid"] for p in cands] == [816]
+
+
 def test_flow_policies_widens_on_incomplete_zone_data():
     """Feld-Fall: die erlaubende Policy matcht per Adresse + Ziel-Interface, ihr
     Quell-Interface (Zone) fehlt aber im Cache → strict verwirft sie, flow_policies

@@ -118,8 +118,11 @@ class Inventory:
         # (device, vdom) → [ {policyid, name, action, srcintf, dstintf,
         #                     srcaddr, dstaddr, service, status, comments} ]
         self.policies: dict[tuple[str, str], list[dict]] = {}
-        # (device, vdom) → {zone_name: [member-intfs]}
+        # (device, vdom) → {zone_name: [member-intfs]}   (per-Gerät dynamic_mapping)
         self.zones: dict[tuple[str, str], dict[str, list[str]]] = {}
+        # normalisiertes Interface → [defmap-intf]  (geräteübergreifendes
+        # Default-Mapping aus obj/dynamic/interface, wenn kein per-Gerät-Mapping)
+        self.dyn_default: dict[str, list[str]] = {}
         # adom → {name: address-data}
         self.addresses: dict[str, dict[str, dict]] = {}
         self.addrgrps: dict[str, dict[str, dict]] = {}
@@ -175,15 +178,25 @@ class Inventory:
                 }
             inv.interfaces[device] = table
 
-        # Zonen: obj/dynamic/interface mit per-Device-Mapping
+        # Zonen/normalisierte Interfaces: obj/dynamic/interface. Zwei Mapping-Formen:
+        #   1) per-Gerät dynamic_mapping (_scope + local-intf)
+        #   2) geräteübergreifendes Default-Mapping (defmap-intf) — greift, wo kein
+        #      per-Gerät-Mapping existiert. Wird BEIDES gebraucht, sonst fehlen
+        #      default-gemappte Interfaces im Cache (Policy-Interface ↔ Egress
+        #      bridged nicht → Regel fällt durch den Kandidatenfilter).
         for r in by_kind.get("zone", []):
-            zname = r["data"].get("name") or r["key"]
-            for mapping in _as_list(r["data"].get("dynamic_mapping")):
+            data = r["data"]
+            zname = data.get("name") or r["key"]
+            for mapping in _as_list(data.get("dynamic_mapping")):
                 members = [m for m in _as_list(mapping.get("local-intf")) if m]
                 for scope in _as_list(mapping.get("_scope")):
                     dev, vdom = scope.get("name"), scope.get("vdom") or "root"
                     if dev:
                         inv.zones.setdefault((dev, vdom), {})[zname] = members
+            defmap = [m for m in _as_list(data.get("defmap-intf")) if m]
+            default_on = str(data.get("default-mapping", "enable")).lower() not in ("disable", "0")
+            if defmap and default_on:
+                inv.dyn_default[zname] = defmap
 
         # Packages → Scope, Policies → (device, vdom)
         pkg_scope: dict[tuple[str, str], list[tuple[str, str]]] = {}
@@ -465,8 +478,14 @@ class Inventory:
         den ersten Alias; fürs Policy-Matching müssen aber alle zählen, sonst wird
         eine Regel verworfen, die einen anderen Alias nutzt (Feld-Fall #816)."""
         aliases = {intf}
-        for zname, members in (self.zones.get((device, vdom)) or {}).items():
+        local = self.zones.get((device, vdom)) or {}
+        for zname, members in local.items():
             if intf in members:
+                aliases.add(zname)
+        # Default-Mapping (geräteübergreifend) — nur wo kein per-Gerät-Mapping die
+        # Zone auf diesem VDOM überschreibt.
+        for zname, defintfs in self.dyn_default.items():
+            if zname not in local and intf in defintfs:
                 aliases.add(zname)
         return aliases
 
