@@ -11,6 +11,24 @@ from routers.config import read_config
 
 router = APIRouter(prefix="/api/itop", tags=["itop"])
 
+# Standort-Supernetze (Vorauswahl im Free-Subnet-Finder). Default = die in iTop
+# gepflegten Bereiche; über config-Key 'site_supernets' ({sites:[{name,cidr}]})
+# überschreibbar.
+DEFAULT_SITE_SUPERNETS = [
+    {"name": "Holstein", "cidr": "10.180.0.0/20"},
+    {"name": "Gas Nord", "cidr": "10.180.16.0/20"},
+    {"name": "Hamburg", "cidr": "10.180.32.0/20"},
+    {"name": "Oel West", "cidr": "10.180.48.0/21"},
+    {"name": "Oel Nord", "cidr": "10.180.56.0/21"},
+]
+
+
+@router.get("/site-supernets")
+async def site_supernets(_user: dict = Depends(get_current_user)) -> dict:
+    cfg = await read_config("site_supernets")
+    sites = cfg.get("sites")
+    return {"sites": sites if isinstance(sites, list) and sites else DEFAULT_SITE_SUPERNETS}
+
 
 @router.post("/test")
 async def test_connection(request: Request, _admin: dict = Depends(require_admin)) -> dict:

@@ -1,6 +1,6 @@
 import { Boxes } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { freeSubnets, type FreeSubnetResult } from '../api';
+import { freeSubnets, siteSupernets, type FreeSubnetResult, type SiteSupernet } from '../api';
 import { de } from '../i18n/de';
 
 const ALL_SIZES = [16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30];
@@ -19,6 +19,9 @@ export default function FreeSubnet() {
   const [res, setRes] = useState<FreeSubnetResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [sites, setSites] = useState<SiteSupernet[]>([]);
+
+  useEffect(() => { siteSupernets().then((r) => setSites(r.sites)).catch(() => undefined); }, []);
 
   const sp = superPrefix(supernet);
   const noPrefix = supernet.trim().length > 0 && sp === null;
@@ -47,6 +50,16 @@ export default function FreeSubnet() {
         <p className="mt-0.5 text-xs text-slate-500">{de.freesubnet.hint}</p>
       </div>
       <div className="flex flex-wrap items-end gap-2">
+        {sites.length > 0 && (
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-slate-500">{de.freesubnet.site}</span>
+            <select className="fwpt-input w-40" value=""
+              onChange={(e) => { const s = sites.find((x) => x.cidr === e.target.value); if (s) setSupernet(s.cidr); }}>
+              <option value="">{de.freesubnet.pick}</option>
+              {sites.map((s) => <option key={s.cidr} value={s.cidr}>{s.name} ({s.cidr})</option>)}
+            </select>
+          </label>
+        )}
         <label className="flex flex-1 flex-col gap-1">
           <span className="text-[11px] text-slate-500">{de.freesubnet.supernet}</span>
           <input className="fwpt-input font-mono" value={supernet}

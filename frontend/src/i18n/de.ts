@@ -64,6 +64,8 @@ export const de = {
     summary: 'belegt in iTop · Ergebnis',
     capped: '(Anzeige begrenzt)',
     needPrefix: 'Supernet mit /Präfix angeben (z. B. 10.180.0.0/16).',
+    site: 'Standort',
+    pick: '— Vorauswahl —',
   },
   ipcalc: {
     title: 'IP-Rechner',

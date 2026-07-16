@@ -177,6 +177,18 @@ export async function runChecks(checks: CheckItem[]): Promise<{
   return request('/api/checks/run', { method: 'POST', body: JSON.stringify({ checks }) });
 }
 
+export interface SiteSupernet { name: string; cidr: string; }
+export async function siteSupernets(): Promise<{ sites: SiteSupernet[] }> {
+  if (isDemoMode()) {
+    return { sites: [
+      { name: 'Holstein', cidr: '10.180.0.0/20' }, { name: 'Gas Nord', cidr: '10.180.16.0/20' },
+      { name: 'Hamburg', cidr: '10.180.32.0/20' }, { name: 'Oel West', cidr: '10.180.48.0/21' },
+      { name: 'Oel Nord', cidr: '10.180.56.0/21' },
+    ] };
+  }
+  return request('/api/itop/site-supernets');
+}
+
 export interface FreeSubnetResult {
   supernet: string; prefix: number; allocated: number; subnets_total: number;
   free: string[]; capped: boolean;

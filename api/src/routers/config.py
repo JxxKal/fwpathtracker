@@ -10,7 +10,7 @@ from secrets_mask import mask_secrets, merge_secrets
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
-KNOWN_KEYS = {"fmg", "itop", "dns", "sites", "tracker", "saml"}
+KNOWN_KEYS = {"fmg", "itop", "dns", "sites", "tracker", "saml", "checks", "site_supernets"}
 
 
 class ConfigResponse(BaseModel):
