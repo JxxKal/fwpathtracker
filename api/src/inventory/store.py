@@ -490,30 +490,22 @@ class Inventory:
         """Policy-Kandidaten für den Deep-Tracker (Alle-Ports-Analyse).
 
         Normalfall: die zonen-gefilterte `candidate_policies` (Quell- UND
-        Ziel-Interface müssen passen) — präzise. Existiert aber eine
-        adress-passende Policy, die NUR der Quell-Interface-Zonenfilter verwirft,
-        deutet das auf unvollständige Zonen-/Interface-Sync-Daten hin (genau der
-        Fall, den der Einzel-Dienst-Modus per Live-Lookup + Volltext-Fallback
-        auffängt). Dann wird auf die breitere, adressverankerte Auswahl
-        umgeschaltet: Ziel-Interface + Quell-/Ziel-Adresse matchen, das (im Cache
-        unzuverlässige) Quell-Interface-Pinning wird nicht erzwungen.
+        Ziel-Interface via Aliase) — präzise. Findet der strikte Filter aber eine
+        adress-passende Policy nicht, die live matchen würde, wird auf die reine
+        adressverankerte Auswahl umgeschaltet (srcaddr∋src ∧ dstaddr∋dst, KEIN
+        Interface-Pinning). Grund: das Interface-Naming zwischen Routing-Egress
+        (z.B. 'L3-WAN0') und normalisiertem Policy-Interface (z.B. 'Transfer'/
+        'WD_OT_AD') weicht bei Transit/VDOM-Kopplung ab — der Ziel-Interface-Filter
+        würde die real greifende Regel sonst verwerfen (Feld-Fall #816/#249). Genau
+        das fängt der Einzel-Dienst-Modus per Live-Lookup + Volltext-Fallback ab.
 
         Rückgabe (policies_in_order, widened)."""
         strict = self.candidate_policies(device, vdom, srcintf, egress)
-        dst_aliases = self.zones_of(device, vdom, egress) | {"any"}
-        wide: list[dict] = []
-        for p in self.policies.get((device, vdom), []):
-            if p["status"] != "enable":
-                continue
-            dst_ok = (not p["dstintf"]) or any(z in dst_aliases for z in p["dstintf"])
-            if not dst_ok:
-                continue
-            if not self.addr_matches(adom, p["srcaddr"], src_ip):
-                continue
-            if not self.addr_matches(adom, p["dstaddr"], dst_ip):
-                continue
-            wide.append(p)
         strict_pids = {p["policyid"] for p in strict}
+        wide = [p for p in self.policies.get((device, vdom), [])
+                if p["status"] == "enable"
+                and self.addr_matches(adom, p["srcaddr"], src_ip)
+                and self.addr_matches(adom, p["dstaddr"], dst_ip)]
         if any(p["policyid"] not in strict_pids for p in wide):
             return wide, True
         return strict, False

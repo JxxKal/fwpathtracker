@@ -183,6 +183,23 @@ def test_flow_policies_widens_on_incomplete_zone_data():
     assert r["tcp"] == [(443, 443)]                       # nun konsistent erlaubt
 
 
+def test_flow_policies_widens_on_egress_interface_mismatch():
+    """Feld-Fall Transit (#816/#249): die live greifende Regel hat ein anderes
+    (normalisiertes) ZIEL-Interface als der Routing-Egress — weder Quell- noch
+    Ziel-Interface matchen den Hop. Der adressbasierte Widen findet sie trotzdem,
+    sonst zeigt der Deep-Tracker fälschlich 'keine Ports' (≠ Einzel-Dienst)."""
+    inv = _inv([
+        _pol(816, 1, ["host-a"], ["srv-1"], ["DNS"],
+             srcintf=["Transfer"], dstintf=["WD_OT_AD"]),
+    ])
+    assert inv.candidate_policies("fw", "root", "lan", "wan") == []
+    pols, widened = inv.flow_policies("fw", "root", "lan", "wan", ADOM,
+                                      "10.0.0.10", "10.0.9.10")
+    assert widened is True and [p["policyid"] for p in pols] == [816]
+    r = hop_allowed(inv, ADOM, pols, "10.0.0.10", "10.0.9.10")
+    assert r["tcp"] == [(53, 53)] and r["udp"] == [(53, 53)]
+
+
 def test_flow_policies_strict_when_zone_matches():
     """Passt der Zonenfilter (srcintf 'any'), bleibt es bei der präzisen strict-
     Auswahl (widened=False) — kein Über-Melden."""

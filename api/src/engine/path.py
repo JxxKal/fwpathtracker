@@ -414,10 +414,11 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
                     match = full
                     candidates.insert(0, full)
                     hop.warnings.append(
-                        f"Treffer-Regel #{pid} wurde live bestätigt, fehlt aber in "
-                        "der nach Zonen gefilterten Kandidatenliste — die Zonen-/"
-                        "Interface-Zuordnung im Sync ist evtl. unvollständig "
-                        "(Kandidaten-Anzeige lückenhaft, Verdict bleibt korrekt)."
+                        f"Treffer-Regel #{pid} wurde live bestätigt, taucht aber "
+                        "nicht in der nach Interface/Zone gefilterten Kandidatenliste "
+                        "auf — die Regel nutzt vermutlich ein normalisiertes "
+                        "Interface, dessen Zuordnung zum Routing-Egress im Cache "
+                        "abweicht (Kandidaten-Anzeige lückenhaft, Verdict bleibt korrekt)."
                     )
             if match is not None:
                 match.hit = True
@@ -505,10 +506,11 @@ async def run_port_trace(*, src_ip: str, dst_ip: str,
         pols, widened = inv.flow_policies(step.device, step.vdom, step.srcintf,
                                           step.egress, step.adom, src_ip, dst_ip)
         if widened:
-            w = (f"{label}: Quell-Interface-Zonen im Cache unvollständig — Ports "
-                 "adressbasiert ausgewertet (Ziel-Interface + Quell-/Ziel-Objekt, "
-                 "Quell-Interface-Pinning nicht erzwungen). Deckt sich mit dem "
-                 "Live-Treffer des Einzel-Dienst-Modus, kann aber leicht über-melden.")
+            w = (f"{label}: Interface-Naming (Routing-Egress vs. normalisiertes "
+                 "Policy-Interface) weicht ab — Ports adressbasiert ausgewertet "
+                 "(Quell-/Ziel-Objekt, Interface-Pinning nicht erzwungen). Deckt "
+                 "sich mit dem Live-Treffer des Einzel-Dienst-Modus, kann aber "
+                 "leicht über-melden.")
             ph["warnings"].append(w)
             if w not in warnings:
                 warnings.append(w)
