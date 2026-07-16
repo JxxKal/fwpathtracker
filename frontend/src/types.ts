@@ -87,6 +87,41 @@ export interface TraceResult {
   inventory_synced_at: string | null;
 }
 
+// ── Deep-Tracker (alle Ports) ────────────────────────────────────────────────
+export type PortRange = [number, number];   // [lo, hi] inklusiv
+
+export interface PortHop {
+  index: number;
+  device: string;
+  vdom: string;
+  label: string;
+  srcintf: string;
+  egress: string | null;
+  egress_class: EgressClass | string;
+  tcp: PortRange[];
+  udp: PortRange[];
+  warnings: string[];
+  reachable: boolean;
+}
+
+export interface PortLimit {
+  range: PortRange;
+  hop: string | null;
+}
+
+export interface PortTraceResult {
+  src: Endpoint;
+  dst: Endpoint;
+  reachable: boolean;
+  hops: PortHop[];
+  tcp: PortRange[];
+  udp: PortRange[];
+  limits: { tcp?: PortLimit[]; udp?: PortLimit[] };
+  warnings: string[];
+  duration_ms: number;
+  inventory_synced_at: string | null;
+}
+
 export interface TraceRequest {
   src: string;
   dst: string;

@@ -2,8 +2,8 @@
 import * as demo from './demo/api';
 import { isDemoMode } from './demo/mode';
 import type {
-  InventorySummary, SamlConfig, SearchHit, Session, SslStatus, SyncStatus,
-  TraceHistoryEntry, TraceRequest, TraceResult, UserEntry,
+  InventorySummary, PortTraceResult, SamlConfig, SearchHit, Session, SslStatus,
+  SyncStatus, TraceHistoryEntry, TraceRequest, TraceResult, UserEntry,
 } from './types';
 
 let token: string | null = localStorage.getItem('fwpt-token');
@@ -67,6 +67,13 @@ export async function login(username: string, password: string): Promise<Session
 export async function runTrace(req: TraceRequest): Promise<TraceResult> {
   if (isDemoMode()) return demo.trace(req);
   return request('/api/trace', { method: 'POST', body: JSON.stringify(req) });
+}
+
+export async function portTrace(src: string, dst: string): Promise<PortTraceResult> {
+  if (isDemoMode()) return demo.portTrace(src, dst);
+  return request('/api/trace/ports', {
+    method: 'POST', body: JSON.stringify({ src, dst }),
+  });
 }
 
 export async function fetchTraces(): Promise<TraceHistoryEntry[]> {

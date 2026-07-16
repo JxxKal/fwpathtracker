@@ -1,6 +1,6 @@
 // Demo-Antworten: entsprechen der Phase-4-Testmatrix (Lab-Fixtures).
 import type {
-  InventorySummary, SearchHit, Session, SyncStatus,
+  InventorySummary, PortTraceResult, SearchHit, Session, SyncStatus,
   TraceHistoryEntry, TraceRequest, TraceResult,
 } from '../types';
 
@@ -82,6 +82,37 @@ export function trace(req: TraceRequest): TraceResult {
     ],
     warnings: [], vip: null, duration_ms: 412,
     inventory_synced_at: new Date().toISOString(),
+  };
+}
+
+export function portTrace(_src: string, dst: string): PortTraceResult {
+  const deny = dst.includes('9.9');
+  return {
+    src: { ip: '10.1.1.10', names: [{ name: 'ws0042.corp.example', provenance: 'dns' }], provenance: 'ip' },
+    dst: {
+      ip: deny ? '10.2.9.9' : '10.2.1.30',
+      names: deny ? [] : [{ name: 'srv-db', provenance: 'fmg' }], provenance: 'fmg',
+    },
+    reachable: !deny,
+    hops: [
+      {
+        index: 0, device: 'fw-a', vdom: 'root', label: 'fw-a/root', srcintf: 'lan1',
+        egress: 'vpn-to-b', egress_class: 'OVERLAY',
+        tcp: [[1, 65535]], udp: [[1, 65535]], warnings: [], reachable: true,
+      },
+      {
+        index: 1, device: 'fw-b', vdom: 'root', label: 'fw-b/root', srcintf: 'vpn-to-a',
+        egress: 'lan1', egress_class: 'LOCAL',
+        tcp: deny ? [] : [[443, 443], [3389, 3389]], udp: deny ? [] : [[53, 53]],
+        warnings: [], reachable: true,
+      },
+    ],
+    tcp: deny ? [] : [[443, 443], [3389, 3389]],
+    udp: deny ? [] : [[53, 53]],
+    limits: deny
+      ? { tcp: [{ range: [1, 65535], hop: 'fw-b/root' }], udp: [{ range: [1, 65535], hop: 'fw-b/root' }] }
+      : { tcp: [[1, 442], [444, 3388], [3390, 65535]].map((r) => ({ range: r as [number, number], hop: 'fw-b/root' })), udp: [] },
+    warnings: [], duration_ms: 210, inventory_synced_at: new Date().toISOString(),
   };
 }
 

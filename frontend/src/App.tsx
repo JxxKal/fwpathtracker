@@ -1,6 +1,6 @@
 import { Info, LogOut, Route } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { runTrace, setToken } from './api';
+import { portTrace, runTrace, setToken } from './api';
 import LoginPage from './components/LoginPage';
 import HistoryList from './components/HistoryList';
 import AddToChecks from './components/AddToChecks';
@@ -10,8 +10,9 @@ import HopDetailPanel from './components/HopDetailPanel';
 import IpCalc from './components/IpCalc';
 import NetOwnership from './components/NetOwnership';
 import PathGraph from './components/PathGraph';
+import PortResult from './components/PortResult';
 import ResultDrawer from './components/ResultDrawer';
-import TraceForm from './components/TraceForm';
+import TraceForm, { type TraceMode } from './components/TraceForm';
 import DnsPanel from './components/settings/DnsPanel';
 import FmgPanel from './components/settings/FmgPanel';
 import ItopPanel from './components/settings/ItopPanel';
@@ -21,7 +22,7 @@ import SitesPanel from './components/settings/SitesPanel';
 import SslPanel from './components/settings/SslPanel';
 import UsersPanel from './components/settings/UsersPanel';
 import { de } from './i18n/de';
-import type { Hop, Session, TraceRequest, TraceResult } from './types';
+import type { Hop, PortTraceResult, Session, TraceRequest, TraceResult } from './types';
 
 type Tab = 'tracker' | 'checks' | 'verlauf' | 'einstellungen';
 
@@ -39,7 +40,9 @@ function loadSession(): Session | null {
 export default function App() {
   const [session, setSession] = useState<Session | null>(loadSession);
   const [tab, setTab] = useState<Tab>('tracker');
+  const [mode, setMode] = useState<TraceMode>('service');
   const [result, setResult] = useState<TraceResult | null>(null);
+  const [portResult, setPortResult] = useState<PortTraceResult | null>(null);
   const [pendingReq, setPendingReq] = useState<TraceRequest | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,6 +98,20 @@ export default function App() {
     }
   }
 
+  async function executePorts(src: string, dst: string) {
+    setBusy(true);
+    setError(null);
+    setTab('tracker');
+    try {
+      setPortResult(await portTrace(src, dst));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setPortResult(null);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!session) return <LoginPage onLogin={onLogin} />;
 
   return (
@@ -132,13 +149,15 @@ export default function App() {
         {tab === 'tracker' && (
           <>
             <TraceForm key={pendingReq ? JSON.stringify(pendingReq) : 'blank'}
-              onSubmit={execute} busy={busy} initial={pendingReq} />
+              onSubmit={execute} onPortSubmit={executePorts} busy={busy}
+              mode={mode} onModeChange={setMode} initial={pendingReq} />
             {error && (
               <div className="rounded-md border border-red-800 bg-red-950/60 p-3 text-sm text-red-300">
                 {error}
               </div>
             )}
-            {result && (
+            {mode === 'ports' && portResult && <PortResult result={portResult} />}
+            {mode === 'service' && result && (
               <>
                 <div className={`flex items-center gap-3 rounded-md border p-3 text-sm ${
                   verdictBanner[result.verdict]
