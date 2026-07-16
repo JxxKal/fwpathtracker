@@ -128,6 +128,41 @@ def test_hop_allowed_dst_address_filters():
     assert hop_allowed(inv, ADOM, pols, "10.0.0.10", "10.0.9.10")["tcp"] == [(1, 65535)]
 
 
+def test_candidate_policies_matches_any_interface_alias():
+    """FMG-Wurzelursache (#816): ein lokales Interface kann local-intf MEHRERER
+    dynamischer Interfaces/Zonen sein. Eine Policy, die einen ANDEREN Alias
+    desselben Interfaces referenziert, muss trotzdem als Kandidat gelten — sonst
+    ist der Zonenfilter zu streng und Deep-Tracker vs. Einzel-Dienst inkonsistent."""
+    rows = [
+        _row("device", "fw", {"name": "fw", "vdom": [{"name": "root"}]}),
+        _row("interface", "fw", [
+            {"name": "port5", "ip": ["10.0.0.1", "255.255.255.0"], "vdom": ["root"]},
+            {"name": "port6", "ip": ["10.0.9.1", "255.255.255.0"], "vdom": ["root"]},
+        ]),
+        # port5 ist local-intf ZWEIER dynamischer Interfaces (AdminSrv + Transfer)
+        _row("zone", "AdminSrv", {"name": "AdminSrv", "dynamic_mapping": [
+            {"_scope": [{"name": "fw", "vdom": "root"}], "local-intf": ["port5"]}]}),
+        _row("zone", "Transfer", {"name": "Transfer", "dynamic_mapping": [
+            {"_scope": [{"name": "fw", "vdom": "root"}], "local-intf": ["port5"]}]}),
+        _row("zone", "AD", {"name": "AD", "dynamic_mapping": [
+            {"_scope": [{"name": "fw", "vdom": "root"}], "local-intf": ["port6"]}]}),
+        _row("package", "pkg", {"name": "pkg", "scope member": [{"name": "fw", "vdom": "root"}]}),
+        _row("policy", "pkg", [
+            {"policyid": 816, "name": "WD-OT-2-AD", "action": 1, "status": 1,
+             "srcintf": ["Transfer"], "dstintf": ["AD"],   # anderer Alias als zone_of
+             "srcaddr": ["all"], "dstaddr": ["all"], "service": ["ALL"]},
+        ]),
+    ]
+    inv = Inventory.build(rows)
+    assert inv.zones_of("fw", "root", "port5") == {"port5", "AdminSrv", "Transfer"}
+    # Trotz zone_of=erster Alias matcht die Policy über den Transfer-Alias:
+    cands = inv.candidate_policies("fw", "root", "port5", "port6")
+    assert [p["policyid"] for p in cands] == [816]
+    # → jetzt schon strict, kein Widen nötig
+    _, widened = inv.flow_policies("fw", "root", "port5", "port6", ADOM, "10.0.0.10", "10.0.9.10")
+    assert widened is False
+
+
 def test_flow_policies_widens_on_incomplete_zone_data():
     """Feld-Fall: die erlaubende Policy matcht per Adresse + Ziel-Interface, ihr
     Quell-Interface (Zone) fehlt aber im Cache → strict verwirft sie, flow_policies

@@ -457,16 +457,30 @@ class Inventory:
                     return obj
         return None
 
+    def zones_of(self, device: str, vdom: str, intf: str) -> set[str]:
+        """ALLE Zonen/normalisierten Interfaces, die dieses lokale Interface
+        enthalten, plus das Interface selbst. In FortiManager (obj/dynamic/interface)
+        kann EIN lokales Interface `local-intf` MEHRERER dynamischer Interfaces sein
+        — eine Policy darf jeden dieser Aliase referenzieren. `zone_of` liefert nur
+        den ersten Alias; fürs Policy-Matching müssen aber alle zählen, sonst wird
+        eine Regel verworfen, die einen anderen Alias nutzt (Feld-Fall #816)."""
+        aliases = {intf}
+        for zname, members in (self.zones.get((device, vdom)) or {}).items():
+            if intf in members:
+                aliases.add(zname)
+        return aliases
+
     def candidate_policies(self, device: str, vdom: str, srcintf: str, dstintf: str) -> list[dict]:
-        """Geordnete Policies, deren srcintf/dstintf-Zonen zum Hop passen."""
-        src_zone = self.zone_of(device, vdom, srcintf)
-        dst_zone = self.zone_of(device, vdom, dstintf)
+        """Geordnete Policies, deren srcintf/dstintf zum Hop passen — gematcht gegen
+        ALLE Interface-Aliase (zones_of), nicht nur den ersten."""
+        src_aliases = self.zones_of(device, vdom, srcintf) | {"any"}
+        dst_aliases = self.zones_of(device, vdom, dstintf) | {"any"}
         out = []
         for p in self.policies.get((device, vdom), []):
             if p["status"] != "enable":
                 continue
-            src_ok = any(z in ("any", srcintf, src_zone) for z in p["srcintf"]) or not p["srcintf"]
-            dst_ok = any(z in ("any", dstintf, dst_zone) for z in p["dstintf"]) or not p["dstintf"]
+            src_ok = (not p["srcintf"]) or any(z in src_aliases for z in p["srcintf"])
+            dst_ok = (not p["dstintf"]) or any(z in dst_aliases for z in p["dstintf"])
             if src_ok and dst_ok:
                 out.append(p)
         return out
@@ -486,13 +500,12 @@ class Inventory:
 
         Rückgabe (policies_in_order, widened)."""
         strict = self.candidate_policies(device, vdom, srcintf, egress)
-        dst_zone = self.zone_of(device, vdom, egress)
+        dst_aliases = self.zones_of(device, vdom, egress) | {"any"}
         wide: list[dict] = []
         for p in self.policies.get((device, vdom), []):
             if p["status"] != "enable":
                 continue
-            dst_ok = (not p["dstintf"]
-                      or any(z in ("any", egress, dst_zone) for z in p["dstintf"]))
+            dst_ok = (not p["dstintf"]) or any(z in dst_aliases for z in p["dstintf"])
             if not dst_ok:
                 continue
             if not self.addr_matches(adom, p["srcaddr"], src_ip):
