@@ -54,6 +54,16 @@ export const de = {
     downstream: 'nachgelagert',
     downstreamHint: 'Hinter einer früheren Blockade — Verkehr erreicht diese Firewall erst, wenn die vorigen Hops geöffnet sind.',
   },
+  freesubnet: {
+    title: 'Freies Subnetz finden',
+    hint: 'Freie Blöcke gewünschter Größe in einem Supernet — belegter Bestand aus iTop (IPAM).',
+    supernet: 'Supernet (CIDR)',
+    size: 'Größe',
+    find: 'Suchen',
+    none: 'Kein freier Block dieser Größe im Supernet.',
+    summary: 'belegt in iTop · Ergebnis',
+    capped: '(Anzeige begrenzt)',
+  },
   ipcalc: {
     title: 'IP-Rechner',
     hint: 'Host mit Maske oder Netzsegment eingeben — Netz, Maske, Host-Range, Broadcast.',

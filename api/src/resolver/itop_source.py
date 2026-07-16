@@ -93,6 +93,36 @@ class ItopSource:
         self._loaded_at = 0.0
         return len(await self._index(cfg))
 
+    async def subnets(self, cfg: dict) -> list[dict]:
+        """IPv4-Subnetze aus iTop (IPAM/TeemIP) — für den Free-Subnet-Finder.
+        Klasse/Felder konfigurierbar (Default TeemIP): subnet_class=IPv4Subnet,
+        subnet_ip_field=ip, subnet_mask_field=mask. Rückgabe: [{cidr, name}].
+        """
+        import ipaddress
+        if not cfg.get("base_url") or not cfg.get("enabled", True):
+            return []
+        guard_egress_url(cfg["base_url"], "iTop-URL")
+        cls = cfg.get("subnet_class") or "IPv4Subnet"
+        ipf = cfg.get("subnet_ip_field") or "ip"
+        maskf = cfg.get("subnet_mask_field") or "mask"
+        org = (cfg.get("org_filter") or "").strip()
+        oql = (f"SELECT {cls} WHERE org_name = '{_oql_str(org)}'" if org else f"SELECT {cls}")
+        async with self._client(cfg) as client:
+            rows = await _core_get(client, cfg["base_url"], cfg["user"], cfg["password"],
+                                   cls, f"{ipf},{maskf},name", oql)
+        out: list[dict] = []
+        for r in rows:
+            ipv = str(r.get(ipf) or "").strip()
+            mv = str(r.get(maskf) or "").strip()
+            if not ipv or not mv:
+                continue
+            try:
+                net = ipaddress.IPv4Network(f"{ipv}/{mv}", strict=False)
+            except ValueError:
+                continue
+            out.append({"cidr": str(net), "name": str(r.get("name") or "").strip()})
+        return out
+
     async def resolve_name(self, cfg: dict, name: str) -> dict | None:
         needle = name.strip().lower()
         for h in await self._index(cfg):

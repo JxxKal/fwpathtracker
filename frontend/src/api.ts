@@ -177,6 +177,21 @@ export async function runChecks(checks: CheckItem[]): Promise<{
   return request('/api/checks/run', { method: 'POST', body: JSON.stringify({ checks }) });
 }
 
+export interface FreeSubnetResult {
+  supernet: string; prefix: number; allocated: number; subnets_total: number;
+  free: string[]; capped: boolean;
+}
+export async function freeSubnets(supernet: string, prefix: number): Promise<FreeSubnetResult> {
+  if (isDemoMode()) {
+    return {
+      supernet, prefix, allocated: 6, subnets_total: 128,
+      free: [`10.180.5.0/${prefix}`, `10.180.6.0/${prefix}`, `10.180.11.0/${prefix}`],
+      capped: false,
+    };
+  }
+  return request('/api/itop/free-subnets', { method: 'POST', body: JSON.stringify({ supernet, prefix }) });
+}
+
 export async function inventoryOwns(ip: string): Promise<OwnsResult> {
   if (isDemoMode()) {
     return {

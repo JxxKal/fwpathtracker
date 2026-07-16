@@ -5,6 +5,7 @@ import LoginPage from './components/LoginPage';
 import HistoryList from './components/HistoryList';
 import AddToChecks from './components/AddToChecks';
 import ChecksPanel from './components/ChecksPanel';
+import FreeSubnet from './components/FreeSubnet';
 import HopDetailPanel from './components/HopDetailPanel';
 import IpCalc from './components/IpCalc';
 import NetOwnership from './components/NetOwnership';
@@ -182,6 +183,7 @@ export default function App() {
             <div className="grid gap-4 lg:grid-cols-2">
               <NetOwnership />
               <IpCalc />
+              <FreeSubnet />
             </div>
           </>
         )}
