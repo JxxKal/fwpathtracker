@@ -23,11 +23,32 @@ DEFAULT_SITE_SUPERNETS = [
 ]
 
 
+def _normalize_sites(sites: list) -> list[dict]:
+    """Gespeicherte Supernetze robust einlesen: Alt-Feld 'label' als Name
+    akzeptieren, leere Namen aus den Defaults per CIDR nachfüllen. Verhindert
+    leere Beschreibungsfelder im Panel bei Alt-/Teil-Configs."""
+    by_cidr = {s["cidr"]: s["name"] for s in DEFAULT_SITE_SUPERNETS}
+    out: list[dict] = []
+    for s in sites:
+        if not isinstance(s, dict):
+            continue
+        cidr = str(s.get("cidr") or "").strip()
+        if not cidr:
+            continue
+        name = str(s.get("name") or s.get("label") or "").strip()
+        if not name:
+            name = by_cidr.get(cidr, "")
+        out.append({"name": name, "cidr": cidr})
+    return out
+
+
 @router.get("/site-supernets")
 async def site_supernets(_user: dict = Depends(get_current_user)) -> dict:
     cfg = await read_config("site_supernets")
     sites = cfg.get("sites")
-    return {"sites": sites if isinstance(sites, list) and sites else DEFAULT_SITE_SUPERNETS}
+    if isinstance(sites, list) and sites:
+        return {"sites": _normalize_sites(sites)}
+    return {"sites": DEFAULT_SITE_SUPERNETS}
 
 
 @router.post("/test")
