@@ -1,9 +1,17 @@
 import { Boxes } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { freeSubnets, type FreeSubnetResult } from '../api';
 import { de } from '../i18n/de';
 
-const SIZES = [30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16];
+const ALL_SIZES = [16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30];
+
+// Präfix aus einem CIDR lesen (null, wenn kein /Präfix angegeben).
+function superPrefix(s: string): number | null {
+  const m = s.trim().match(/\/(\d{1,2})\s*$/);
+  if (!m) return null;
+  const p = Number(m[1]);
+  return p >= 0 && p <= 32 ? p : null;
+}
 
 export default function FreeSubnet() {
   const [supernet, setSupernet] = useState('');
@@ -11,6 +19,15 @@ export default function FreeSubnet() {
   const [res, setRes] = useState<FreeSubnetResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const sp = superPrefix(supernet);
+  const noPrefix = supernet.trim().length > 0 && sp === null;
+  // Nur Größen anbieten, die INS Supernet passen (Präfix ≥ Supernet-Präfix).
+  const sizes = useMemo(() => (sp === null ? ALL_SIZES : ALL_SIZES.filter((p) => p >= sp)), [sp]);
+  // Ausgewählte Größe automatisch gültig halten.
+  useEffect(() => {
+    if (sp !== null && prefix < sp) setPrefix(sp);
+  }, [sp, prefix]);
 
   async function find() {
     setBusy(true); setErr(null); setRes(null);
@@ -41,14 +58,16 @@ export default function FreeSubnet() {
           <span className="text-[11px] text-slate-500">{de.freesubnet.size}</span>
           <select className="fwpt-input w-24" value={prefix}
             onChange={(e) => setPrefix(Number(e.target.value))}>
-            {SIZES.map((p) => <option key={p} value={p}>/{p}</option>)}
+            {sizes.map((p) => <option key={p} value={p}>/{p}</option>)}
           </select>
         </label>
-        <button type="button" className="fwpt-btn" onClick={find} disabled={busy || !supernet.trim()}>
+        <button type="button" className="fwpt-btn" onClick={find}
+          disabled={busy || !supernet.trim() || noPrefix}>
           {de.freesubnet.find}
         </button>
       </div>
 
+      {noPrefix && <p className="text-sm text-amber-400">{de.freesubnet.needPrefix}</p>}
       {err && <p className="text-sm text-red-400">{err}</p>}
 
       {res && (

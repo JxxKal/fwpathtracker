@@ -43,7 +43,9 @@ async def free_subnets(body: FreeSubnetRequest, request: Request,
     except ValueError as exc:
         raise HTTPException(422, f"Ungültiges Supernet (CIDR erwartet): {body.supernet}") from exc
     if body.prefix < supernet.prefixlen:
-        raise HTTPException(422, "Gewünschtes Präfix muss ≥ Supernet-Präfix sein.")
+        raise HTTPException(
+            422, f"Gewünschte Blockgröße /{body.prefix} ist größer als das Supernet "
+            f"/{supernet.prefixlen} — kleineren Block (größeres Präfix) wählen.")
 
     try:
         subs = await request.app.state.resolver.itop.subnets(cfg)
