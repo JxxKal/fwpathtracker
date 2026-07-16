@@ -27,6 +27,7 @@ export interface Candidate {
   service: string[];
   comments: string;
   hit: boolean;
+  obj_types?: Record<string, string>;
 }
 
 export interface Suggestion {

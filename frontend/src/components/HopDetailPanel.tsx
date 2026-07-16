@@ -1,7 +1,7 @@
 import { X } from 'lucide-react';
 import { de } from '../i18n/de';
 import type { Hop } from '../types';
-import RulesetTable from './RulesetTable';
+import PolicyCard from './PolicyCard';
 import SuggestionCard from './SuggestionCard';
 
 const verdictStyles: Record<string, string> = {
@@ -36,7 +36,7 @@ export default function HopDetailPanel({ hop, onClose }: { hop: Hop; onClose: ()
 
         <p className="text-xs font-medium uppercase text-slate-500">{de.hopDetail.matchedRule}</p>
         {hop.matched_policy ? (
-          <RulesetTable candidates={[{ ...hop.matched_policy, hit: true }]} wide />
+          <PolicyCard policy={hop.matched_policy} />
         ) : (
           <p className="text-sm text-red-400">{de.hopDetail.implicitDeny}</p>
         )}

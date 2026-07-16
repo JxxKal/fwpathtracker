@@ -9,9 +9,18 @@ export function login(): Session {
 }
 
 const allowCandidate = {
-  policyid: 100, name: 'allow-inside', action: 'accept',
-  srcintf: ['inside-a'], dstintf: ['any'], srcaddr: ['all'], dstaddr: ['all'],
-  service: ['ALL'], comments: '', hit: true,
+  policyid: 100, name: 'BeyondTrust-JumpPoint', action: 'accept',
+  srcintf: ['Transfer'], dstintf: ['Transfer'],
+  srcaddr: ['ABB TKP', 'Krone Pipe', 'PLS Backup', 'Process-GE_FU', 'Process-Kombi', 'Process-WinCC'],
+  dstaddr: ['NET-DEA-WD-OT-L2-PLS', 'NET-WD-OT-L2-FK-Klima', 'NET-WD-OT-L2-FK-Kron', 'WD-OT-L3-FK-PLS-APPL_Server'],
+  service: ['HTTPS', 'RDP'], comments: '', hit: true,
+  obj_types: {
+    'ABB TKP': 'addrgrp', 'Krone Pipe': 'addrgrp', 'PLS Backup': 'addrgrp',
+    'Process-GE_FU': 'addrgrp', 'Process-Kombi': 'addrgrp', 'Process-WinCC': 'addrgrp',
+    'NET-DEA-WD-OT-L2-PLS': 'address', 'NET-WD-OT-L2-FK-Klima': 'address',
+    'NET-WD-OT-L2-FK-Kron': 'address', 'WD-OT-L3-FK-PLS-APPL_Server': 'addrgrp',
+    HTTPS: 'service', RDP: 'service',
+  },
 };
 const denyCandidate = {
   policyid: 110, name: 'deny-guest', action: 'deny',

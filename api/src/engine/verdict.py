@@ -20,6 +20,7 @@ class Candidate(BaseModel):
     service: list[str] = Field(default_factory=list)
     comments: str = ""
     hit: bool = False
+    obj_types: dict[str, str] = Field(default_factory=dict)  # Objektname → Typ (für Icons)
 
 
 class Endpoint(BaseModel):

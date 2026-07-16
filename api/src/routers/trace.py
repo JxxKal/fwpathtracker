@@ -104,6 +104,14 @@ async def _execute_trace(state, body: "TraceRequest", *, fmg_cfg: dict,
             )
             break
 
+    # Objekt-Typen der Treffer-Regel auflösen (FortiManager-artige Darstellung:
+    # Icon je Objekt — Adresse/Gruppe/VIP/Dienst).
+    for hop in hops:
+        mp = hop.matched_policy
+        if mp is not None and hop.adom:
+            names = set(mp.srcaddr) | set(mp.dstaddr) | set(mp.service)
+            mp.obj_types = {n: inv.object_type(hop.adom, n) for n in names}
+
     # Regel-Vorschläge für JEDEN blockierenden Hop — um den Flow durchgängig zu
     # öffnen, braucht es eine Regel auf jeder blockenden Firewall, nicht nur der
     # ersten. Nachgelagerte Hops werden im Frontend als "nachgelagert" markiert,

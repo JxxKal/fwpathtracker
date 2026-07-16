@@ -307,6 +307,21 @@ class Inventory:
             return True
         return bool(re.search(r"(?i)(vlink|vd-?link|vdom)", intf_name))
 
+    def object_type(self, adom: str, name: str) -> str:
+        """Typ eines in einer Policy referenzierten Objekts — für die FortiManager-
+        artige Darstellung (Icon je Objekt). address | addrgrp | service |
+        servicegrp | vip | interface | unknown."""
+        if name in ("all", "any"):
+            return "address"
+        if name in ("ALL", "ANY"):
+            return "service"
+        for coll, typ in ((self.addrgrps, "addrgrp"), (self.servicegrps, "servicegrp"),
+                          (self.vips, "vip"), (self.addresses, "address"),
+                          (self.services, "service")):
+            if name in (coll.get(adom) or {}):
+                return typ
+        return "unknown"
+
     def find_address_for_ip(self, adom: str, ip: str) -> dict | None:
         """Engstes Adress-Objekt (type subnet/ipmask), das die IP enthält."""
         addr = ipaddress.IPv4Address(ip)
