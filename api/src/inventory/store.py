@@ -73,6 +73,37 @@ def _first(value: Any) -> Any:
     return lst[0] if lst else None
 
 
+def _flag(value: Any) -> bool:
+    """FortiGate-Enable/Disable-Feld → bool (enable/1/True)."""
+    return value in (1, "1", "enable", True)
+
+
+def _member_names(value: Any) -> list[str]:
+    """Gruppen-Member (Adress-/Service-Gruppen) → Namensliste. FMG liefert
+    mal ['a','b'], mal [{'name':'a'}, ...]."""
+    out = []
+    for m in _as_list(value):
+        name = m.get("name") if isinstance(m, dict) else m
+        if name:
+            out.append(str(name))
+    return out
+
+
+def parse_portrange(value: Any) -> tuple[int, int] | None:
+    """FortiGate-Portrange → (lo, hi) inklusiv. Formen: '443', '8000-8100',
+    '443:1024-65535' (dst:src → dst-Teil), int. None bei Parse-Fehler."""
+    pr = str(value).split(":")[0].strip()  # 'dst:src' → dst
+    if not pr:
+        return None
+    lo, _, hi = pr.partition("-")
+    try:
+        lo_i = int(lo)
+        hi_i = int(hi) if hi else lo_i
+    except ValueError:
+        return None
+    return (lo_i, hi_i) if lo_i <= hi_i else (hi_i, lo_i)
+
+
 class Inventory:
     """Read-Models über alle ADOMs. Immutable nach build() — bei Sync wird
     eine neue Instanz gebaut und atomar getauscht (app.state.inventory)."""
@@ -205,6 +236,12 @@ class Inventory:
             "dstaddr": _as_list(p.get("dstaddr")),
             "service": _as_list(p.get("service")),
             "comments": p.get("comments") or "",
+            # Für den Deep-Tracker (Alle-Ports-Analyse): nicht enumerierbare bzw.
+            # negierte Policies werden dort übersprungen + gewarnt.
+            "srcaddr_negate": _flag(p.get("srcaddr-negate")),
+            "dstaddr_negate": _flag(p.get("dstaddr-negate")),
+            "service_negate": _flag(p.get("service-negate")),
+            "internet_service": _flag(p.get("internet-service")),
         }
 
     # ── Abfragen ──────────────────────────────────────────────────────────────
@@ -343,17 +380,74 @@ class Inventory:
         candidates = []
         for obj in (self.services.get(adom) or {}).values():
             for pr in _as_list(obj.get(field)):
-                pr = str(pr).split(":")[0]  # "dst:src" → dst-Teil
-                lo, _, hi = pr.partition("-")
-                try:
-                    lo_i = int(lo)
-                    hi_i = int(hi) if hi else lo_i
-                except ValueError:
-                    continue
-                if lo_i <= port <= hi_i:
-                    candidates.append((hi_i - lo_i, obj))
+                iv = parse_portrange(pr)
+                if iv and iv[0] <= port <= iv[1]:
+                    candidates.append((iv[1] - iv[0], obj))
         candidates.sort(key=lambda c: c[0])
         return candidates[0][1] if candidates else None
+
+    def addr_matches(self, adom: str, names: list, ip: str) -> bool:
+        """Deckt die (Policy-)Adressliste die IP ab? Löst 'all'/'any',
+        Adress-Objekte (subnet) und addrgrp rekursiv auf. FQDN/ISDB/VIP werden
+        als 'kein Match' behandelt (der Aufrufer warnt separat)."""
+        try:
+            addr = ipaddress.IPv4Address(ip)
+        except (ipaddress.AddressValueError, ValueError):
+            return False
+        return self._addr_names_match(adom, names, addr, set())
+
+    def _addr_names_match(self, adom: str, names, addr, seen: set) -> bool:
+        for raw in names:
+            name = raw.get("name") if isinstance(raw, dict) else raw
+            if name in ("all", "any"):
+                return True
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            obj = (self.addresses.get(adom) or {}).get(name)
+            if obj is not None:
+                net = parse_subnet(obj.get("subnet"))
+                if net is not None and addr in net:
+                    return True
+                continue
+            grp = (self.addrgrps.get(adom) or {}).get(name)
+            if grp is not None and self._addr_names_match(
+                    adom, _member_names(grp.get("member")), addr, seen):
+                return True
+        return False
+
+    def service_intervals(self, adom: str, names: list) -> dict[str, list[tuple[int, int]]]:
+        """Service-Namensliste → {'tcp': [(lo,hi)…], 'udp': [(lo,hi)…]}. Löst
+        ALL/ALL_TCP/ALL_UDP, Service-Objekte und servicegrp rekursiv auf.
+        Nur TCP/UDP (ICMP/IP werden für die Port-Analyse ignoriert)."""
+        out: dict[str, list[tuple[int, int]]] = {"tcp": [], "udp": []}
+        self._service_names(adom, names, out, set())
+        return out
+
+    def _service_names(self, adom: str, names, out: dict, seen: set) -> None:
+        for raw in names:
+            name = raw.get("name") if isinstance(raw, dict) else raw
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            up = str(name).upper()
+            if up in ("ALL", "ALL_TCP"):
+                out["tcp"].append((1, 65535))
+            if up in ("ALL", "ALL_UDP"):
+                out["udp"].append((1, 65535))
+            if up in ("ALL", "ALL_TCP", "ALL_UDP"):
+                continue
+            obj = (self.services.get(adom) or {}).get(name)
+            if obj is not None:
+                for proto, field in (("tcp", "tcp-portrange"), ("udp", "udp-portrange")):
+                    for pr in _as_list(obj.get(field)):
+                        iv = parse_portrange(pr)
+                        if iv:
+                            out[proto].append(iv)
+                continue
+            grp = (self.servicegrps.get(adom) or {}).get(name)
+            if grp is not None:
+                self._service_names(adom, _member_names(grp.get("member")), out, seen)
 
     def vip_for(self, adom: str, ip: str) -> dict | None:
         for obj in (self.vips.get(adom) or {}).values():
