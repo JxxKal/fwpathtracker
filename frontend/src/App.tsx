@@ -6,6 +6,7 @@ import HistoryList from './components/HistoryList';
 import AddToChecks from './components/AddToChecks';
 import ChecksPanel from './components/ChecksPanel';
 import HopDetailPanel from './components/HopDetailPanel';
+import IpCalc from './components/IpCalc';
 import NetOwnership from './components/NetOwnership';
 import PathGraph from './components/PathGraph';
 import ResultDrawer from './components/ResultDrawer';
@@ -178,7 +179,10 @@ export default function App() {
                 {drawerOpen && <ResultDrawer result={result} onClose={() => setDrawerOpen(false)} />}
               </>
             )}
-            <NetOwnership />
+            <div className="grid gap-4 lg:grid-cols-2">
+              <NetOwnership />
+              <IpCalc />
+            </div>
           </>
         )}
 

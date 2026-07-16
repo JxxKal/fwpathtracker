@@ -54,6 +54,12 @@ export const de = {
     downstream: 'nachgelagert',
     downstreamHint: 'Hinter einer früheren Blockade — Verkehr erreicht diese Firewall erst, wenn die vorigen Hops geöffnet sind.',
   },
+  ipcalc: {
+    title: 'IP-Rechner',
+    hint: 'Host mit Maske oder Netzsegment eingeben — Netz, Maske, Host-Range, Broadcast.',
+    placeholder: '10.180.42.208/25  oder  10.180.42.208 255.255.255.128',
+    invalid: 'Ungültige Eingabe — IP mit /Präfix oder Netzmaske erwartet.',
+  },
   owns: {
     title: 'Netz-Zugehörigkeit prüfen',
     hint: 'An welchem VDOM/Interface ist das Netz connected (der Ursprung)? Mit VLAN, Maske und Gateway.',
