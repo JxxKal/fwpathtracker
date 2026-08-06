@@ -21,6 +21,7 @@ import SiteSupernetsPanel from './components/settings/SiteSupernetsPanel';
 import SitesPanel from './components/settings/SitesPanel';
 import SslPanel from './components/settings/SslPanel';
 import UsersPanel from './components/settings/UsersPanel';
+import { readCheckLink } from './checkLink';
 import { de } from './i18n/de';
 import type { Hop, PortTraceResult, Session, TraceRequest, TraceResult } from './types';
 
@@ -39,7 +40,10 @@ function loadSession(): Session | null {
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(loadSession);
-  const [tab, setTab] = useState<Tab>('tracker');
+  // Geteilter Check-Link (?tab=checks&group=…&check=…) — einmal beim Start lesen,
+  // damit er auch nach einem zwischengeschalteten Login noch greift.
+  const [checkLink] = useState(readCheckLink);
+  const [tab, setTab] = useState<Tab>(checkLink ? 'checks' : 'tracker');
   const [mode, setMode] = useState<TraceMode>('service');
   const [result, setResult] = useState<TraceResult | null>(null);
   const [portResult, setPortResult] = useState<PortTraceResult | null>(null);
@@ -208,7 +212,9 @@ export default function App() {
           </>
         )}
 
-        {tab === 'checks' && <ChecksPanel isAdmin={session.role === 'admin'} />}
+        {tab === 'checks' && (
+          <ChecksPanel isAdmin={session.role === 'admin'} deepLink={checkLink} />
+        )}
 
         {tab === 'verlauf' && <HistoryList onReplay={execute} />}
 

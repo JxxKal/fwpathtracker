@@ -66,6 +66,16 @@ Umsetzung im FortiManager. Aus einem Trace übernehmbar; Deny-Details +
 Regelvorschlag + grafischer Trace als Overlay. Quelle/Ziel werden über
 FMG/iTop/DNS aufgelöst.
 
+- **Erledigt-Status**: ein bestandener Lauf markiert den Check automatisch als
+  erledigt (mit Datum + Benutzer) — genau der Fall „nach der Umsetzung erfolgreich
+  getestet". Manuell erledigen/wieder öffnen geht ebenso; der letzte Lauf bleibt
+  am Check gespeichert (auch nach Reload). Fällt ein erledigter Check später um,
+  bleibt der Haken stehen und die **Regression** wird markiert statt still
+  zurückgesetzt. Gruppenkopf zeigt `erledigt/gesamt`, Erledigte sind ausblendbar.
+- **Teilbare Links**: pro Check (und pro Gruppe) ein Link zum Kopieren
+  (`?tab=checks&group=…&check=…`) — per Teams/Mail an Kollegen schicken; beim
+  Öffnen springt der Tracker in die Gruppe und hebt den Check hervor.
+
 ### 🧰 Werkzeuge
 
 - **Netz-Zugehörigkeit** — an welchem VDOM/Interface ist ein Netz *connected*

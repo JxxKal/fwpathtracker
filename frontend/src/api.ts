@@ -137,10 +137,15 @@ export interface OwnsResult {
 
 // ── Check-Gruppen (Batch-Regressions-Checks) ────────────────────────────────────
 
+export interface CheckLastRun {
+  at: string; actual: string | null; ok: boolean; error: string | null;
+}
 export interface CheckItem {
   id?: string; label?: string; src: string; dst: string; protocol: string;
   dst_port?: number | null; src_port?: number | null;
   icmp_type?: number | null; icmp_code?: number | null; expect: 'ALLOW' | 'DENY';
+  done?: boolean; done_at?: string | null; done_by?: string | null;
+  last_run?: CheckLastRun | null;
 }
 export interface CheckGroup { id: string; name: string; checks: CheckItem[]; }
 export interface ChecksDoc { groups: CheckGroup[]; }
@@ -151,17 +156,25 @@ export interface CheckResult {
   result: TraceResult | null;
 }
 
-export async function getChecks(): Promise<ChecksDoc> {
-  if (isDemoMode()) {
-    return { groups: [{ id: 'demo', name: 'OT-Freigaben', checks: [
+// Demo-Modus hält die Gruppen im Speicher, damit Erledigt-Status & Läufe
+// innerhalb der Sitzung genauso stehen bleiben wie gegen die echte API.
+let demoChecks: ChecksDoc | null = null;
+function demoDoc(): ChecksDoc {
+  if (!demoChecks) {
+    demoChecks = { groups: [{ id: 'demo', name: 'OT-Freigaben', checks: [
       { id: '1', label: 'Admin→DB', src: '10.1.1.10', dst: '10.2.1.30', protocol: 'tcp', dst_port: 443, expect: 'ALLOW' },
       { id: '2', label: 'Legacy→DB (soll blocken)', src: '10.1.1.10', dst: '10.2.9.9', protocol: 'tcp', dst_port: 23, expect: 'DENY' },
     ] }] };
   }
+  return demoChecks;
+}
+
+export async function getChecks(): Promise<ChecksDoc> {
+  if (isDemoMode()) return demoDoc();
   return request('/api/checks');
 }
 export async function saveChecks(doc: ChecksDoc): Promise<ChecksDoc> {
-  if (isDemoMode()) return doc;
+  if (isDemoMode()) { demoChecks = doc; return doc; }
   return request('/api/checks', { method: 'PUT', body: JSON.stringify(doc) });
 }
 export async function runChecks(checks: CheckItem[]): Promise<{
@@ -182,6 +195,37 @@ export async function runChecks(checks: CheckItem[]): Promise<{
     return { results, passed: results.filter((x) => x.ok).length, total: results.length, synced_at: new Date().toISOString() };
   }
   return request('/api/checks/run', { method: 'POST', body: JSON.stringify({ checks }) });
+}
+
+export interface CheckStatusUpdate {
+  check_id: string; done?: boolean | null; record_run?: boolean;
+  actual?: string | null; ok?: boolean | null; error?: string | null;
+}
+// Erledigt-Status / Lauf-Ergebnis fortschreiben; liefert das komplette Dokument zurück.
+export async function updateCheckStatus(
+  groupId: string, updates: CheckStatusUpdate[],
+): Promise<ChecksDoc> {
+  if (isDemoMode()) {
+    const doc = demoDoc();
+    const now = new Date().toISOString();
+    const g = doc.groups.find((x) => x.id === groupId);
+    for (const u of updates) {
+      const c = g?.checks.find((x) => x.id === u.check_id);
+      if (!c) continue;
+      if (u.record_run) {
+        c.last_run = { at: now, actual: u.actual ?? null, ok: !!u.ok, error: u.error ?? null };
+        if (u.ok && !c.done) { c.done = true; c.done_at = now; c.done_by = 'demo'; }
+      }
+      if (u.done === true) {
+        c.done = true;
+        if (!c.done_at) { c.done_at = now; c.done_by = 'demo'; }
+      } else if (u.done === false) { c.done = false; c.done_at = null; c.done_by = null; }
+    }
+    return doc;
+  }
+  return request('/api/checks/status', {
+    method: 'POST', body: JSON.stringify({ group_id: groupId, updates }),
+  });
 }
 
 export interface SiteSupernet { name: string; cidr: string; }
