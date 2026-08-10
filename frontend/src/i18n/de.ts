@@ -132,6 +132,18 @@ export const de = {
       unknown: 'MAC-Anzahl für diesen Port nicht ermittelbar.',
     },
     klass: 'Klasse',
+    match: 'Abgleich',
+    matchReason: {
+      lldp_peer: 'LLDP-Peer',
+      description: 'Port-Name',
+    },
+    matchTitle: {
+      lldp_peer: 'Der LLDP-Nachbar dieses Ports ist das gesuchte Gerät selbst. Stärkste mögliche Aussage — Portklasse und MAC-Zahl spielen keine Rolle mehr.',
+      description: 'Die Port-Description nennt das gesuchte Gerät beim Namen. Stark, aber Namenskonventionen können veralten.',
+    },
+    aliases: 'Abgeglichen gegen',
+    showAll: 'Alle {n} Fundstellen zeigen',
+    showLess: 'Liste einklappen',
     selfDevice: 'Das ist ein überwachtes Gerät',
     selfDeviceHint: 'Die Management-MAC eines Switches steht nur auf Uplinks — einen Access-Port, an dem er hängt, gibt es nicht. Wo er angeschlossen ist, sagt LLDP:',
     selfDeviceNoLldp: 'Keine LLDP-Nachbarn bekannt — ohne LLDP lässt sich der Anschluss nicht bestimmen.',

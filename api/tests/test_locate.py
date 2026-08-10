@@ -24,8 +24,13 @@ def _ts(age_s: int) -> str:
     return (datetime.now() - timedelta(seconds=age_s)).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _nb(label: str, monitored: bool) -> dict:
-    return {"label": label, "monitored": monitored, "device_id": 7 if monitored else None}
+def _nb(label: str, monitored: bool, device_id=None) -> dict:
+    host, _, port = label.partition(" / ")
+    return {
+        "label": label, "hostname": host.strip() or None, "port": port.strip() or None,
+        "monitored": monitored,
+        "device_id": device_id if device_id is not None else (7 if monitored else None),
+    }
 
 
 class FakeClient:
@@ -79,10 +84,11 @@ def field_client(access_age_s: int = 120, core_age_s: int | None = None) -> Fake
     )
 
 
-async def _ranked(client, cfg=CFG, warnings=None):
-    return fdb_librenms.rank(
-        await fdb_librenms.candidates(client, cfg, MAC, warnings if warnings is not None else [])
-    )
+async def _ranked(client, cfg=CFG, warnings=None, aliases=None, self_device_id=None):
+    return fdb_librenms.rank(await fdb_librenms.candidates(
+        client, cfg, MAC, warnings if warnings is not None else [],
+        aliases=aliases, self_device_id=self_device_id,
+    ))
 
 
 # ── Portklassifikation ────────────────────────────────────────────────────────
@@ -232,6 +238,110 @@ async def test_missing_lldp_still_ranks_and_warns():
 
     assert ranked[0]["if_name"] == "Port 5"
     assert any("LLDP" in w for w in warnings)
+
+
+# ── Topologie-Abgleich (Switch im Ring als Suchziel) ──────────────────────────
+
+def ring_client() -> FakeClient:
+    """Feldfall aus dem Screenshot: gesucht wird bpvo004, ein MOXA im Ring.
+
+    Seine Management-MAC steht auf den Trunks dutzender Router und auf zwei
+    echten Uplinks. Nur EIN Port hat bpvo004 als LLDP-Nachbarn — und genau der
+    ist die Antwort, obwohl er als Uplink klassifiziert wird.
+    """
+    return FakeClient(
+        fdb_rows=[
+            {"port_id": 100, "device_id": 108, "vlan_id": 1, "updated_at": _ts(180)},
+            {"port_id": 200, "device_id": 300, "vlan_id": 1, "updated_at": _ts(180)},
+            {"port_id": 300, "device_id": 49, "vlan_id": 0, "updated_at": _ts(180)},
+            {"port_id": 400, "device_id": 303, "vlan_id": 1, "updated_at": _ts(180)},
+        ],
+        devices={
+            "108": {"hostname": "bpvo108.op-tech.com", "sysName": "bpvo108"},
+            "300": {"hostname": "10.133.167.200", "sysName": "bpvo300"},
+            "49": {"hostname": "10.133.167.50", "sysName": "bpvo049"},
+            "303": {"hostname": "10.133.167.203", "sysName": "bpvo303"},
+        },
+        ports={
+            "108": [{"port_id": 100, "ifName": "wan1", "ifAlias": "wan1"}],
+            "300": [{"port_id": 200, "ifName": "Ten-GigabitEthernet1/0/1",
+                     "ifAlias": "bpvo049-Head-P24"}],
+            "49": [{"port_id": 300, "ifName": "Ethernet Port 23",
+                    "ifAlias": "Ethernet Port 23"}],
+            # Description benennt die Gegenstelle, LLDP läuft hier aber nicht.
+            "303": [{"port_id": 400, "ifName": "Bridge-Aggregation1",
+                     "ifAlias": "uplink-bpvo300"}],
+        },
+        device_fdb={
+            "108": [{"port_id": 100} for _ in range(128)],
+            "300": [{"port_id": 200} for _ in range(247)],
+            "49": [{"port_id": 300} for _ in range(222)],
+            "303": [{"port_id": 400} for _ in range(310)],
+        },
+        neighbours={
+            200: _nb("bpvo049 / 24", monitored=True, device_id=49),
+            300: _nb("bpvo004 / 25", monitored=True, device_id=4),
+        },
+    )
+
+
+async def test_lldp_peer_is_the_target_wins_over_everything():
+    """Der LLDP-Nachbar IST das gesuchte Gerät → das ist die Antwort, kein Uplink."""
+    ranked = await _ranked(ring_client(), aliases={"bpvo004"})
+
+    best = ranked[0]
+    assert best["hostname"] == "10.133.167.50"
+    assert best["if_name"] == "Ethernet Port 23"
+    assert best["match_reason"] == "lldp_peer"
+    assert best["port_kind"] == "uplink"          # Klasse ist hier bewusst egal
+    assert fdb_librenms.confidence(ranked, CFG) == "high"
+
+
+async def test_lldp_peer_matches_via_device_id_without_aliases():
+    """Steht das Ziel selbst in LibreNMS, reicht die device_id — ohne Namen."""
+    ranked = await _ranked(ring_client(), aliases=set(), self_device_id=4)
+
+    assert ranked[0]["if_name"] == "Ethernet Port 23"
+    assert ranked[0]["match_reason"] == "lldp_peer"
+
+
+async def test_both_signals_agree_lldp_takes_precedence():
+    """Bei bpvo049 passen LLDP-Nachbar UND Description — LLDP ist der Grund."""
+    ranked = await _ranked(ring_client(), aliases={"bpvo049"})
+
+    assert ranked[0]["if_alias"] == "bpvo049-Head-P24"
+    assert ranked[0]["match_reason"] == "lldp_peer"
+
+
+async def test_port_description_match_ranks_above_plain_trunks():
+    """`uplink-bpvo300` benennt das Ziel, ohne dass dort LLDP läuft."""
+    ranked = await _ranked(ring_client(), aliases={"bpvo300"})
+
+    assert ranked[0]["if_alias"] == "uplink-bpvo300"
+    assert ranked[0]["match_reason"] == "description"
+    assert ranked[0]["match_detail"] == "uplink-bpvo300"
+    assert ranked[0]["mac_count"] == 310          # trotz der meisten MACs vorn
+    assert fdb_librenms.confidence(ranked, CFG) == "high"
+
+
+async def test_without_aliases_the_wrong_trunk_wins():
+    """Regressionsschutz: genau dieses Ergebnis war der Fehler im Feldtest."""
+    ranked = await _ranked(ring_client(), aliases=set())
+
+    assert ranked[0]["hostname"] == "bpvo108.op-tech.com"
+    assert ranked[0]["match_reason"] is None
+
+
+def test_aliases_split_domain_and_drop_mac_like_names():
+    from locate.naming import build_aliases, is_mac_like, matches_description
+
+    aliases = build_aliases(["bpvo004.op-tech.com", "BPVO004"], ["d4f5272c0e9f", None, "sw"])
+    assert aliases == {"bpvo004.op-tech.com", "bpvo004"}   # MAC und zu kurz raus
+
+    assert is_mac_like("d4:f5:27:2c:0e:9f") is True
+    assert is_mac_like("bpvo004") is False
+    assert matches_description({"bpvo300"}, "uplink-bpvo300", None) == "bpvo300"
+    assert matches_description({"bpvo300"}, "wan1", "wan1") is None
 
 
 def test_mac_normalisation_accepts_every_notation():

@@ -211,6 +211,8 @@ class LibrenmsClient:
             try:
                 out[int(pid)] = {
                     "label": label,
+                    "hostname": remote or None,
+                    "port": rport or None,
                     "monitored": bool(rdev),
                     "device_id": rdev or None,
                     "platform": platform or None,

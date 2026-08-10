@@ -1,12 +1,17 @@
 import { MapPin, Server } from 'lucide-react';
 import { useState } from 'react';
-import { locateHost, type LocateCandidate, type LocateResult, type PortKind } from '../api';
+import {
+  locateHost, type LocateCandidate, type LocateResult, type MatchReason, type PortKind,
+} from '../api';
 import { de } from '../i18n/de';
 
 // Wo steckt das Gerät physisch? IP→MAC von der FortiGate (live, über den
-// FMG-Proxy), MAC→Port aus der LibreNMS-FDB. Die Kandidatenliste bleibt sichtbar,
-// weil dieselbe MAC auf jedem Switch im Pfad steht — der Weg dorthin ist die
-// Kontrolle, ob der oberste Treffer plausibel ist.
+// FMG-Proxy), MAC→Port aus der LibreNMS-FDB. Die Kandidatenliste bleibt
+// einsehbar, weil dieselbe MAC auf jedem Switch im Pfad steht — der Weg dorthin
+// ist die Kontrolle, ob der oberste Treffer plausibel ist. Standardmäßig
+// eingeklappt, weil sie in großen Ringen dreistellig wird.
+
+const VISIBLE_ROWS = 8;
 
 const confidenceStyle: Record<LocateResult['confidence'], string> = {
   high: 'border-emerald-800 bg-emerald-950/60 text-emerald-300',
@@ -16,13 +21,19 @@ const confidenceStyle: Record<LocateResult['confidence'], string> = {
 };
 
 // Access und Edge sind beide plausible Anschlusspunkte (Edge = Hypervisor/AP am
-// LLDP), Trunk ist möglich, Uplink praktisch ausgeschlossen.
+// LLDP), Trunk ist möglich, Uplink praktisch ausgeschlossen — es sei denn, der
+// Topologie-Abgleich sagt etwas anderes, dann ist die Klasse belanglos.
 const kindStyle: Record<PortKind, string> = {
   access: 'bg-emerald-900/70 text-emerald-300',
   edge: 'bg-emerald-900/70 text-emerald-300',
   trunk: 'bg-amber-900/70 text-amber-300',
   uplink: 'bg-slate-700/70 text-slate-400',
   unknown: 'bg-slate-700/70 text-slate-500',
+};
+
+const matchStyle: Record<'lldp_peer' | 'description', string> = {
+  lldp_peer: 'bg-cyan-900/80 text-cyan-200',
+  description: 'bg-sky-900/80 text-sky-200',
 };
 
 function age(seconds: number | null): string {
@@ -32,14 +43,25 @@ function age(seconds: number | null): string {
   return `vor ${Math.round(seconds / 3600)} h`;
 }
 
+function MatchBadge({ reason }: { reason: MatchReason }) {
+  if (!reason) return <span className="text-slate-600">—</span>;
+  return (
+    <span className={`rounded px-1.5 py-0.5 text-[10px] ${matchStyle[reason]}`}
+      title={de.locate.matchTitle[reason]}>
+      {de.locate.matchReason[reason]}
+    </span>
+  );
+}
+
 export default function LocateHost() {
   const [q, setQ] = useState('');
   const [res, setRes] = useState<LocateResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   async function search() {
-    setBusy(true); setErr(null); setRes(null);
+    setBusy(true); setErr(null); setRes(null); setExpanded(false);
     try {
       setRes(await locateHost(q.trim()));
     } catch (e) {
@@ -50,6 +72,10 @@ export default function LocateHost() {
   }
 
   const isBest = (c: LocateCandidate) => res?.best != null && c.port_id === res.best.port_id;
+  const rows = res
+    ? (expanded ? res.candidates : res.candidates.slice(0, VISIBLE_ROWS))
+    : [];
+  const hidden = res ? res.candidates.length - rows.length : 0;
 
   return (
     <div className="fwpt-card space-y-3">
@@ -75,7 +101,7 @@ export default function LocateHost() {
 
       {res?.self_device && (
         <div className="rounded-md border border-sky-800 bg-sky-950/60 p-3 text-sm text-sky-300">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <Server size={15} />
             <span className="font-semibold">{de.locate.selfDevice}</span>
             <span className="text-slate-300">
@@ -87,15 +113,23 @@ export default function LocateHost() {
           </div>
           <p className="mt-1 text-xs text-slate-400">{de.locate.selfDeviceHint}</p>
           {res.self_device.uplinks.length > 0 ? (
-            <ul className="mt-1 space-y-0.5 text-xs">
-              {res.self_device.uplinks.map((u, i) => (
-                <li key={`${u.local_port_id}-${i}`} className="font-mono text-slate-300">
-                  {u.remote_hostname ?? '—'}
-                  {u.remote_port && <span className="text-slate-500"> / {u.remote_port}</span>}
-                  {u.protocol && <span className="text-slate-600"> ({u.protocol})</span>}
-                </li>
-              ))}
-            </ul>
+            <table className="mt-1.5 text-left text-xs">
+              <tbody>
+                {res.self_device.uplinks.map((u, i) => (
+                  <tr key={`${u.local_port_id}-${i}`}>
+                    <td className="py-0.5 pr-3 font-mono text-slate-500">
+                      {u.local_port ?? `#${u.local_port_id}`}
+                    </td>
+                    <td className="py-0.5 pr-2 text-slate-600">→</td>
+                    <td className="py-0.5 pr-3 font-mono text-slate-200">
+                      {u.remote_hostname}
+                      {u.remote_port && <span className="text-slate-500"> / {u.remote_port}</span>}
+                    </td>
+                    <td className="py-0.5 text-slate-600">{u.remote_platform ?? ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           ) : (
             <p className="mt-1 text-xs text-amber-400">{de.locate.selfDeviceNoLldp}</p>
           )}
@@ -112,9 +146,10 @@ export default function LocateHost() {
                 </span>
                 <span className="text-slate-500">·</span>
                 <span className="font-mono font-semibold">{res.best.if_name ?? '—'}</span>
-                {res.best.if_alias && (
-                  <span className="text-slate-400">„{res.best.if_alias}"</span>
+                {res.best.if_alias && res.best.if_alias !== res.best.if_name && (
+                  <span className="text-slate-400">„{res.best.if_alias}“</span>
                 )}
+                {res.best.match_reason && <MatchBadge reason={res.best.match_reason} />}
                 <span className="ml-auto rounded px-1.5 py-0.5 text-[11px] uppercase tracking-wide">
                   {de.locate.confidence[res.confidence]}
                 </span>
@@ -149,6 +184,12 @@ export default function LocateHost() {
                 </dd>
               </>
             )}
+            {res.aliases.length > 0 && (
+              <>
+                <dt className="text-slate-500">{de.locate.aliases}</dt>
+                <dd className="font-mono text-slate-500">{res.aliases.join(', ')}</dd>
+              </>
+            )}
           </dl>
 
           {res.warnings.map((w) => (
@@ -164,6 +205,7 @@ export default function LocateHost() {
                     <tr>
                       <th className="px-3 py-1.5 font-medium">{de.locate.device}</th>
                       <th className="px-3 py-1.5 font-medium">{de.locate.port}</th>
+                      <th className="px-3 py-1.5 font-medium">{de.locate.match}</th>
                       <th className="px-3 py-1.5 font-medium">{de.locate.klass}</th>
                       <th className="px-3 py-1.5 font-medium">{de.locate.macs}</th>
                       <th className="px-3 py-1.5 font-medium">{de.locate.neighbor}</th>
@@ -171,7 +213,7 @@ export default function LocateHost() {
                     </tr>
                   </thead>
                   <tbody>
-                    {res.candidates.map((c) => (
+                    {rows.map((c) => (
                       <tr key={`${c.device_id}-${c.port_id}`}
                         className={isBest(c)
                           ? 'bg-cyan-950/60 text-cyan-200 ring-1 ring-inset ring-cyan-700'
@@ -184,7 +226,12 @@ export default function LocateHost() {
                         </td>
                         <td className="whitespace-nowrap px-3 py-1.5 font-mono">
                           {c.if_name ?? '—'}
-                          {c.if_alias && <span className="text-slate-500"> · {c.if_alias}</span>}
+                          {c.if_alias && c.if_alias !== c.if_name && (
+                            <span className="text-slate-500"> · {c.if_alias}</span>
+                          )}
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-1.5">
+                          <MatchBadge reason={c.match_reason} />
                         </td>
                         <td className="whitespace-nowrap px-3 py-1.5">
                           <span className={`rounded px-1.5 py-0.5 text-[10px] ${kindStyle[c.port_kind]}`}
@@ -211,6 +258,14 @@ export default function LocateHost() {
                   </tbody>
                 </table>
               </div>
+              {(hidden > 0 || expanded) && (
+                <button type="button" className="fwpt-btn-ghost mt-2 text-xs"
+                  onClick={() => setExpanded((v) => !v)}>
+                  {expanded
+                    ? de.locate.showLess
+                    : de.locate.showAll.replace('{n}', String(res.candidates.length))}
+                </button>
+              )}
             </div>
           )}
         </>

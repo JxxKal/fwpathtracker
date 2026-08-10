@@ -23,18 +23,23 @@ async def locate(
     if is_ipv6(value):
         raise HTTPException(400, "IPv6 wird nicht unterstützt (wie im Pfad-Tracker).")
 
-    ip = value
-    if not is_ip(value):
-        # Namen über dieselbe Kette auflösen wie Quelle/Ziel im Tracker,
-        # damit Autocomplete-Treffer hier ohne Umweg funktionieren.
-        try:
-            resolved = await state.resolver.resolve_endpoint(
-                value, state.inventory,
-                await read_config("itop"), await read_config("dns"),
-            )
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
+    itop_cfg, dns_cfg = await read_config("itop"), await read_config("dns")
+
+    # Immer über die Resolver-Kette gehen — auch bei einer IP. Die Namen sind
+    # hier nicht Kosmetik: der FMG-Objektname des Ziels ist das, wonach in
+    # LLDP-Nachbarschaften und Port-Descriptions gesucht wird.
+    ip, names = value, []
+    try:
+        resolved = await state.resolver.resolve_endpoint(
+            value, state.inventory, itop_cfg, dns_cfg
+        )
         ip = resolved["ip"]
+        names = [n["name"] for n in resolved.get("names", []) if n.get("name")]
+    except ValueError as exc:
+        if not is_ip(value):
+            raise HTTPException(422, str(exc)) from exc
+        # Eine IP ohne bekannten Namen ist völlig in Ordnung — dann eben ohne
+        # Alias-Abgleich weiter.
 
     librenms_cfg = await read_config("librenms")
     if not librenms_cfg.get("base_url"):
@@ -43,5 +48,6 @@ async def locate(
         )
 
     return await state.locate.locate(
-        ip, state.prefixes, librenms_cfg, await read_config("fmg"), state.cfg
+        ip, state.prefixes, librenms_cfg, await read_config("fmg"), state.cfg,
+        names=names,
     )

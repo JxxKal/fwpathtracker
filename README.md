@@ -354,12 +354,28 @@ wenn der Live-Weg klemmt (Gerät offline, Endpunkt fehlt).
 Der Knackpunkt ist nicht das Finden, sondern das Aussortieren: eine MAC steht
 auf **jedem** Switch im Pfad in der FDB — dort jeweils auf dem Uplink.
 
-Wichtig dabei: *„Port mit vielen MACs" ist nicht gleichbedeutend mit „falsch"*.
-Eine VM auf einem Hypervisor hängt völlig legitim hinter einem Trunk, auf dem
-Dutzende MACs stehen. Ausschließen lässt sich nur der echte
-**Switch-zu-Switch-Uplink** — und den erkennt man daran, dass LibreNMS für den
-LLDP-Nachbarn eine `remote_device_id` führt, der Nachbar also selbst überwacht
-wird. Daraus vier Portklassen:
+Zuerst der **Topologie-Abgleich**, denn der ist kein Indiz, sondern eine
+Aussage:
+
+| Signal | Bedeutung |
+|---|---|
+| `lldp_peer` | Der LLDP-Nachbar dieses Ports **ist** das gesuchte Gerät |
+| `description` | Die Port-Description nennt es beim Namen (`uplink-bpvo300`) |
+
+Beides braucht die Namen des Ziels in allen Schreibweisen — der Tracker holt
+sie aus derselben Resolver-Kette wie Quelle/Ziel im Pfad-Tracker
+(FMG-Adressobjekt → iTop → DNS) und ergänzt den LibreNMS-Hostnamen. Damit lässt
+sich `10.133.167.5` gegen einen LLDP-Nachbarn namens `bpvo004` abgleichen.
+Beim `lldp_peer` ist die Portklasse ausdrücklich egal: für einen Switch als
+Suchziel *ist* die Antwort ein Uplink — nämlich der mit der passenden
+Nachbarschaft.
+
+Erst wenn kein Abgleich greift, entscheidet die Heuristik. Und dort gilt:
+*„Port mit vielen MACs" ist nicht gleichbedeutend mit „falsch"*. Eine VM auf
+einem Hypervisor hängt völlig legitim hinter einem Trunk mit Dutzenden MACs.
+Ausschließen lässt sich nur der echte **Switch-zu-Switch-Uplink**, erkennbar an
+der `remote_device_id` im `links`-Endpunkt — LibreNMS setzt sie nur, wenn der
+LLDP-Nachbar selbst überwacht wird:
 
 | Klasse | Signal | Bedeutung |
 |---|---|---|
@@ -368,13 +384,14 @@ wird. Daraus vier Portklassen:
 | `trunk` | viele MACs, kein LLDP | Ring-Uplink **oder** ESX-Trunk |
 | `uplink` | LLDP-Nachbar **ist** überwacht | hier steckt es sicher nicht |
 
-**Sortiert wird zuerst nach Aktualität**, dann nach Klasse, dann nach MAC-Zahl.
-Das ist Absicht: ein FDB-Eintrag wird bei jedem Discovery-Lauf aufgefrischt,
-solange die MAC dort noch gesehen wird. Ein alter Eintrag heißt also „die MAC
-ist von diesem Port verschwunden" — das stärkste Signal, das die Daten
-hergeben, stärker als jede Heuristik über MAC-Zahlen. Gebucketet über
-`recency_bucket_s` (Default 1 h), damit gleich frische Treffer nicht durch
-Sekunden Versatz zwischen zwei Discovery-Läufen auseinandergerissen werden.
+Zwischen Abgleich und Klasse steht die **Aktualität**: ein FDB-Eintrag wird bei
+jedem Discovery-Lauf aufgefrischt, solange die MAC dort noch gesehen wird. Ein
+alter Eintrag heißt also „die MAC ist von diesem Port verschwunden". Gebucketet
+über `recency_bucket_s` (Default 1 h), damit gleich frische Treffer nicht durch
+Sekunden Versatz zwischen zwei Discovery-Läufen auseinanderfallen.
+
+Die vollständige Reihenfolge ist damit:
+**Abgleich → Aktualität → Portklasse → MAC-Zahl.**
 
 Das Ergebnis bekommt eine Konfidenz (`high`/`medium`/`low`) und immer das
 **Alter** des Eintrags — FDB-Einträge altern in Minuten, LibreNMS discovert per

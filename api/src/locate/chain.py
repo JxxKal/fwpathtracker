@@ -21,6 +21,7 @@ from inventory.prefixes import PrefixTable
 from librenms.client import LibrenmsClient
 from locate import arp_fortigate, arp_librenms, fdb_librenms
 from locate.mac import normalize_mac, readable_mac
+from locate.naming import build_aliases, is_mac_like
 
 log = logging.getLogger("locate.chain")
 
@@ -33,13 +34,50 @@ class LocateChain:
         self._cache: TTLCache = TTLCache(maxsize=512, ttl=ttl_s)
 
     async def locate(self, ip: str, prefixes: PrefixTable, librenms_cfg: dict,
-                     fmg_cfg: dict, app_cfg: Config) -> dict:
-        cached = self._cache.get(ip)
+                     fmg_cfg: dict, app_cfg: Config,
+                     names: list[str] | None = None) -> dict:
+        key = (ip, tuple(sorted(names or ())))
+        cached = self._cache.get(key)
         if cached is not None:
             return cached
-        result = await self._locate(ip, prefixes, librenms_cfg, fmg_cfg, app_cfg)
-        self._cache[ip] = result
+        result = await self._locate(ip, prefixes, librenms_cfg, fmg_cfg, app_cfg, names)
+        self._cache[key] = result
         return result
+
+    async def _clean_uplinks(self, cfg: dict, device_id, raw: list[dict]) -> list[dict]:
+        """LLDP-Nachbarn lesbar machen: lokalen Port auflösen, entrümpeln.
+
+        Rohdaten aus `links` sind unbrauchbar hübsch: Nachbarn ohne sysName
+        melden ihre Chassis-MAC als Hostname, derselbe Nachbar taucht mehrfach
+        auf, und ohne den lokalen Port weiß man nicht, wo man messen soll.
+        """
+        try:
+            ports = {str(p.get("port_id")): p for p in await self.librenms.device_ports(cfg, device_id)}
+        except Exception:
+            ports = {}
+
+        seen: set[tuple] = set()
+        out: list[dict] = []
+        for link in raw:
+            host = link.get("remote_hostname")
+            if not host or is_mac_like(host):
+                continue                       # nur Chassis-MAC — sagt nichts
+            key = (host.strip().lower(), (link.get("remote_port") or "").strip().lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            local = ports.get(str(link.get("local_port_id")), {})
+            out.append({
+                "local_port_id": link.get("local_port_id"),
+                "local_port": local.get("ifName") or local.get("ifDescr"),
+                "local_alias": local.get("ifAlias") or None,
+                "remote_hostname": host,
+                "remote_port": link.get("remote_port"),
+                "remote_platform": link.get("remote_platform"),
+                "protocol": link.get("protocol"),
+            })
+        out.sort(key=lambda u: (u["local_port"] or "", u["remote_hostname"] or ""))
+        return out
 
     async def _self_device(self, ip: str, cfg: dict, warnings: list[str]) -> dict | None:
         """Ist die gesuchte IP selbst ein überwachtes Gerät?
@@ -60,7 +98,8 @@ class LocateChain:
 
         uplinks: list[dict] = []
         try:
-            uplinks = await self.librenms.device_neighbours(cfg, dev.get("device_id"))
+            raw = await self.librenms.device_neighbours(cfg, dev.get("device_id"))
+            uplinks = await self._clean_uplinks(cfg, dev.get("device_id"), raw)
         except Exception as exc:
             log.info("LLDP-Nachbarn von %s nicht abrufbar: %s", ip, exc)
 
@@ -82,9 +121,18 @@ class LocateChain:
         }
 
     async def _locate(self, ip: str, prefixes: PrefixTable, librenms_cfg: dict,
-                      fmg_cfg: dict, app_cfg: Config) -> dict:
+                      fmg_cfg: dict, app_cfg: Config,
+                      names: list[str] | None = None) -> dict:
         warnings: list[str] = []
         self_device = await self._self_device(ip, librenms_cfg, warnings)
+
+        # Alle bekannten Namen des Ziels — FMG-Adressobjekt, iTop, DNS plus der
+        # LibreNMS-Hostname. Damit lassen sich LLDP-Nachbarschaften und
+        # Port-Descriptions gegen das gesuchte Gerät abgleichen.
+        aliases = build_aliases(names or [], [
+            (self_device or {}).get("hostname"),
+            (self_device or {}).get("sys_name"),
+        ])
 
         arp = await arp_fortigate.resolve(ip, prefixes, fmg_cfg, app_cfg, warnings)
         if arp is None:
@@ -98,11 +146,15 @@ class LocateChain:
             return {
                 "ip": ip, "mac": None, "mac_readable": None, "arp": None,
                 "best": None, "candidates": [], "confidence": "none",
-                "self_device": self_device, "warnings": warnings,
+                "self_device": self_device, "aliases": sorted(aliases),
+                "warnings": warnings,
             }
 
         mac = normalize_mac(arp["mac"])
-        cands = await fdb_librenms.candidates(self.librenms, librenms_cfg, mac, warnings)
+        cands = await fdb_librenms.candidates(
+            self.librenms, librenms_cfg, mac, warnings,
+            aliases=aliases, self_device_id=(self_device or {}).get("device_id"),
+        )
         ranked = fdb_librenms.rank(cands)
         conf = fdb_librenms.confidence(ranked, librenms_cfg)
 
@@ -111,6 +163,19 @@ class LocateChain:
                 f"MAC {readable_mac(mac)} steht in keiner FDB-Tabelle in LibreNMS. "
                 "Entweder ist der Zugangsswitch nicht eingebunden, oder seine "
                 "FDB-Discovery liefert nichts (bei MOXA siehe Wiki-Seite)."
+            )
+        elif ranked[0]["match_reason"] == "lldp_peer":
+            warnings.append(
+                f"Direkter Treffer: der LLDP-Nachbar von {ranked[0]['hostname']} / "
+                f"{ranked[0]['if_name']} ist das gesuchte Gerät selbst "
+                f"({ranked[0]['match_detail']}). Portklasse und MAC-Zahl spielen "
+                "hier keine Rolle mehr."
+            )
+        elif ranked[0]["match_reason"] == "description":
+            warnings.append(
+                f"Treffer über die Port-Description „{ranked[0]['match_detail']}“ — "
+                "sie benennt das gesuchte Gerät. Namenskonventionen können aber "
+                "veralten, ein Blick auf den Port schadet nicht."
             )
         elif self_device is None and all(c["port_kind"] == "uplink" for c in ranked):
             warnings.append(
@@ -147,5 +212,8 @@ class LocateChain:
             "candidates": ranked,
             "confidence": conf,
             "self_device": self_device,
+            # Sichtbar machen, wogegen abgeglichen wurde — sonst ist ein
+            # Description-Treffer für den Benutzer nicht nachvollziehbar.
+            "aliases": sorted(aliases),
             "warnings": warnings,
         }

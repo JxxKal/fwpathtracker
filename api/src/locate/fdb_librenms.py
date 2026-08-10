@@ -17,11 +17,20 @@ Daraus vier Portklassen:
     trunk    viele MACs, kein LLDP-Nachbar           → Ring-Uplink ODER ESX-Trunk
     uplink   LLDP-Nachbar IST ein überwachtes Gerät  → sicher nicht hier
 
-Sortiert wird zuerst nach Aktualität, dann nach Klasse. Das ist Absicht: ein
-FDB-Eintrag wird bei jedem Discovery-Lauf aufgefrischt, solange die MAC dort
-noch gesehen wird. Ein alter Eintrag heißt also „die MAC ist von diesem Port
-verschwunden" — das ist das stärkste Signal, das die Daten hergeben, stärker
-als jede Heuristik über MAC-Zahlen.
+Über all dem steht aber der Topologie-Abgleich, und der schlägt jede Heuristik:
+
+    lldp_peer     Der LLDP-Nachbar dieses Ports IST das gesuchte Gerät.
+    description   Die Port-Description nennt das Ziel beim Namen
+                  (`uplink-bpvo300`, `bpvo049-Head-P24`).
+
+Beim `lldp_peer` ist die Portklasse ausdrücklich egal — für einen Switch als
+Suchziel ist die Antwort *immer* ein Uplink, und genau der mit der passenden
+Nachbarschaft. Wer das als Uplink aussortiert, wirft die richtige Zeile weg.
+
+Danach erst Aktualität, dann Klasse. Aktualität vor Klasse, weil ein
+FDB-Eintrag bei jedem Discovery-Lauf aufgefrischt wird, solange die MAC dort
+noch gesehen wird — ein alter Eintrag heißt „die MAC ist von diesem Port
+verschwunden".
 """
 from __future__ import annotations
 
@@ -30,6 +39,7 @@ from collections import Counter, defaultdict
 from datetime import datetime
 
 from librenms.client import LibrenmsClient, LibrenmsError, LibrenmsNotConfigured
+from locate.naming import matches_description, normalize_host
 
 log = logging.getLogger("locate.fdb")
 
@@ -45,6 +55,9 @@ DEFAULT_RECENCY_BUCKET_S = 3600
 
 # Reihenfolge der Portklassen beim Ranking (kleiner = wahrscheinlicher).
 PORT_KIND_RANK = {"access": 0, "edge": 0, "trunk": 1, "unknown": 1, "uplink": 2}
+
+# Topologie-Abgleich schlägt alles andere (kleiner = stärker).
+MATCH_RANK = {"lldp_peer": 0, "description": 1, None: 2}
 
 _TS_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S%z")
 
@@ -89,9 +102,34 @@ def classify_port(has_neighbor: bool, neighbor_monitored: bool,
     return "access" if mac_count <= access_max else "trunk"
 
 
+def match_target(neighbour: dict, if_alias: str | None, if_descr: str | None,
+                 aliases: set[str], self_device_id=None) -> tuple[str | None, str | None]:
+    """(match_reason, match_detail) — Topologie-Abgleich gegen das gesuchte Ziel.
+
+    Der LLDP-Treffer läuft über zwei Wege: die device_id, wenn das Ziel selbst
+    in LibreNMS steht, und sonst den Hostnamen gegen die Alias-Menge (die auch
+    FMG-Objektnamen enthält). So funktioniert es auch für Geräte, die LibreNMS
+    gar nicht kennt, deren Nachbar sie aber per LLDP benennt.
+    """
+    remote_host = normalize_host(neighbour.get("hostname"))
+    remote_id = neighbour.get("device_id")
+    if self_device_id is not None and remote_id is not None \
+            and str(remote_id) == str(self_device_id):
+        return "lldp_peer", neighbour.get("label")
+    if remote_host and remote_host in aliases:
+        return "lldp_peer", neighbour.get("label")
+
+    hit = matches_description(aliases, if_alias, if_descr)
+    if hit:
+        return "description", if_alias or if_descr
+    return None, None
+
+
 async def candidates(client: LibrenmsClient, cfg: dict, mac: str,
-                     warnings: list[str]) -> list[dict]:
+                     warnings: list[str], aliases: set[str] | None = None,
+                     self_device_id=None) -> list[dict]:
     """Alle Ports, an denen die MAC gesehen wurde — unsortiert, angereichert."""
+    aliases = aliases or set()
     try:
         rows = await client.fdb(cfg, mac)
     except LibrenmsNotConfigured:
@@ -149,18 +187,24 @@ async def candidates(client: LibrenmsClient, cfg: dict, mac: str,
             nb = neighbours.get(pid_int) or {}
             mac_count = counts.get(pid, 0)
             kind = classify_port(bool(nb), bool(nb.get("monitored")), mac_count, access_max)
+            if_alias = port.get("ifAlias") or None
+            reason, detail = match_target(
+                nb, if_alias, port.get("ifDescr"), aliases, self_device_id
+            )
             out.append({
                 "device_id": int(device_id) if device_id.isdigit() else device_id,
                 "hostname": dev.get("hostname"),
                 "sys_name": dev.get("sysName"),
                 "port_id": pid_int,
                 "if_name": port.get("ifName") or port.get("ifDescr"),
-                "if_alias": port.get("ifAlias") or None,
+                "if_alias": if_alias,
                 "if_descr": port.get("ifDescr"),
                 "oper_status": port.get("ifOperStatus"),
                 "vlan_id": row.get("vlan_id"),
                 "mac_count": mac_count,
                 "port_kind": kind,
+                "match_reason": reason,
+                "match_detail": detail,
                 "has_neighbor": bool(nb),
                 "neighbor": nb.get("label"),
                 "neighbor_monitored": bool(nb.get("monitored")),
@@ -173,14 +217,18 @@ async def candidates(client: LibrenmsClient, cfg: dict, mac: str,
 
 
 def rank(cands: list[dict]) -> list[dict]:
-    """Bester Kandidat zuerst: zuletzt gesehen, dann Portklasse, dann MAC-Zahl.
+    """Bester Kandidat zuerst.
 
-    Aktualität steht bewusst vorn. Ein FDB-Eintrag wird bei jedem Discovery-Lauf
-    aufgefrischt, solange die MAC dort noch steht — ein alter Eintrag heißt also
-    „von diesem Port verschwunden". Das schlägt jede Heuristik. Gebucketet, damit
-    gleich frische Treffer nicht durch Sekunden Versatz zwischen zwei
-    Discovery-Läufen auseinandergerissen werden; innerhalb eines Buckets
-    entscheidet dann die Portklasse.
+    Reihenfolge der Kriterien: Topologie-Abgleich, Aktualität, Portklasse,
+    MAC-Zahl. Der Abgleich steht vorn, weil er kein Indiz, sondern eine Aussage
+    ist — sagt LLDP „an diesem Port hängt genau das gesuchte Gerät", gibt es
+    nichts mehr abzuwägen. Insbesondere ist die Portklasse dann irrelevant: für
+    einen Switch als Suchziel IST die Antwort ein Uplink.
+
+    Aktualität vor Portklasse, weil ein FDB-Eintrag bei jedem Discovery-Lauf
+    aufgefrischt wird, solange die MAC dort noch steht — ein alter Eintrag heißt
+    „von diesem Port verschwunden". Gebucketet, damit gleich frische Treffer
+    nicht durch Sekunden Versatz zwischen zwei Läufen auseinanderfallen.
 
     `mac_count == 0` heißt „nicht ermittelbar", nicht „leerer Port" — solche
     Kandidaten dürfen nicht nach vorn rutschen.
@@ -188,6 +236,7 @@ def rank(cands: list[dict]) -> list[dict]:
     def key(c: dict) -> tuple:
         count = c["mac_count"] if c["mac_count"] > 0 else 10**6
         return (
+            MATCH_RANK.get(c.get("match_reason"), 2),
             c.get("age_bucket", 0),
             PORT_KIND_RANK.get(c.get("port_kind", "unknown"), 1),
             count,
@@ -203,8 +252,15 @@ def confidence(ranked: list[dict], cfg: dict) -> str:
         return "none"
     best = ranked[0]
     kind = best.get("port_kind", "unknown")
+    reason = best.get("match_reason")
 
-    if kind == "uplink":
+    if reason == "lldp_peer":
+        # Topologie-Aussage, keine Heuristik.
+        level = "high"
+    elif reason == "description":
+        # Namenskonventionen können lügen; auf einem plausiblen Port reicht es.
+        level = "high" if kind != "uplink" else "medium"
+    elif kind == "uplink":
         # Nur echte Switch-zu-Switch-Uplinks: der Zugangsswitch fehlt in LibreNMS.
         level = "low"
     elif kind == "access":
