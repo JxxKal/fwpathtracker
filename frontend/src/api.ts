@@ -279,6 +279,8 @@ export async function itopRefresh(): Promise<{ ok: boolean; count: number }> {
 
 // ── LibreNMS / Switchport-Suche ────────────────────────────────────────────────
 
+export type PortKind = 'access' | 'edge' | 'trunk' | 'uplink' | 'unknown';
+
 export interface LocateCandidate {
   device_id: number | string;
   hostname: string | null;
@@ -290,11 +292,31 @@ export interface LocateCandidate {
   oper_status: string | null;
   vlan_id: number | null;
   mac_count: number;
+  port_kind: PortKind;
   has_neighbor: boolean;
   neighbor: string | null;
+  neighbor_monitored: boolean;
   updated_at: string | null;
   age_s: number | null;
+  age_bucket: number;
   stale: boolean;
+}
+
+export interface LocateUplink {
+  local_port_id: number | null;
+  remote_hostname: string | null;
+  remote_port: string | null;
+  remote_platform: string | null;
+  protocol: string | null;
+}
+
+export interface LocateSelfDevice {
+  device_id: number;
+  hostname: string | null;
+  sys_name: string | null;
+  os: string | null;
+  hardware: string | null;
+  uplinks: LocateUplink[];
 }
 
 export interface LocateArp {
@@ -312,6 +334,7 @@ export interface LocateResult {
   best: LocateCandidate | null;
   candidates: LocateCandidate[];
   confidence: 'high' | 'medium' | 'low' | 'none';
+  self_device: LocateSelfDevice | null;
   warnings: string[];
 }
 
@@ -319,21 +342,23 @@ const demoCandidates: LocateCandidate[] = [
   {
     device_id: 169, hostname: 'moxa-iks-01', sys_name: 'bpvo049', port_id: 3701,
     if_name: 'Port 5', if_alias: 'Anlage 3', if_descr: 'Port 5', oper_status: 'up',
-    vlan_id: 0, mac_count: 3, has_neighbor: false, neighbor: null,
-    updated_at: '2026-08-10 14:43:05', age_s: 240, stale: false,
+    vlan_id: 0, mac_count: 3, port_kind: 'access', has_neighbor: false,
+    neighbor: null, neighbor_monitored: false,
+    updated_at: '2026-08-10 14:43:05', age_s: 240, age_bucket: 0, stale: false,
   },
   {
     device_id: 169, hostname: 'moxa-iks-01', sys_name: 'bpvo049', port_id: 3789,
     if_name: 'Port 23', if_alias: 'Ring A', if_descr: 'Port 23', oper_status: 'up',
-    vlan_id: 0, mac_count: 182, has_neighbor: false, neighbor: null,
-    updated_at: '2026-08-10 14:43:05', age_s: 240, stale: false,
+    vlan_id: 0, mac_count: 182, port_kind: 'trunk', has_neighbor: false,
+    neighbor: null, neighbor_monitored: false,
+    updated_at: '2026-08-10 14:43:05', age_s: 240, age_bucket: 0, stale: false,
   },
   {
     device_id: 42, hostname: 'hpe-core-01', sys_name: 'core-01', port_id: 9001,
     if_name: 'Gi1/0/1', if_alias: 'Uplink MOXA', if_descr: 'GigabitEthernet1/0/1',
-    oper_status: 'up', vlan_id: 7, mac_count: 412, has_neighbor: true,
-    neighbor: 'moxa-iks-01 / Port 23',
-    updated_at: '2026-08-10 14:41:12', age_s: 353, stale: false,
+    oper_status: 'up', vlan_id: 7, mac_count: 412, port_kind: 'uplink',
+    has_neighbor: true, neighbor: 'moxa-iks-01 / Port 23', neighbor_monitored: true,
+    updated_at: '2026-08-10 14:41:12', age_s: 353, age_bucket: 0, stale: false,
   },
 ];
 
@@ -343,7 +368,7 @@ export async function locateHost(q: string): Promise<LocateResult> {
       ip: q, mac: '000c2911891a', mac_readable: '00:0c:29:11:89:1a',
       arp: { provenance: 'fortigate', device: 'fw-a', vdom: 'root', interface: 'lan1' },
       best: demoCandidates[0], candidates: demoCandidates,
-      confidence: 'high', warnings: [],
+      confidence: 'high', self_device: null, warnings: [],
     };
   }
   return request(`/api/locate?q=${encodeURIComponent(q)}`);

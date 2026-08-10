@@ -188,20 +188,71 @@ class LibrenmsClient:
         self._links["all"] = rows
         return rows
 
-    async def neighbours(self, cfg: dict) -> dict[int, str]:
-        """port_id → lesbarer Nachbar. Ein Port mit Nachbar ist ein Uplink."""
-        out: dict[int, str] = {}
+    async def neighbours(self, cfg: dict) -> dict[int, dict]:
+        """port_id → {label, monitored, device_id}.
+
+        `monitored` ist der eigentliche Wert: LibreNMS setzt `remote_device_id`
+        nur, wenn der Nachbar selbst überwacht wird. Ein LLDP-Nachbar MIT
+        remote_device_id ist ein echter Switch-zu-Switch-Uplink; einer OHNE ist
+        etwas anderes am Kabelende — typischerweise ein Hypervisor, ein AP oder
+        ein Telefon. Genau diese Unterscheidung trennt „Uplink, hier steckt das
+        Gerät sicher nicht" von „Trunk zu einem Host, hier steckt es sehr wohl".
+        """
+        out: dict[int, dict] = {}
         for link in await self.links(cfg):
             pid = link.get("local_port_id")
             if pid in (None, 0):
                 continue
             remote = str(link.get("remote_hostname") or "").strip()
             rport = str(link.get("remote_port") or "").strip()
-            label = " / ".join(p for p in (remote, rport) if p) or "unbekannt"
+            platform = str(link.get("remote_platform") or "").strip()
+            rdev = link.get("remote_device_id")
+            label = " / ".join(p for p in (remote, rport) if p) or platform or "unbekannt"
             try:
-                out[int(pid)] = label
+                out[int(pid)] = {
+                    "label": label,
+                    "monitored": bool(rdev),
+                    "device_id": rdev or None,
+                    "platform": platform or None,
+                }
             except (TypeError, ValueError):
                 continue
+        return out
+
+    async def device_index(self, cfg: dict) -> dict[str, dict]:
+        """hostname/IP → Gerät. Erkennt, ob die gesuchte IP selbst ein Switch ist.
+
+        Für ein überwachtes Gerät ist die Portsuche sinnlos: seine Management-MAC
+        steht per Definition nur auf Uplinks, weil es keinen Access-Port gibt, an
+        dem es „hängt". Wer danach sucht, will wissen, wo das Gerät im Netz
+        angeschlossen ist — das beantwortet LLDP, nicht die FDB.
+        """
+        cached = self._devices.get("__index__")
+        if cached is not None:
+            return cached
+        body = await self._get(cfg, "devices")
+        index: dict[str, dict] = {}
+        for dev in _rows(body, "devices"):
+            for key in (dev.get("hostname"), dev.get("ip"), dev.get("sysName")):
+                if key:
+                    index[str(key).strip().lower()] = dev
+        self._devices["__index__"] = index
+        return index
+
+    async def device_neighbours(self, cfg: dict, device_id: int | str) -> list[dict]:
+        """LLDP-Nachbarn EINES Geräts — wo hängt der Switch selbst?"""
+        out: list[dict] = []
+        for link in await self.links(cfg):
+            if str(link.get("local_device_id")) != str(device_id):
+                continue
+            remote = str(link.get("remote_hostname") or "").strip()
+            out.append({
+                "local_port_id": link.get("local_port_id"),
+                "remote_hostname": remote or None,
+                "remote_port": str(link.get("remote_port") or "").strip() or None,
+                "remote_platform": str(link.get("remote_platform") or "").strip() or None,
+                "protocol": link.get("protocol"),
+            })
         return out
 
     async def test(self, cfg: dict) -> dict:

@@ -6,6 +6,10 @@
 --                  eine niedrigere Konfidenz.
 -- stale_after_s    Ab diesem Alter ist ein FDB-Eintrag eine Vermutung. Default
 --                  6 h = das Default-Discovery-Intervall von LibreNMS.
+-- recency_bucket_s Innerhalb dieses Fensters gelten Treffer als gleich frisch.
+--                  Sortiert wird primär nach Aktualität; ohne Bucketing würden
+--                  gleichwertige Treffer durch Sekunden Versatz zwischen zwei
+--                  Discovery-Läufen auseinandergerissen.
 INSERT INTO system_config (key, value) VALUES
-    ('librenms', '{"base_url": "", "token": "", "ssl_verify": true, "timeout_s": 20, "access_max_macs": 8, "stale_after_s": 21600}')
+    ('librenms', '{"base_url": "", "token": "", "ssl_verify": true, "timeout_s": 20, "access_max_macs": 8, "stale_after_s": 21600, "recency_bucket_s": 3600}')
 ON CONFLICT (key) DO NOTHING;

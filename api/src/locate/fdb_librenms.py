@@ -1,18 +1,27 @@
-"""MAC → Switchport aus der LibreNMS-FDB, inklusive Uplink-Erkennung.
+"""MAC → Switchport aus der LibreNMS-FDB, inklusive Portklassifikation.
 
 Der Knackpunkt ist nicht das Finden, sondern das Aussortieren: eine MAC steht
-auf JEDEM Switch im Pfad in der FDB — überall auf dem Uplink-Port. Gesucht ist
-der eine Access-Port, an dem das Gerät wirklich steckt.
+auf JEDEM Switch im Pfad in der FDB — dort jeweils auf dem Uplink. Gesucht ist
+der eine Port, hinter dem das Gerät wirklich sitzt.
 
-Zwei unabhängige Signale trennen das:
+Wichtig dabei: „Port mit vielen MACs" ist NICHT gleichbedeutend mit „falsch".
+Eine VM auf einem Hypervisor hängt völlig legitim hinter einem Trunk, auf dem
+Dutzende MACs stehen. Was ausgeschlossen werden kann, ist nur der echte
+Switch-zu-Switch-Uplink — und genau den erkennt man daran, dass der LLDP-Nachbar
+selbst ein überwachtes Gerät ist.
 
-1. LLDP/CDP-Nachbar am Port  → per Definition ein Uplink. Hartes Signal, aber
-   nur vorhanden, wenn auf dem Ring/Trunk auch LLDP läuft.
-2. Anzahl MACs am Port       → ein Access-Port trägt eine Handvoll, ein
-   Ring-Uplink Hunderte. Weiches Signal, dafür immer verfügbar.
+Daraus vier Portklassen:
 
-Die beiden ergänzen sich: MOXA-Ringe fahren oft ohne LLDP, dort ist die
-MAC-Zahl brutal eindeutig (~180 gegen ~3).
+    access   wenige MACs, kein LLDP-Nachbar          → der Normalfall
+    edge     LLDP-Nachbar, aber NICHT überwacht      → Hypervisor, AP, Telefon
+    trunk    viele MACs, kein LLDP-Nachbar           → Ring-Uplink ODER ESX-Trunk
+    uplink   LLDP-Nachbar IST ein überwachtes Gerät  → sicher nicht hier
+
+Sortiert wird zuerst nach Aktualität, dann nach Klasse. Das ist Absicht: ein
+FDB-Eintrag wird bei jedem Discovery-Lauf aufgefrischt, solange die MAC dort
+noch gesehen wird. Ein alter Eintrag heißt also „die MAC ist von diesem Port
+verschwunden" — das ist das stärkste Signal, das die Daten hergeben, stärker
+als jede Heuristik über MAC-Zahlen.
 """
 from __future__ import annotations
 
@@ -24,11 +33,18 @@ from librenms.client import LibrenmsClient, LibrenmsError, LibrenmsNotConfigured
 
 log = logging.getLogger("locate.fdb")
 
-# Ab so vielen MACs an einem Port gilt er nicht mehr als Access-Port.
+# Bis zu so vielen MACs gilt ein Port ohne LLDP-Nachbarn als Access-Port.
 DEFAULT_ACCESS_MAX_MACS = 8
 # Älter als das → der Treffer ist eine Vermutung, keine Aussage. LibreNMS
 # discovert per Default alle 6 h; ein Eintrag von gestern sagt nichts über jetzt.
 DEFAULT_STALE_AFTER_S = 6 * 3600
+# Innerhalb dieses Fensters gelten Einträge als gleich frisch. Ohne Bucketing
+# würde die Sortierung nach Aktualität gleichwertige Treffer nach ein paar
+# Sekunden Versatz zwischen zwei Discovery-Läufen auseinanderreißen.
+DEFAULT_RECENCY_BUCKET_S = 3600
+
+# Reihenfolge der Portklassen beim Ranking (kleiner = wahrscheinlicher).
+PORT_KIND_RANK = {"access": 0, "edge": 0, "trunk": 1, "unknown": 1, "uplink": 2}
 
 _TS_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S%z")
 
@@ -63,6 +79,16 @@ def _age_s(ts: datetime | None) -> int | None:
     return max(0, int((now - ts).total_seconds()))
 
 
+def classify_port(has_neighbor: bool, neighbor_monitored: bool,
+                  mac_count: int, access_max: int) -> str:
+    """Portklasse aus den beiden verfügbaren Signalen — siehe Modul-Docstring."""
+    if has_neighbor:
+        return "uplink" if neighbor_monitored else "edge"
+    if mac_count <= 0:
+        return "unknown"          # Anreicherung fehlgeschlagen, nicht „leerer Port"
+    return "access" if mac_count <= access_max else "trunk"
+
+
 async def candidates(client: LibrenmsClient, cfg: dict, mac: str,
                      warnings: list[str]) -> list[dict]:
     """Alle Ports, an denen die MAC gesehen wurde — unsortiert, angereichert."""
@@ -90,6 +116,8 @@ async def candidates(client: LibrenmsClient, cfg: dict, mac: str,
         neighbours = {}
 
     stale_after = int(cfg.get("stale_after_s", DEFAULT_STALE_AFTER_S))
+    access_max = int(cfg.get("access_max_macs", DEFAULT_ACCESS_MAX_MACS))
+    bucket_s = max(1, int(cfg.get("recency_bucket_s", DEFAULT_RECENCY_BUCKET_S)))
 
     by_device: dict[str, list[dict]] = defaultdict(list)
     for row in rows:
@@ -118,6 +146,9 @@ async def candidates(client: LibrenmsClient, cfg: dict, mac: str,
                 pid_int = int(pid)
             except ValueError:
                 pid_int = -1
+            nb = neighbours.get(pid_int) or {}
+            mac_count = counts.get(pid, 0)
+            kind = classify_port(bool(nb), bool(nb.get("monitored")), mac_count, access_max)
             out.append({
                 "device_id": int(device_id) if device_id.isdigit() else device_id,
                 "hostname": dev.get("hostname"),
@@ -128,27 +159,37 @@ async def candidates(client: LibrenmsClient, cfg: dict, mac: str,
                 "if_descr": port.get("ifDescr"),
                 "oper_status": port.get("ifOperStatus"),
                 "vlan_id": row.get("vlan_id"),
-                "mac_count": counts.get(pid, 0),
-                "has_neighbor": pid_int in neighbours,
-                "neighbor": neighbours.get(pid_int),
+                "mac_count": mac_count,
+                "port_kind": kind,
+                "has_neighbor": bool(nb),
+                "neighbor": nb.get("label"),
+                "neighbor_monitored": bool(nb.get("monitored")),
                 "updated_at": row.get("updated_at"),
                 "age_s": age,
+                "age_bucket": (age // bucket_s) if age is not None else 10**6,
                 "stale": age is not None and age > stale_after,
             })
     return out
 
 
 def rank(cands: list[dict]) -> list[dict]:
-    """Bester Kandidat zuerst: kein Nachbar, wenige MACs, zuletzt gesehen.
+    """Bester Kandidat zuerst: zuletzt gesehen, dann Portklasse, dann MAC-Zahl.
 
-    `mac_count == 0` heißt „nicht ermittelbar" (Anreicherung fehlgeschlagen),
-    nicht „leerer Port" — solche Kandidaten dürfen nicht nach vorn rutschen und
-    werden wie ein mittelgroßer Port behandelt.
+    Aktualität steht bewusst vorn. Ein FDB-Eintrag wird bei jedem Discovery-Lauf
+    aufgefrischt, solange die MAC dort noch steht — ein alter Eintrag heißt also
+    „von diesem Port verschwunden". Das schlägt jede Heuristik. Gebucketet, damit
+    gleich frische Treffer nicht durch Sekunden Versatz zwischen zwei
+    Discovery-Läufen auseinandergerissen werden; innerhalb eines Buckets
+    entscheidet dann die Portklasse.
+
+    `mac_count == 0` heißt „nicht ermittelbar", nicht „leerer Port" — solche
+    Kandidaten dürfen nicht nach vorn rutschen.
     """
     def key(c: dict) -> tuple:
         count = c["mac_count"] if c["mac_count"] > 0 else 10**6
         return (
-            1 if c["has_neighbor"] else 0,
+            c.get("age_bucket", 0),
+            PORT_KIND_RANK.get(c.get("port_kind", "unknown"), 1),
             count,
             c["age_s"] if c["age_s"] is not None else 10**9,
         )
@@ -161,14 +202,15 @@ def confidence(ranked: list[dict], cfg: dict) -> str:
     if not ranked:
         return "none"
     best = ranked[0]
-    access_max = int(cfg.get("access_max_macs", DEFAULT_ACCESS_MAX_MACS))
+    kind = best.get("port_kind", "unknown")
 
-    if best["has_neighbor"]:
-        # Nur Uplinks gefunden: der Zugangsswitch fehlt in LibreNMS.
+    if kind == "uplink":
+        # Nur echte Switch-zu-Switch-Uplinks: der Zugangsswitch fehlt in LibreNMS.
         level = "low"
-    elif 0 < best["mac_count"] <= access_max:
+    elif kind == "access":
         level = "high"
     else:
+        # edge (Hypervisor/AP am LLDP) und trunk sind plausibel, aber nicht eindeutig.
         level = "medium"
 
     if best["stale"] and level != "low":

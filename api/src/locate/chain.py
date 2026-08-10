@@ -41,9 +41,50 @@ class LocateChain:
         self._cache[ip] = result
         return result
 
+    async def _self_device(self, ip: str, cfg: dict, warnings: list[str]) -> dict | None:
+        """Ist die gesuchte IP selbst ein überwachtes Gerät?
+
+        Dann ist die Portsuche die falsche Frage: die Management-MAC eines
+        Switches steht per Definition nur auf Uplinks, weil es keinen Access-Port
+        gibt, an dem er „hängt". Was der Suchende wissen will, ist, wo das Gerät
+        angeschlossen ist — und das beantwortet LLDP.
+        """
+        try:
+            index = await self.librenms.device_index(cfg)
+        except Exception as exc:
+            log.info("Geräteindex nicht abrufbar: %s", exc)
+            return None
+        dev = index.get(ip.strip().lower())
+        if dev is None:
+            return None
+
+        uplinks: list[dict] = []
+        try:
+            uplinks = await self.librenms.device_neighbours(cfg, dev.get("device_id"))
+        except Exception as exc:
+            log.info("LLDP-Nachbarn von %s nicht abrufbar: %s", ip, exc)
+
+        warnings.append(
+            f"{ip} ist selbst ein überwachtes Gerät "
+            f"({dev.get('hostname') or dev.get('sysName')}). Seine MAC steht "
+            "naturgemäß auf Uplinks und an keinem Access-Port — die Fundstellen "
+            "unten zeigen den Weg dorthin, nicht den Anschluss."
+            + (" Wo es angeschlossen ist, steht in den LLDP-Nachbarn."
+               if uplinks else "")
+        )
+        return {
+            "device_id": dev.get("device_id"),
+            "hostname": dev.get("hostname"),
+            "sys_name": dev.get("sysName"),
+            "os": dev.get("os"),
+            "hardware": dev.get("hardware"),
+            "uplinks": uplinks,
+        }
+
     async def _locate(self, ip: str, prefixes: PrefixTable, librenms_cfg: dict,
                       fmg_cfg: dict, app_cfg: Config) -> dict:
         warnings: list[str] = []
+        self_device = await self._self_device(ip, librenms_cfg, warnings)
 
         arp = await arp_fortigate.resolve(ip, prefixes, fmg_cfg, app_cfg, warnings)
         if arp is None:
@@ -57,7 +98,7 @@ class LocateChain:
             return {
                 "ip": ip, "mac": None, "mac_readable": None, "arp": None,
                 "best": None, "candidates": [], "confidence": "none",
-                "warnings": warnings,
+                "self_device": self_device, "warnings": warnings,
             }
 
         mac = normalize_mac(arp["mac"])
@@ -71,10 +112,17 @@ class LocateChain:
                 "Entweder ist der Zugangsswitch nicht eingebunden, oder seine "
                 "FDB-Discovery liefert nichts (bei MOXA siehe Wiki-Seite)."
             )
-        elif conf == "low" and all(c["has_neighbor"] for c in ranked):
+        elif self_device is None and all(c["port_kind"] == "uplink" for c in ranked):
             warnings.append(
-                "Die MAC wurde ausschließlich auf Uplink-Ports gesehen — der "
-                "Switch, an dem das Gerät wirklich hängt, fehlt in LibreNMS."
+                "Die MAC wurde ausschließlich auf echten Switch-zu-Switch-Uplinks "
+                "gesehen — der Switch, an dem das Gerät wirklich hängt, fehlt in "
+                "LibreNMS."
+            )
+        elif ranked[0]["port_kind"] == "trunk":
+            warnings.append(
+                f"Der beste Treffer liegt auf einem Port mit {ranked[0]['mac_count']} "
+                "MACs und ohne LLDP-Nachbarn. Das ist entweder ein Ring-Uplink oder "
+                "ein Trunk zu einem Hypervisor — bei einer VM also durchaus richtig."
             )
 
         best = ranked[0] if ranked else None
@@ -98,5 +146,6 @@ class LocateChain:
             "best": best,
             "candidates": ranked,
             "confidence": conf,
+            "self_device": self_device,
             "warnings": warnings,
         }

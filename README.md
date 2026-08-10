@@ -349,21 +349,44 @@ Standorten der L3-Router und damit die einzige Stelle mit ARP für *alle* VLANs.
 LibreNMS springt ein, wo stattdessen ein HPE-Stack routet — und als Auffangnetz,
 wenn der Live-Weg klemmt (Gerät offline, Endpunkt fehlt).
 
-### Uplink oder Access?
+### Welcher Port ist der richtige?
 
 Der Knackpunkt ist nicht das Finden, sondern das Aussortieren: eine MAC steht
-auf **jedem** Switch im Pfad in der FDB — dort jeweils auf dem Uplink. Zwei
-unabhängige Signale trennen das:
+auf **jedem** Switch im Pfad in der FDB — dort jeweils auf dem Uplink.
 
-1. **LLDP/CDP-Nachbar am Port** (`/resources/links`) → per Definition ein
-   Uplink. Hartes Signal, aber nur da, wo LLDP auch läuft.
-2. **Anzahl MACs am Port** (`/devices/{id}/fdb`) → ein Access-Port trägt eine
-   Handvoll, ein Ring-Uplink Hunderte. Weiches Signal, dafür immer verfügbar.
+Wichtig dabei: *„Port mit vielen MACs" ist nicht gleichbedeutend mit „falsch"*.
+Eine VM auf einem Hypervisor hängt völlig legitim hinter einem Trunk, auf dem
+Dutzende MACs stehen. Ausschließen lässt sich nur der echte
+**Switch-zu-Switch-Uplink** — und den erkennt man daran, dass LibreNMS für den
+LLDP-Nachbarn eine `remote_device_id` führt, der Nachbar also selbst überwacht
+wird. Daraus vier Portklassen:
 
-Die beiden ergänzen sich: MOXA-Ringe fahren oft ohne LLDP, dort ist die
-MAC-Zahl brutal eindeutig (~180 gegen ~3). Das Ergebnis bekommt eine Konfidenz
-(`high`/`medium`/`low`) und immer das **Alter** des Eintrags — FDB-Einträge
-altern in Minuten, LibreNMS discovert per Default alle 6 Stunden.
+| Klasse | Signal | Bedeutung |
+|---|---|---|
+| `access` | wenige MACs, kein LLDP | der Normalfall |
+| `edge` | LLDP-Nachbar, **nicht** überwacht | Hypervisor, AP, Telefon |
+| `trunk` | viele MACs, kein LLDP | Ring-Uplink **oder** ESX-Trunk |
+| `uplink` | LLDP-Nachbar **ist** überwacht | hier steckt es sicher nicht |
+
+**Sortiert wird zuerst nach Aktualität**, dann nach Klasse, dann nach MAC-Zahl.
+Das ist Absicht: ein FDB-Eintrag wird bei jedem Discovery-Lauf aufgefrischt,
+solange die MAC dort noch gesehen wird. Ein alter Eintrag heißt also „die MAC
+ist von diesem Port verschwunden" — das stärkste Signal, das die Daten
+hergeben, stärker als jede Heuristik über MAC-Zahlen. Gebucketet über
+`recency_bucket_s` (Default 1 h), damit gleich frische Treffer nicht durch
+Sekunden Versatz zwischen zwei Discovery-Läufen auseinandergerissen werden.
+
+Das Ergebnis bekommt eine Konfidenz (`high`/`medium`/`low`) und immer das
+**Alter** des Eintrags — FDB-Einträge altern in Minuten, LibreNMS discovert per
+Default alle 6 Stunden.
+
+### Wenn die gesuchte IP selbst ein Switch ist
+
+Dann ist die Portsuche die falsche Frage: die Management-MAC eines Switches
+steht per Definition nur auf Uplinks, weil es keinen Access-Port gibt, an dem
+er „hängt". Der Tracker erkennt das über den Geräteindex (`/devices`) und
+beantwortet stattdessen die Frage, die gemeint war — **wo ist das Gerät
+angeschlossen?** — aus den LLDP-Nachbarn des Geräts selbst.
 
 ### Zugriff
 

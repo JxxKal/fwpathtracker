@@ -1,6 +1,6 @@
-import { MapPin } from 'lucide-react';
+import { MapPin, Server } from 'lucide-react';
 import { useState } from 'react';
-import { locateHost, type LocateCandidate, type LocateResult } from '../api';
+import { locateHost, type LocateCandidate, type LocateResult, type PortKind } from '../api';
 import { de } from '../i18n/de';
 
 // Wo steckt das Gerät physisch? IP→MAC von der FortiGate (live, über den
@@ -13,6 +13,16 @@ const confidenceStyle: Record<LocateResult['confidence'], string> = {
   medium: 'border-amber-800 bg-amber-950/60 text-amber-300',
   low: 'border-orange-800 bg-orange-950/60 text-orange-300',
   none: 'border-slate-700 bg-slate-900/60 text-slate-400',
+};
+
+// Access und Edge sind beide plausible Anschlusspunkte (Edge = Hypervisor/AP am
+// LLDP), Trunk ist möglich, Uplink praktisch ausgeschlossen.
+const kindStyle: Record<PortKind, string> = {
+  access: 'bg-emerald-900/70 text-emerald-300',
+  edge: 'bg-emerald-900/70 text-emerald-300',
+  trunk: 'bg-amber-900/70 text-amber-300',
+  uplink: 'bg-slate-700/70 text-slate-400',
+  unknown: 'bg-slate-700/70 text-slate-500',
 };
 
 function age(seconds: number | null): string {
@@ -62,6 +72,35 @@ export default function LocateHost() {
       </div>
 
       {err && <p className="text-sm text-red-400">{err}</p>}
+
+      {res?.self_device && (
+        <div className="rounded-md border border-sky-800 bg-sky-950/60 p-3 text-sm text-sky-300">
+          <div className="flex items-center gap-2">
+            <Server size={15} />
+            <span className="font-semibold">{de.locate.selfDevice}</span>
+            <span className="text-slate-300">
+              {res.self_device.hostname ?? res.self_device.sys_name}
+            </span>
+            {res.self_device.hardware && (
+              <span className="text-slate-500">· {res.self_device.hardware}</span>
+            )}
+          </div>
+          <p className="mt-1 text-xs text-slate-400">{de.locate.selfDeviceHint}</p>
+          {res.self_device.uplinks.length > 0 ? (
+            <ul className="mt-1 space-y-0.5 text-xs">
+              {res.self_device.uplinks.map((u, i) => (
+                <li key={`${u.local_port_id}-${i}`} className="font-mono text-slate-300">
+                  {u.remote_hostname ?? '—'}
+                  {u.remote_port && <span className="text-slate-500"> / {u.remote_port}</span>}
+                  {u.protocol && <span className="text-slate-600"> ({u.protocol})</span>}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-1 text-xs text-amber-400">{de.locate.selfDeviceNoLldp}</p>
+          )}
+        </div>
+      )}
 
       {res && (
         <>
@@ -125,6 +164,7 @@ export default function LocateHost() {
                     <tr>
                       <th className="px-3 py-1.5 font-medium">{de.locate.device}</th>
                       <th className="px-3 py-1.5 font-medium">{de.locate.port}</th>
+                      <th className="px-3 py-1.5 font-medium">{de.locate.klass}</th>
                       <th className="px-3 py-1.5 font-medium">{de.locate.macs}</th>
                       <th className="px-3 py-1.5 font-medium">{de.locate.neighbor}</th>
                       <th className="px-3 py-1.5 font-medium">{de.locate.seen}</th>
@@ -147,14 +187,19 @@ export default function LocateHost() {
                           {c.if_alias && <span className="text-slate-500"> · {c.if_alias}</span>}
                         </td>
                         <td className="whitespace-nowrap px-3 py-1.5">
-                          {c.mac_count > 0 ? c.mac_count : '—'}
-                          <span className="ml-2 rounded bg-slate-700/70 px-1.5 py-0.5 text-[10px]">
-                            {c.has_neighbor || c.mac_count > 32
-                              ? de.locate.uplink : de.locate.access}
+                          <span className={`rounded px-1.5 py-0.5 text-[10px] ${kindStyle[c.port_kind]}`}
+                            title={de.locate.kindTitle[c.port_kind]}>
+                            {de.locate.kind[c.port_kind]}
                           </span>
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-1.5">
+                          {c.mac_count > 0 ? c.mac_count : '—'}
                         </td>
                         <td className="whitespace-nowrap px-3 py-1.5 font-mono text-slate-500">
                           {c.neighbor ?? '—'}
+                          {c.neighbor && !c.neighbor_monitored && (
+                            <span className="ml-1 text-slate-600">(nicht überwacht)</span>
+                          )}
                         </td>
                         <td className={`whitespace-nowrap px-3 py-1.5 ${
                           c.stale ? 'text-amber-400' : ''
