@@ -277,6 +277,90 @@ export async function itopRefresh(): Promise<{ ok: boolean; count: number }> {
   return request('/api/itop/refresh', { method: 'POST' });
 }
 
+// ── LibreNMS / Switchport-Suche ────────────────────────────────────────────────
+
+export interface LocateCandidate {
+  device_id: number | string;
+  hostname: string | null;
+  sys_name: string | null;
+  port_id: number;
+  if_name: string | null;
+  if_alias: string | null;
+  if_descr: string | null;
+  oper_status: string | null;
+  vlan_id: number | null;
+  mac_count: number;
+  has_neighbor: boolean;
+  neighbor: string | null;
+  updated_at: string | null;
+  age_s: number | null;
+  stale: boolean;
+}
+
+export interface LocateArp {
+  provenance: 'fortigate' | 'librenms';
+  device: string | null;
+  vdom: string | null;
+  interface: string | null;
+}
+
+export interface LocateResult {
+  ip: string;
+  mac: string | null;
+  mac_readable: string | null;
+  arp: LocateArp | null;
+  best: LocateCandidate | null;
+  candidates: LocateCandidate[];
+  confidence: 'high' | 'medium' | 'low' | 'none';
+  warnings: string[];
+}
+
+const demoCandidates: LocateCandidate[] = [
+  {
+    device_id: 169, hostname: 'moxa-iks-01', sys_name: 'bpvo049', port_id: 3701,
+    if_name: 'Port 5', if_alias: 'Anlage 3', if_descr: 'Port 5', oper_status: 'up',
+    vlan_id: 0, mac_count: 3, has_neighbor: false, neighbor: null,
+    updated_at: '2026-08-10 14:43:05', age_s: 240, stale: false,
+  },
+  {
+    device_id: 169, hostname: 'moxa-iks-01', sys_name: 'bpvo049', port_id: 3789,
+    if_name: 'Port 23', if_alias: 'Ring A', if_descr: 'Port 23', oper_status: 'up',
+    vlan_id: 0, mac_count: 182, has_neighbor: false, neighbor: null,
+    updated_at: '2026-08-10 14:43:05', age_s: 240, stale: false,
+  },
+  {
+    device_id: 42, hostname: 'hpe-core-01', sys_name: 'core-01', port_id: 9001,
+    if_name: 'Gi1/0/1', if_alias: 'Uplink MOXA', if_descr: 'GigabitEthernet1/0/1',
+    oper_status: 'up', vlan_id: 7, mac_count: 412, has_neighbor: true,
+    neighbor: 'moxa-iks-01 / Port 23',
+    updated_at: '2026-08-10 14:41:12', age_s: 353, stale: false,
+  },
+];
+
+export async function locateHost(q: string): Promise<LocateResult> {
+  if (isDemoMode()) {
+    return {
+      ip: q, mac: '000c2911891a', mac_readable: '00:0c:29:11:89:1a',
+      arp: { provenance: 'fortigate', device: 'fw-a', vdom: 'root', interface: 'lan1' },
+      best: demoCandidates[0], candidates: demoCandidates,
+      confidence: 'high', warnings: [],
+    };
+  }
+  return request(`/api/locate?q=${encodeURIComponent(q)}`);
+}
+
+export async function librenmsTest(): Promise<{
+  ok: boolean; version: string; db_schema?: number; devices: number;
+}> {
+  if (isDemoMode()) return { ok: true, version: '26.6.1', devices: 137 };
+  return request('/api/librenms/test', { method: 'POST' });
+}
+
+export async function librenmsRefresh(): Promise<{ ok: boolean }> {
+  if (isDemoMode()) return { ok: true };
+  return request('/api/librenms/refresh', { method: 'POST' });
+}
+
 // ── Users ─────────────────────────────────────────────────────────────────────
 
 export async function fetchUsers(): Promise<UserEntry[]> {

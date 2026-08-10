@@ -22,6 +22,7 @@ Schreibzugriff** auf den FortiManager (No-Write-Garantie, s.u.).
 - [Konfiguration](#konfiguration)
 - [No-Write-Garantie & FMG-Profil](#no-write-garantie--fmg-profil)
 - [FortiManager-Besonderheiten](#fortimanager-besonderheiten)
+- [Switchport-Suche (LibreNMS)](#switchport-suche-librenms)
 - [Entwicklung & Tests](#entwicklung--tests)
 - [Sicherheit](#sicherheit)
 
@@ -85,6 +86,11 @@ FMG/iTop/DNS aufgelöst.
 - **Freies Subnetz finden** — freie Blöcke gewünschter Größe in einem Supernet;
   belegter Bestand aus iTop (IPAM). Standort-Supernetze als Vorauswahl (in den
   Einstellungen pflegbar).
+- **Wo hängt das Gerät?** — IP oder Name → **Switch und Port**, an dem das Gerät
+  physisch steckt. IP→MAC live von der FortiGate (die ist an fast allen
+  Standorten der L3-Router), MAC→Port aus der **LibreNMS**-FDB. Zeigt alle
+  Fundstellen mit Uplink-Kennzeichnung, Konfidenz und Alter des Eintrags —
+  siehe [Switchport-Suche](#switchport-suche-librenms).
 
 ### 🔎 Resolver & Namensauflösung
 
@@ -119,6 +125,8 @@ FastAPI (api/src)
    ├─ engine/ports.py    Intervall-Algebra (merge/intersect/subtract)
    ├─ fmg/proxy.py       exec /sys/proxy/json → FortiManager → FortiGate
    ├─ inventory/sync.py  pm/config get → fmg_snapshot (PostgreSQL)
+   ├─ locate/chain.py    IP →(ARP: FortiGate live | LibreNMS)→ MAC
+   │                        →(FDB: LibreNMS)→ Switchport   [/api/locate]
    └─ Read-Models        PrefixTable · Zonen/Aliase · Policies · Objekte (In-Memory)
    ▼
 PostgreSQL (Snapshot + system_config + Trace-Verlauf + Users)
@@ -128,6 +136,9 @@ PostgreSQL (Snapshot + system_config + Trace-Verlauf + Users)
   zustand. Die FMG-DB wird gecacht für Kandidaten, Namen und Vorschläge.
 - **Cache-only (Deep-Tracker)**: die Alle-Ports-Analyse rechnet komplett aus dem
   Cache — kein zusätzlicher FMG-Load, funktioniert offline.
+- **Zwei Systeme, klar getrennt**: der FortiManager weiß, wer routet; LibreNMS
+  weiß, an welchem Kupfer die MAC hängt. Der Tracker fragt jedes nach dem, was
+  es tatsächlich weiß, statt eines von beiden zu überdehnen.
 - **IPv6**: out of scope in V1 (sauberer 400).
 
 ---
@@ -272,7 +283,8 @@ internen Servicenamen (`db`, `api`, `frontend`) ab.
 | `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` | | leer | Build-Proxy (s.o.) |
 
 **Fachliche Config** liegt in `system_config` (JSONB, per Web-UI) — Keys:
-`fmg`, `itop`, `dns`, `sites`, `tracker`, `saml`, `checks`, `site_supernets`.
+`fmg`, `itop`, `dns`, `sites`, `tracker`, `saml`, `checks`, `site_supernets`,
+`librenms`.
 `GET /api/config/*` maskiert Secrets (`•••`), `PATCH` merged den Sentinel zurück.
 
 ---
@@ -316,6 +328,64 @@ Aus der Feldpraxis in den Engine-Code eingeflossen:
   das Interface-Naming zwischen Routing-Egress und Policy-Interface abweicht.
 - **iTop** hat keine Subnetz→Firewall-Zuordnung (nur einen Subnetz-Baum) — die
   Owner-Bestimmung läuft daher über Routing/PrefixTable, nicht über iTop.
+
+---
+
+## Switchport-Suche (LibreNMS)
+
+Beantwortet die Frage, die der Pfad-Tracker offenlässt: *an welchem Switchport
+steckt die IP eigentlich?* Zu finden im Tracker-Tab unter den Werkzeugen.
+
+Die Aufgabe zerfällt in zwei Schritte, die verschiedene Systeme beantworten:
+
+| Schritt | Quelle | Weg |
+|---|---|---|
+| IP → MAC | FortiGate (live) | vorhandener FMG-Proxy, VDOM über die PrefixTable |
+| IP → MAC (L3-Switch-Standorte) | LibreNMS `ipv4_mac` | `/resources/ip/arp/{ip}` |
+| MAC → Switchport | LibreNMS `ports_fdb` | `/resources/fdb/{mac}` |
+
+Die ARP-Seite kommt bewusst zuerst von der FortiGate: sie ist an fast allen
+Standorten der L3-Router und damit die einzige Stelle mit ARP für *alle* VLANs.
+LibreNMS springt ein, wo stattdessen ein HPE-Stack routet — und als Auffangnetz,
+wenn der Live-Weg klemmt (Gerät offline, Endpunkt fehlt).
+
+### Uplink oder Access?
+
+Der Knackpunkt ist nicht das Finden, sondern das Aussortieren: eine MAC steht
+auf **jedem** Switch im Pfad in der FDB — dort jeweils auf dem Uplink. Zwei
+unabhängige Signale trennen das:
+
+1. **LLDP/CDP-Nachbar am Port** (`/resources/links`) → per Definition ein
+   Uplink. Hartes Signal, aber nur da, wo LLDP auch läuft.
+2. **Anzahl MACs am Port** (`/devices/{id}/fdb`) → ein Access-Port trägt eine
+   Handvoll, ein Ring-Uplink Hunderte. Weiches Signal, dafür immer verfügbar.
+
+Die beiden ergänzen sich: MOXA-Ringe fahren oft ohne LLDP, dort ist die
+MAC-Zahl brutal eindeutig (~180 gegen ~3). Das Ergebnis bekommt eine Konfidenz
+(`high`/`medium`/`low`) und immer das **Alter** des Eintrags — FDB-Einträge
+altern in Minuten, LibreNMS discovert per Default alle 6 Stunden.
+
+### Zugriff
+
+Nur lesend über die LibreNMS-v0-API mit einem normalen API-Token
+(*LibreNMS → Settings → API → API Access*), kein DB-Zugriff. Eintragen unter
+**Einstellungen → LibreNMS**; der Token wird wie alle Secrets maskiert
+zurückgeliefert. Gecacht werden LLDP-Links, Geräte-Stammdaten und Portlisten
+(15 min) sowie die FDB je Gerät (5 min) — der Button *Cache aktualisieren*
+leert sie nach einer frisch angestoßenen Discovery.
+
+Bewusst wird `/resources/fdb/{mac}` genutzt und **nicht** `/detail`: die
+Detail-Variante verknüpft intern mit der VLAN-Tabelle, und Geräte ohne
+VLAN-Zuordnung in der FDB können dort herausfallen. Die Portnamen kommen
+stattdessen aus `/devices/{id}/ports`.
+
+### MOXA
+
+MOXA-Switches liefern out of the box **einen** FDB-Eintrag und sind damit für
+die Suche blind — ihre Firmware implementiert `dot1qTpFdbTable` als Stub,
+während die vollständige Tabelle in der BRIDGE-MIB liegt. Der Fix an LibreNMS
+ist dokumentiert in
+[docs/wiki/LibreNMS-MOXA-FDB.md](docs/wiki/LibreNMS-MOXA-FDB.md).
 
 ---
 

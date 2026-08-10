@@ -5,6 +5,7 @@ app.state hält:
   inventory    – Inventory (immutable, per set_inventory atomar getauscht)
   prefixes     – PrefixTable (wird zusammen mit inventory neu gebaut)
   resolver     – ResolverChain (FMG → iTop → DNS)
+  locate       – LocateChain (IP → MAC → Switchport, FortiGate + LibreNMS)
   sync_manager – SyncManager (_state für /api/fmg/sync/status)
 """
 from __future__ import annotations
@@ -21,10 +22,12 @@ import migrate
 from config import Config
 from inventory.store import Inventory
 from inventory.sync import SyncManager, load_inventory
+from locate.chain import LocateChain
 from resolver.chain import ResolverChain
 from routers import auth as auth_router
 from routers import config as config_router
-from routers import checks, fmg_admin, itop_admin, saml, search, ssl, trace, users
+from routers import (checks, fmg_admin, itop_admin, librenms_admin, locate, saml,
+                     search, ssl, trace, users)
 from routers.auth import hash_password
 from routers.config import read_config
 
@@ -113,6 +116,7 @@ async def lifespan(app: FastAPI):
 
     app.state.sync_manager = SyncManager()
     app.state.resolver = ResolverChain()
+    app.state.locate = LocateChain()
     app.state.set_inventory = lambda inv: _rebuild_state(app, inv)
     await _rebuild_state(app, await load_inventory(pool))
 
@@ -133,7 +137,9 @@ app.include_router(config_router.router)
 app.include_router(users.router)
 app.include_router(fmg_admin.router)
 app.include_router(itop_admin.router)
+app.include_router(librenms_admin.router)
 app.include_router(search.router)
+app.include_router(locate.router)  # Switchport-Suche (LibreNMS-FDB)
 app.include_router(trace.router)
 app.include_router(checks.router)  # Check-Gruppen (Batch-Regressions-Checks)
 app.include_router(ssl.router)     # SSL/TLS-Cert + Hostname (Endpoints admin-gated)
