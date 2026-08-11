@@ -104,7 +104,7 @@ export const de = {
     ambiguous: 'Dasselbe Netz ist an mehreren VDOMs connected — der Start-Hop ist mehrdeutig (ggf. deaktiviertes Interface? Site-Override).',
   },
   locate: {
-    title: 'Wo hängt das Gerät?',
+    title: 'Martin Lehmann, wo hängt das Gerät?',
     hint: 'IP oder Name eingeben — Switch und Port, an dem das Gerät physisch steckt. IP→MAC live von der FortiGate, MAC→Port aus LibreNMS.',
     placeholder: '10.133.167.42',
     search: 'Suchen',

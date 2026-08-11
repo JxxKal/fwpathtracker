@@ -86,7 +86,7 @@ FMG/iTop/DNS aufgelöst.
 - **Freies Subnetz finden** — freie Blöcke gewünschter Größe in einem Supernet;
   belegter Bestand aus iTop (IPAM). Standort-Supernetze als Vorauswahl (in den
   Einstellungen pflegbar).
-- **Wo hängt das Gerät?** — IP oder Name → **Switch und Port**, an dem das Gerät
+- **Martin Lehmann, wo hängt das Gerät?** — IP oder Name → **Switch und Port**, an dem das Gerät
   physisch steckt. IP→MAC live von der FortiGate (die ist an fast allen
   Standorten der L3-Router), MAC→Port aus der **LibreNMS**-FDB. Zeigt alle
   Fundstellen mit Uplink-Kennzeichnung, Konfidenz und Alter des Eintrags —
