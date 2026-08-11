@@ -142,6 +142,8 @@ export const de = {
       description: 'Die Port-Description nennt das gesuchte Gerät beim Namen. Stark, aber Namenskonventionen können veralten.',
     },
     aliases: 'Abgeglichen gegen',
+    graphSearching: 'Switchport …',
+    graphNone: 'Switchport unbekannt',
     showAll: 'Alle {n} Fundstellen zeigen',
     showLess: 'Liste einklappen',
     selfDevice: 'Das ist ein überwachtes Gerät',

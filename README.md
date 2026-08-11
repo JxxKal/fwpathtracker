@@ -419,6 +419,18 @@ Detail-Variante verknüpft intern mit der VLAN-Tabelle, und Geräte ohne
 VLAN-Zuordnung in der FDB können dort herausfallen. Die Portnamen kommen
 stattdessen aus `/devices/{id}/ports`.
 
+### Im Pfad-Graphen
+
+Quelle und Ziel im Trace-Graphen zeigen ihren physischen Switchport als zweite
+Zeile im Endpunkt-Knoten — Switch, Port und Port-Description, eingefärbt nach
+Konfidenz. Damit steht der komplette Weg in einem Bild: vom Kupfer über die
+Firewalls bis zum Ziel-Kupfer.
+
+Nachgeladen wird **nach** dem Trace, nicht als Teil davon. Die Pfadanalyse soll
+weder auf LibreNMS warten noch scheitern, wenn dort nichts konfiguriert ist;
+Fehler werden geschluckt und der Knoten bleibt schlicht unverändert. Endet der
+Pfad im Internet, wird für das Ziel gar nicht erst gesucht.
+
 ### MOXA
 
 MOXA-Switches liefern out of the box **einen** FDB-Eintrag und sind damit für

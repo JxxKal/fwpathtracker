@@ -1,6 +1,7 @@
 import { Background, Controls, Edge, Node, ReactFlow, ReactFlowProvider, useReactFlow } from '@xyflow/react';
 import { useEffect, useMemo } from 'react';
 import { de } from '../i18n/de';
+import { useSwitchports } from '../switchports';
 import type { Hop, TraceResult } from '../types';
 import FirewallNode from './nodes/FirewallNode';
 import HostNode from './nodes/HostNode';
@@ -20,11 +21,20 @@ interface Props {
 }
 
 // Linearer Pfad → manueller Horizontal-Layouter (kein dagre/elk nötig)
-const HOST_W = 176;
+const HOST_W = 208;
 const FW_W = 320;
 const GAP = 90;
 
 function PathGraphInner({ result, onSelect, selectedIndex }: Props) {
+  // Endet der Pfad im Internet, gibt es kein Zielgerät, dessen Switchport man
+  // suchen könnte — dann nur die Quelle nachschlagen.
+  const lastEgress = result.hops[result.hops.length - 1]?.egress_class;
+  const dstIsInternet = lastEgress === 'DEFAULT';
+  const switchports = useSwitchports([
+    result.src.ip,
+    dstIsInternet ? null : result.dst.ip,
+  ]);
+
   const { nodes, edges } = useMemo(() => {
     const nodes: Node[] = [];
     const edges: Edge[] = [];
@@ -32,7 +42,10 @@ function PathGraphInner({ result, onSelect, selectedIndex }: Props) {
 
     nodes.push({
       id: 'src', type: 'host', position: { x, y: 40 },
-      data: { ip: result.src.ip, names: result.src.names, role: 'src' },
+      data: {
+        ip: result.src.ip, names: result.src.names, role: 'src',
+        switchport: switchports[result.src.ip],
+      },
     });
     x += HOST_W + GAP;
 
@@ -44,13 +57,14 @@ function PathGraphInner({ result, onSelect, selectedIndex }: Props) {
       x += FW_W + GAP;
     });
 
-    const lastHop = result.hops[result.hops.length - 1];
-    const isInternet = lastHop?.egress_class === 'DEFAULT';
     nodes.push({
       id: 'dst', type: 'host', position: { x, y: 40 },
-      data: isInternet
+      data: dstIsInternet
         ? { ip: result.dst.ip, names: [{ name: de.common.internet, provenance: 'ip' }], role: 'internet' }
-        : { ip: result.dst.ip, names: result.dst.names, role: 'dst' },
+        : {
+            ip: result.dst.ip, names: result.dst.names, role: 'dst',
+            switchport: switchports[result.dst.ip],
+          },
     });
 
     const chain = ['src', ...result.hops.map((_, i) => `hop-${i}`), 'dst'];
@@ -82,7 +96,7 @@ function PathGraphInner({ result, onSelect, selectedIndex }: Props) {
       });
     }
     return { nodes, edges };
-  }, [result, onSelect, selectedIndex]);
+  }, [result, onSelect, selectedIndex, switchports, dstIsInternet]);
 
   // fitView als Prop greift nur beim ersten Mount. Bei jedem neuen Trace (und
   // nach dem Auf-/Zuklappen der Kandidaten-Regeln) die Ansicht neu einpassen,
@@ -92,7 +106,7 @@ function PathGraphInner({ result, onSelect, selectedIndex }: Props) {
     const raf = requestAnimationFrame(() =>
       fitView({ padding: 0.12, duration: 200, maxZoom: 1.5 }));
     return () => cancelAnimationFrame(raf);
-  }, [result, fitView]);
+  }, [result, fitView, switchports]);
 
   return (
     <ReactFlow
