@@ -46,9 +46,15 @@ Schreibzugriff** auf den FortiManager (No-Write-Garantie, s.u.).
   (Objekte gestapelt, Typ-Icons Adresse/Gruppe/VIP/Dienst).
 - **Regelvorschlag bei Deny** für **jede** blockierende Firewall (CLI +
   JSON-RPC + Deep-Link ins FMG-Policy-Package) — nur Anzeige.
+- **Geteiltes Underlay/SD-WAN**: zeigt die Route ein Gateway, das **keinem**
+  gemanagten FortiGate-Interface gehört (SD-WAN-Appliance, Provider-Router),
+  gilt ein Nachbar im selben Transit-Netz **nicht** als nächster Hop — der Pfad
+  folgt dem Präfix-Besitzer des Ziels bzw. endet sichtbar am Uplink.
 - **Degraded Mode**: Gerät offline → Route aus dem Cache, Verdict `UNKNOWN`.
 - **Debug-Drawer**: kopierbare Routing- und Policy-Lookups pro Hop (Proxy-
-  Request + Response) zum Reproduzieren, wenn ein Hop hakt.
+  Request + Response) plus **Pfad-Entscheidung** je Hop — geprüfte Regeln
+  (LOCAL/VDOM_LINK/OVERLAY/ROUTING/OWNER), Gateway-Auflösung, Mitglieder des
+  Transit-Segments, Präfix-Besitzer des Ziels und die Eintritts-VDOM-Wahl.
 
 **2. Deep-Tracker — alle Ports** (nur Quelle + Ziel)
 - Zeigt **alle end-to-end erlaubten TCP/UDP-Ports** über den gesamten Pfad.

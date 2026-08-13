@@ -97,20 +97,34 @@ async def _live_route(client: FmgClient, adom: str, device: str, vdom: str,
 
 
 def cached_route(inv: Inventory, device: str, vdom: str, dst_ip: str) -> dict | None:
-    """Degraded Mode: LPM über connected + statische Routen aus dem Cache."""
+    """Degraded Mode: LPM über connected + statische Routen aus dem Cache.
+
+    Das Ergebnis trägt unter 'considered' ALLE passenden Cache-Einträge — sonst
+    ist bei einer überraschenden Route nicht erkennbar, welche Alternativen es
+    gab und warum der LPM so entschied.
+    """
     addr = ipaddress.IPv4Address(dst_ip)
     best: tuple[int, dict] | None = None
+    considered: list[dict] = []
     for net, intf in inv.connected_networks(device, vdom):
-        if addr in net and (best is None or net.prefixlen >= best[0]):
-            best = (net.prefixlen, {"interface": intf, "gateway": None,
-                                    "source": "cache-connected"})
+        if addr in net:
+            considered.append({"network": str(net), "interface": intf,
+                               "gateway": None, "source": "cache-connected"})
+            if best is None or net.prefixlen >= best[0]:
+                best = (net.prefixlen, {"interface": intf, "gateway": None,
+                                        "source": "cache-connected"})
     for rt in inv.static_routes.get((device, vdom), []):
         if addr in rt["network"] and rt.get("interface"):
+            considered.append({"network": str(rt["network"]), "interface": rt["interface"],
+                               "gateway": rt.get("gateway"), "source": "cache-static"})
             if best is None or rt["network"].prefixlen > best[0]:
                 best = (rt["network"].prefixlen,
                         {"interface": rt["interface"], "gateway": rt.get("gateway"),
                          "source": "cache-static"})
-    return best[1] if best else None
+    if best is None:
+        return None
+    best[1]["considered"] = considered
+    return best[1]
 
 
 def _router_vdom(inv: Inventory, device: str, router_re: re.Pattern) -> str | None:
@@ -156,7 +170,8 @@ def _overlay_vdom(inv: Inventory, device: str, overlay_re: re.Pattern) -> str | 
 async def _resolve_ingress(client: FmgClient, inv: Inventory, adom: str | None,
                            device: str, vdom: str | None, src_ip: str,
                            overlay_re: re.Pattern,
-                           router_re: re.Pattern) -> tuple[str | None, str | None]:
+                           router_re: re.Pattern,
+                           dbg: dict | None = None) -> tuple[str | None, str | None]:
     """Eintritts-(VDOM, Interface) einer Firewall Richtung Quelle bestimmen.
 
     vdom gesetzt → Reverse-Route auf diesem VDOM → dessen Interface zur Quelle.
@@ -168,15 +183,30 @@ async def _resolve_ingress(client: FmgClient, inv: Inventory, adom: str | None,
                    VDOM-Link geht. Danach kettet die VDOM-Link-Logik weiter, sodass
                    alle durchlaufenen VDOM-Policies geprüft werden.
     Live bevorzugt, sonst Cache (symmetrisches Routing angenommen).
+
+    `dbg` (optional) protokolliert, welches Signal den Eintritts-VDOM bestimmt hat
+    und welche Reverse-Route je VDOM gefunden wurde.
     """
+    d = dbg if dbg is not None else {}
+    d["device"] = device
+    d["src_ip"] = src_ip
+    d["vdom_given"] = vdom
     if vdom is None:
         # Router-/Edge-VDOM bestimmen — zuerst per Name (robust, auch bei
         # dynamischem Routing), dann Default-Route-Edge, dann Overlay/SD-WAN.
-        vdom = (_router_vdom(inv, device, router_re)
-                or _edge_vdom(inv, device)
-                or _overlay_vdom(inv, device, overlay_re))
+        by_name = _router_vdom(inv, device, router_re)
+        by_edge = _edge_vdom(inv, device)
+        by_overlay = _overlay_vdom(inv, device, overlay_re)
+        d["vdom_signals"] = {"router_name": by_name, "default_route_edge": by_edge,
+                             "overlay": by_overlay}
+        vdom = by_name or by_edge or by_overlay
+        d["vdom_chosen_by"] = ("router_name" if by_name else
+                               "default_route_edge" if by_edge else
+                               "overlay" if by_overlay else None)
     vdoms = [vdom] if vdom is not None else (
         (inv.devices.get(device) or {}).get("vdoms") or ["root"])
+    d["vdoms_tried"] = list(vdoms)
+    d["reverse_routes"] = []
     fallback: tuple[str, str] | None = None
     for vd in vdoms:
         route = None
@@ -188,13 +218,23 @@ async def _resolve_ingress(client: FmgClient, inv: Inventory, adom: str | None,
         if route is None:
             route = cached_route(inv, device, vd, src_ip)
         if route is None:
+            d["reverse_routes"].append({"vdom": vd, "route": None})
             continue
         intf = route["interface"]
+        d["reverse_routes"].append({
+            "vdom": vd, "interface": intf, "gateway": route.get("gateway"),
+            "source": route.get("source"), "is_vdom_link": inv.is_vdom_link(device, intf),
+        })
         if fallback is None:
             fallback = (vd, intf)
         if not inv.is_vdom_link(device, intf):   # Router-/Eintritts-VDOM gefunden
+            d["result"] = {"vdom": vd, "srcintf": intf, "via": "non-vdom-link"}
             return vd, intf
-    return fallback if fallback is not None else (vdom, None)
+    if fallback is not None:
+        d["result"] = {"vdom": fallback[0], "srcintf": fallback[1], "via": "fallback"}
+        return fallback
+    d["result"] = {"vdom": vdom, "srcintf": None, "via": "none"}
+    return vdom, None
 
 
 async def _live_policy_lookup(client: FmgClient, adom: str, device: str, vdom: str,
@@ -238,7 +278,7 @@ class PathStep:
     Pfad nicht zwischen den Modi divergieren."""
     __slots__ = ("index", "device", "vdom", "adom", "srcintf", "src_zone",
                  "egress", "egress_zone", "egress_class", "route", "degraded",
-                 "warnings")
+                 "warnings", "debug")
 
     def __init__(self, index: int, device: str, vdom: str, adom: str | None, srcintf: str):
         self.index = index
@@ -253,6 +293,9 @@ class PathStep:
         self.route: dict | None = None
         self.degraded: bool = False
         self.warnings: list[str] = []
+        # Nachvollziehbarkeit des Pfads: Ingress-Herkunft, Routen-Auswahl,
+        # Klassifikations-Entscheidung, Übergang zum nächsten Hop.
+        self.debug: dict = {}
 
 
 async def _walk_path(*, src_ip: str, dst_ip: str, inv: Inventory, prefixes: PrefixTable,
@@ -266,6 +309,19 @@ async def _walk_path(*, src_ip: str, dst_ip: str, inv: Inventory, prefixes: Pref
     overlay_re = re.compile(overlay_pattern)
     router_re = re.compile(router_vdom_pattern)
 
+    # Woher der Start-Hop stammt (Präfix-Treffer der QUELLE) — bei falschem
+    # Startpunkt die erste Stelle zum Nachsehen.
+    ingress_debug = {
+        "src_ip": src_ip,
+        "chosen": {"device": device, "vdom": vdom, "srcintf": srcintf},
+        "src_prefix_matches": [
+            {"network": str(e.network), "source": e.source, "device": e.device,
+             "vdom": e.vdom, "interface": e.interface, "site_name": e.site_name}
+            for e in prefixes.lookup_all(src_ip)[:10]
+        ],
+        "ambiguous": ingress_warn is not None,
+    }
+
     steps: list[PathStep] = []
     visited: set[tuple[str, str]] = set()
 
@@ -275,13 +331,19 @@ async def _walk_path(*, src_ip: str, dst_ip: str, inv: Inventory, prefixes: Pref
                 steps[-1].warnings.append(
                     f"Routing-Schleife erkannt: {device}/{vdom} bereits besucht — Abbruch."
                 )
+                steps[-1].debug["loop_detected"] = {
+                    "at": f"{device}/{vdom}",
+                    "visited": [f"{d}/{v}" for d, v in visited],
+                }
             break
         visited.add((device, vdom))
         adom = inv.adom_of(device)
         step = PathStep(len(steps), device, vdom, adom, srcintf)
         step.src_zone = inv.zone_of(device, vdom, srcintf)
-        if step.index == 0 and ingress_warn:
-            step.warnings.append(ingress_warn)
+        if step.index == 0:
+            step.debug["ingress"] = ingress_debug
+            if ingress_warn:
+                step.warnings.append(ingress_warn)
 
         # ── a) Route (live, sonst Cache) ─────────────────────────────────────
         route = None
@@ -301,6 +363,12 @@ async def _walk_path(*, src_ip: str, dst_ip: str, inv: Inventory, prefixes: Pref
             if route is not None and not step.degraded and adom is not None:
                 step.warnings.append("Live-Route ohne Treffer — Cache-Route verwendet.")
         step.route = route
+        step.debug["route"] = {
+            "interface": (route or {}).get("interface"),
+            "gateway": (route or {}).get("gateway"),
+            "source": (route or {}).get("source"),
+            "cache_candidates": (route or {}).pop("considered", None) if route else None,
+        }
         if route is None:
             step.egress_class = "DEFAULT"
             step.warnings.append(
@@ -316,21 +384,29 @@ async def _walk_path(*, src_ip: str, dst_ip: str, inv: Inventory, prefixes: Pref
                               step.egress, dst_ip, gateway=route.get("gateway"))
         step.egress_class = cls.egress_class
         step.warnings.extend(cls.warnings)
+        step.debug["classification"] = cls.debug
         steps.append(step)
 
         # ── c) Nächster Hop ──────────────────────────────────────────────────
         if cls.egress_class in ("LOCAL", "DEFAULT"):
+            step.debug["next_hop"] = {"stop": f"Egress-Klasse {cls.egress_class} — "
+                                              "letzter Hop."}
             break
         if cls.next_device is None:   # next_vdom=None ⇒ Eintritts-VDOM wird ermittelt
+            step.debug["next_hop"] = {"stop": "Kein nächstes Gerät bestimmbar."}
             break
         next_device = cls.next_device
         next_vdom = cls.next_vdom
         next_srcintf = cls.next_srcintf
+        hop_dbg: dict = {"from_classification": {
+            "device": next_device, "vdom": next_vdom, "srcintf": next_srcintf}}
         if cls.egress_class == "ROUTED" and (next_vdom is None or next_srcintf is None):
             # Eintritts-VDOM (Router-VDOM) + Ingress-Interface Richtung Quelle.
+            resolve_dbg: dict = {}
             rv, rintf = await _resolve_ingress(
                 client, inv, inv.adom_of(next_device), next_device, next_vdom,
-                src_ip, overlay_re, router_re)
+                src_ip, overlay_re, router_re, resolve_dbg)
+            hop_dbg["ingress_resolution"] = resolve_dbg
             next_vdom = next_vdom or rv
             next_srcintf = next_srcintf or rintf
             if next_srcintf is None:
@@ -340,6 +416,8 @@ async def _walk_path(*, src_ip: str, dst_ip: str, inv: Inventory, prefixes: Pref
                 )
         device, vdom = next_device, next_vdom or "root"
         srcintf = next_srcintf or "any"
+        hop_dbg["entering"] = {"device": device, "vdom": vdom, "srcintf": srcintf}
+        step.debug["next_hop"] = hop_dbg
     else:
         if steps:
             steps[-1].warnings.append(f"max_hops={max_hops} erreicht — Trace abgebrochen.")
@@ -367,6 +445,9 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
                   egress_class=step.egress_class, route=step.route,
                   degraded=step.degraded, warnings=list(step.warnings))
         device, vdom, srcintf, adom = step.device, step.vdom, step.srcintf, step.adom
+        # Pfad-Entscheidung IMMER anhängen (auch ohne ADOM/Route) — genau die
+        # Hops, an denen der Pfad abknickt, sind sonst blind.
+        hop.debug.update(step.debug)
 
         if step.route is None:   # unerreichbar → terminaler Hop
             hop.verdict = "UNKNOWN"
@@ -436,13 +517,11 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
         # ── Debug: die tatsächlichen FortiOS-Monitor-Lookups (Router + Policy) —
         # zum Kopieren/Reproduzieren, wenn ein Hop hakt.
         if adom is not None:
-            hop.debug = {
-                "router_lookup": {
-                    "proxy": build_monitor_request(adom, device, vdom, "router/lookup",
-                                                   {"destination": dst_ip}),
-                    "source": (step.route or {}).get("source"),
-                    "response": (step.route or {}).get("raw"),
-                },
+            hop.debug["router_lookup"] = {
+                "proxy": build_monitor_request(adom, device, vdom, "router/lookup",
+                                               {"destination": dst_ip}),
+                "source": (step.route or {}).get("source"),
+                "response": (step.route or {}).get("raw"),
             }
             if lookup is not None:
                 hop.debug["policy_lookup"] = {
@@ -482,7 +561,8 @@ async def run_port_trace(*, src_ip: str, dst_ip: str,
         ph = {"index": step.index, "device": step.device, "vdom": step.vdom,
               "label": label, "srcintf": step.srcintf, "egress": step.egress,
               "egress_class": step.egress_class, "tcp": [], "udp": [],
-              "warnings": list(step.warnings), "reachable": True}
+              "warnings": list(step.warnings), "reachable": True,
+              "debug": dict(step.debug)}
 
         if step.route is None:
             ph["reachable"] = False

@@ -63,6 +63,61 @@ function LookupBlock({ title, source, proxy, response }: {
   );
 }
 
+/** Pfad-Entscheidung eines Hops: warum ging es von hier aus dorthin weiter.
+ *  Kompakte Zusammenfassung (geprüfte Regeln, Ziel-Besitzer, Konflikt) plus die
+ *  vollständigen Rohdaten zum Kopieren — für Fälle, in denen der Pfad abknickt. */
+function DecisionBlock({ debug }: { debug: NonNullable<Hop['debug']> }) {
+  const cls = debug.classification;
+  const decision = {
+    ingress: debug.ingress, route: debug.route,
+    classification: cls, next_hop: debug.next_hop,
+    loop_detected: debug.loop_detected,
+  };
+  const json = JSON.stringify(decision, null, 2);
+  const checks = cls?.checks ?? [];
+  const conflict = cls?.owner_conflict;
+  return (
+    <div className="rounded-md border border-slate-800 bg-slate-950/60 p-2">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+          {de.drawer.decision}
+        </span>
+        <CopyBtn text={json} />
+      </div>
+      {checks.length > 0 && (
+        <div className="mb-1 flex flex-wrap gap-1">
+          {checks.map((c) => (
+            <span key={c.rule}
+              className={`rounded px-1.5 py-0.5 text-[10px] ${c.hit
+                ? 'bg-emerald-500/15 text-emerald-300'
+                : 'bg-slate-800 text-slate-500 line-through'}`}>
+              {c.rule}
+            </span>
+          ))}
+        </div>
+      )}
+      {cls?.dst_owner && (
+        <p className="text-[11px] text-slate-400">
+          {de.drawer.dstOwner}: <span className="text-slate-200">{cls.dst_owner.device}</span>
+          {cls.dst_owner.network && ` (${cls.dst_owner.network}, ${cls.dst_owner.source})`}
+        </p>
+      )}
+      {conflict && (
+        <p className="mt-1 rounded bg-amber-500/10 p-1 text-[11px] text-amber-400">
+          {de.drawer.ownerConflict}: {conflict.chosen} ≠ {conflict.owner}
+          {conflict.owner_prefix && ` (${conflict.owner_prefix})`}
+        </p>
+      )}
+      <details>
+        <summary className="mt-1 cursor-pointer text-[11px] text-slate-500 hover:text-slate-300">
+          {de.drawer.decisionJson}
+        </summary>
+        <pre className="mt-1 max-h-72 overflow-auto rounded bg-slate-950 p-2 text-[11px] text-slate-400">{json}</pre>
+      </details>
+    </div>
+  );
+}
+
 function HopBlock({ hop }: { hop: Hop }) {
   const curated = JSON.stringify({
     srcintf: hop.srcintf, src_zone: hop.src_zone,
@@ -78,6 +133,7 @@ function HopBlock({ hop }: { hop: Hop }) {
         Hop {hop.index + 1}: {hop.device}/{hop.vdom}
       </h3>
       <pre className="overflow-x-auto rounded-md bg-slate-950 p-2 text-xs text-slate-300">{curated}</pre>
+      {hop.debug && <DecisionBlock debug={hop.debug} />}
       {rl && (
         <LookupBlock title={de.drawer.routerLookup} source={rl.source}
           proxy={rl.proxy} response={rl.response} />

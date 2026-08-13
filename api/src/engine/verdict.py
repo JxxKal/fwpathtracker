@@ -45,7 +45,9 @@ class Hop(BaseModel):
     candidates: list[Candidate] = Field(default_factory=list)
     suggestion: dict | None = None
     warnings: list[str] = Field(default_factory=list)
-    debug: dict = Field(default_factory=dict)   # Router-/Policy-Lookup (Requests+Responses)
+    # Router-/Policy-Lookup (Requests+Responses) + Pfad-Entscheidung:
+    # ingress | route | classification | next_hop | loop_detected
+    debug: dict = Field(default_factory=dict)
     degraded: bool = False
     after_deny: bool = False
 
@@ -80,6 +82,7 @@ class PortHop(BaseModel):
     udp: list[list[int]] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     reachable: bool = True
+    debug: dict = Field(default_factory=dict)   # Pfad-Entscheidung (wie bei Hop)
 
 
 class PortLimit(BaseModel):

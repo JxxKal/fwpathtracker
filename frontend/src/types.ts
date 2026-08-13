@@ -65,10 +65,24 @@ export interface Hop {
   warnings: string[];
   degraded: boolean;
   after_deny: boolean;
-  debug?: {
-    router_lookup?: { proxy: unknown; source?: string | null; response?: unknown };
-    policy_lookup?: { proxy: unknown; response?: unknown };
+  debug?: HopDebug;
+}
+
+/** Entscheidungs-Protokoll eines Hops: warum ging es hier weiter — und wohin.
+ *  Bewusst locker typisiert (das Backend erweitert die Felder je Fall). */
+export interface HopDebug {
+  router_lookup?: { proxy: unknown; source?: string | null; response?: unknown };
+  policy_lookup?: { proxy: unknown; response?: unknown };
+  ingress?: unknown;          // Präfix-Treffer der Quelle (nur Hop 1)
+  route?: unknown;            // Interface/Gateway/Herkunft + Cache-Kandidaten
+  classification?: {          // geprüfte Regeln + Präfix-Besitzer des Ziels
+    checks?: { rule: string; hit: boolean }[];
+    dst_owner?: { device: string; network?: string; source?: string } | null;
+    owner_conflict?: { chosen: string; owner: string; owner_prefix?: string };
+    [k: string]: unknown;
   };
+  next_hop?: unknown;         // Übergang inkl. Eintritts-VDOM-Auflösung
+  loop_detected?: unknown;
 }
 
 export interface TraceResult {
@@ -102,6 +116,7 @@ export interface PortHop {
   udp: PortRange[];
   warnings: string[];
   reachable: boolean;
+  debug?: HopDebug;
 }
 
 export interface PortLimit {
