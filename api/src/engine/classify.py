@@ -127,6 +127,8 @@ def classify_egress(inv: Inventory, prefixes: PrefixTable, overlay_pattern: str,
         "dst_owner": _prefix_facts(owner),
     }
 
+    routing_dbg: dict = {}
+
     def _done(cls: Classification) -> Classification:
         """Ergebnis annotieren: gewählter nächster Hop + Owner-Abgleich."""
         cls.debug = dbg
@@ -136,25 +138,31 @@ def classify_egress(inv: Inventory, prefixes: PrefixTable, overlay_pattern: str,
             "next_vdom": cls.next_vdom,
             "next_srcintf": cls.next_srcintf,
         }
-        # Plausibilitätsprüfung: Der aus dem Routing abgeleitete nächste Hop
-        # widerspricht dem Präfix-Besitzer des Ziels. Klassischer Fall: der Egress
-        # hängt in einem geteilten Transit-/Underlay-Segment (SD-WAN), in dem
-        # mehrere Firewalls stehen — dann ist der Segment-Nachbar NICHT der Weg
-        # zum Ziel.
+        # Plausibilitätsprüfung: Der nächste Hop widerspricht dem Präfix-Besitzer
+        # des Ziels. Nur relevant, wenn der Pfad auf ein ANDERES Gerät springt —
+        # beim VDOM-Link innerhalb desselben Geräts ist der Ziel-Besitzer
+        # naturgemäß ein anderer und die Warnung wäre reines Rauschen.
         if (cls.next_device and owner is not None
                 and owner.device not in (cls.next_device, device)):
+            source = routing_dbg.get("matched_by")
             dbg["owner_conflict"] = {
                 "chosen": cls.next_device,
                 "owner": owner.device,
                 "owner_prefix": str(owner.network),
                 "owner_source": owner.source,
+                "matched_by": source,
             }
-            cls.warnings.append(
-                f"Nächster Hop {cls.next_device} stammt aus dem Routing/Transit-"
-                f"Segment, laut Präfix-Tabelle liegt {dst_ip} aber hinter "
-                f"{owner.device} ({owner.network}, {owner.source}) — Pfad ab hier "
-                "prüfen (geteiltes Transit-Netz/SD-WAN?)."
-            )
+            if cls.next_device != device:
+                how = ("dem gemeinsamen Transit-Segment" if source == "segment"
+                       else f"der Gateway-IP {gateway}" if source == "gateway_global"
+                       else "dem Routing")
+                cls.warnings.append(
+                    f"Nächster Hop {cls.next_device} stammt aus {how}, laut "
+                    f"Präfix-Tabelle liegt {dst_ip} aber hinter {owner.device} "
+                    f"({owner.network}, {owner.source}) — {cls.next_device} ist "
+                    "entweder Transit-Hop oder ein Standort-Nachbar mit derselben "
+                    "Transfer-IP (Pfad ab hier prüfen)."
+                )
         return cls
 
     # 1. LOCAL: connected Subnet (inkl. Secondary-IPs) des Egress enthält das Ziel
@@ -213,7 +221,6 @@ def classify_egress(inv: Inventory, prefixes: PrefixTable, overlay_pattern: str,
     #    b) sonst: anderer VDOM/andere FW im selben Transit-Segment wie der Egress
     #    Landet der Hop auf demselben Gerät (anderer VDOM) → VDOM_LINK (z.B. der
     #    172.16er Inter-VDOM-Link Richtung Router-VDOM), sonst ROUTED.
-    routing_dbg: dict = {}
     nxt = _next_hop_via_routing(inv, device, vdom, egress_intf, gateway, routing_dbg)
     dbg["checks"].append({"rule": "ROUTING", "hit": nxt is not None, **routing_dbg})
     if nxt is not None:
@@ -236,7 +243,8 @@ def classify_egress(inv: Inventory, prefixes: PrefixTable, overlay_pattern: str,
     # Verkehr verlässt hier die gemanagte Kette. Sichtbar machen, sonst wirkt der
     # (über die Owner-Regel gefundene) Sprung wie ein direkter Link.
     gw_note: str | None = None
-    if routing_dbg.get("segment_skipped") == "gateway_unresolved":
+    skipped = routing_dbg.get("segment_skipped")
+    if skipped == "gateway_unresolved":
         neighbours = ", ".join(sorted({
             f"{m['device']}/{m['vdom']}" for m in routing_dbg.get("segment_members") or []
             if m["device"] != device
@@ -247,6 +255,17 @@ def classify_egress(inv: Inventory, prefixes: PrefixTable, overlay_pattern: str,
             f"Standardrouting-Kopplung, nicht zu einem Nachbarn im Transit-Netz "
             f"{routing_dbg.get('segment')}"
             + (f" ({neighbours} als nächster Hop verworfen)." if neighbours else ".")
+        )
+    elif skipped == "gateway_ambiguous":
+        # Dieselbe Gateway-IP auf mehreren Geräten: Transfernetze sind pro Standort
+        # wiederverwendet. Ein Treffer wäre geraten — und würde eine standortfremde
+        # Firewall in den Pfad ziehen, deren implizites Deny den Trace blockt.
+        gw_note = (
+            f"Gateway {gateway} trägt im FMG-Inventar mehrere Geräte "
+            f"({', '.join(routing_dbg.get('gateway_ambiguous') or [])}) — "
+            "Transfernetze sind pro Standort wiederverwendet, der nächste Hop ist "
+            "daraus NICHT bestimmbar. Kein Gerät daraus in den Pfad übernommen; "
+            "es entscheidet die Präfix-Zuordnung des Ziels."
         )
 
     # 5. Fallback: BESITZER des Ziels (connected/override schlägt static — eine
@@ -308,20 +327,35 @@ def _next_hop_via_routing(inv: Inventory, device: str, vdom: str, egress_intf: s
     has_gw = bool(gateway) and gateway not in ("0.0.0.0", "::", "")
     d["gateway"] = gateway
     d["gateway_usable"] = has_gw
+    skip: str | None = None
     if has_gw:
         local = inv.interface_by_ip(gateway, device=device)   # selbes Gerät (VDOM-Link)
         d["gateway_match_local"] = list(local) if local else None
         if local is not None and local[1] != vdom:
             d["matched_by"] = "gateway_local"
             return local
-        glob = inv.interface_by_ip(gateway)                   # anderes Gerät
-        d["gateway_match_global"] = list(glob) if glob else None
+        # ALLE Geräte mit dieser Gateway-IP — Transfernetze (SD-WAN, Inter-VDOM)
+        # sind pro Standort wiederverwendet, ein Treffer ist also nicht
+        # automatisch eindeutig.
+        matches = inv.interfaces_by_ip(gateway)
+        d["gateway_candidates"] = [list(m) for m in matches]
+        others = [m for m in matches if (m[0], m[1]) != (device, vdom)]
+        hit_devices = sorted({m[0] for m in others})
         # Kein Interface trägt diese IP ⇒ der echte Next-Hop ist kein gemanagtes
         # Gerät (SD-WAN-Appliance, Provider-Router, L3-Switch).
-        d["gateway_unresolved"] = local is None and glob is None
-        if glob is not None and (glob[0], glob[1]) != (device, vdom):
+        d["gateway_unresolved"] = not matches
+        if len(hit_devices) > 1:
+            # Mehrere Geräte tragen dieselbe Gateway-IP → welches davon der Hop
+            # ist, sagt die IP nicht. Raten hieße: fremde Firewall im Pfad.
+            d["gateway_ambiguous"] = hit_devices
+            skip = "gateway_ambiguous"
+        elif others:
+            d["gateway_match_global"] = list(others[0])
             d["matched_by"] = "gateway_global"
-            return glob
+            return others[0]
+        elif not matches:
+            d["gateway_match_global"] = None
+            skip = "gateway_unresolved"
     eg = inv.interface(device, egress_intf)
     if eg is not None and eg.get("ip") is not None:
         net = eg["ip"].network
@@ -332,10 +366,10 @@ def _next_hop_via_routing(inv: Inventory, device: str, vdom: str, egress_intf: s
              "ip": str((inv.interface(dev, intf) or {}).get("ip"))}
             for dev, vd, intf in members
         ]
-        # Das Gateway zeigt auf ein nicht gemanagtes Gerät → Segment-Nachbarn sind
-        # KEIN nächster Hop (geteiltes SD-WAN-/Provider-Underlay).
-        if d.get("gateway_unresolved"):
-            d["segment_skipped"] = "gateway_unresolved"
+        # Gateway nicht auflösbar (fremdes Gerät) oder nicht eindeutig (geteiltes/
+        # wiederverwendetes Transfernetz) → Segment-Nachbarn sind KEIN Next-Hop.
+        if skip:
+            d["segment_skipped"] = skip
             return None
         for dev, vd, intf in inv.interfaces_in_network(net, device=device):
             if vd != vdom:
@@ -347,6 +381,8 @@ def _next_hop_via_routing(inv: Inventory, device: str, vdom: str, egress_intf: s
                 return dev, vd, intf
     else:
         d["segment"] = None
+        if skip:
+            d["segment_skipped"] = skip
     return None
 
 

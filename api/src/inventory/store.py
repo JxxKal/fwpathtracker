@@ -277,6 +277,31 @@ class Inventory:
     def interface(self, device: str, name: str) -> dict | None:
         return (self.interfaces.get(device) or {}).get(name)
 
+    def interfaces_by_ip(self, ip: str | ipaddress.IPv4Address,
+                         device: str | None = None) -> list[tuple[str, str, str]]:
+        """ALLE (device, vdom, intf) mit exakt dieser Adresse (inkl. Secondary-IPs).
+
+        Mehr als ein Treffer heißt: die Adresse ist nicht eindeutig — Transfer-/
+        Transit-Netze sind pro Standort wiederverwendet (172.16er Inter-VDOM-Links,
+        SD-WAN-Transfernetze). Dann darf daraus KEIN Next-Hop abgeleitet werden.
+        """
+        try:
+            addr = ipaddress.IPv4Address(ip) if isinstance(ip, str) else ip
+        except (ipaddress.AddressValueError, ValueError):
+            return []
+        items = ([(device, self.interfaces.get(device) or {})] if device is not None
+                 else self.interfaces.items())
+        out = []
+        for dev, table in items:
+            for intf in table.values():
+                if not intf.get("enabled", True):
+                    continue
+                addrs = [intf["ip"]] if intf["ip"] is not None else []
+                addrs += intf.get("secondary_ips", [])
+                if any(a.ip == addr for a in addrs):
+                    out.append((dev, intf["vdom"], intf["name"]))
+        return out
+
     def interface_by_ip(self, ip: str | ipaddress.IPv4Address,
                         device: str | None = None) -> tuple[str, str, str] | None:
         """(device, vdom, intf) eines Interfaces mit exakt dieser Adresse.
@@ -285,20 +310,10 @@ class Inventory:
         Interface-IP einer FortiGate, ist das der nächste Hop — ohne Owner-Tabelle.
         Mit `device` auf ein Gerät beschränkt: Inter-VDOM-Link-Netze (z.B. 172.16er)
         sind pro Gerät wiederverwendet und dürfen NICHT global gematcht werden.
+        Bei mehreren Treffern siehe `interfaces_by_ip` — der erste ist willkürlich.
         """
-        try:
-            addr = ipaddress.IPv4Address(ip) if isinstance(ip, str) else ip
-        except (ipaddress.AddressValueError, ValueError):
-            return None
-        items = ([(device, self.interfaces.get(device) or {})] if device is not None
-                 else self.interfaces.items())
-        for dev, table in items:
-            for intf in table.values():
-                if not intf.get("enabled", True):
-                    continue
-                if intf["ip"] is not None and intf["ip"].ip == addr:
-                    return dev, intf["vdom"], intf["name"]
-        return None
+        hits = self.interfaces_by_ip(ip, device=device)
+        return hits[0] if hits else None
 
     def interfaces_in_network(self, net: ipaddress.IPv4Network,
                              device: str | None = None) -> list[tuple[str, str, str]]:

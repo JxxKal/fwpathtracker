@@ -180,6 +180,87 @@ async def test_shared_underlay_skips_segment_neighbour(underlay_inv, underlay_pr
     assert hops[1].srcintf == "wan1" and hops[1].egress_class == "LOCAL"
 
 
+def _reused_transfer_rows() -> list[dict]:
+    """Pro Standort dasselbe SD-WAN-Transfernetz (10.180.56.16/29 → Gateway .17):
+    das Gateway trägt an JEDEM Standort eine eigene FortiGate. Ein globaler
+    IP-Treffer ist damit keine Wegaussage — Feld-Fall Open-Systems-SD-WAN.
+    """
+    def row(kind: str, key: str, data) -> dict:
+        return {"adom": ADOM, "kind": kind, "key": key, "data": data}
+
+    def site(name: str, lan: str) -> list[dict]:
+        return [
+            row("device", name, {"name": name, "vdom": [{"name": "Router"}]}),
+            row("interface", name, [
+                {"name": "lan", "ip": [lan, "255.255.255.0"], "vdom": ["Router"]},
+                # gleiche Transfer-IP an jedem Standort (Gateway = .17 = Appliance)
+                {"name": "Open-Systems", "ip": ["10.180.56.17", "255.255.255.248"],
+                 "vdom": ["Router"]},
+            ]),
+        ]
+
+    rows = site("EUGEBT1", "10.124.44.1") + site("EUGERN1", "10.130.0.1")
+    # Ziel-Standort: hier hängt 10.180.20.0/24 (statisch hinter dem Gerät)
+    rows += [
+        row("device", "xvo001-1", {"name": "xvo001-1", "vdom": [{"name": "Router"}]}),
+        row("interface", "xvo001-1", [
+            {"name": "Open-Systems", "ip": ["10.180.56.17", "255.255.255.248"],
+             "vdom": ["Router"]},
+            {"name": "M2M-Telekom1", "ip": ["10.180.30.1", "255.255.255.0"],
+             "vdom": ["Router"]},
+        ]),
+        row("route", "xvo001-1|Router", [
+            {"dst": ["10.180.20.0", "255.255.255.0"], "device": ["M2M-Telekom1"],
+             "gateway": "10.180.30.2"},
+        ]),
+    ]
+    return rows
+
+
+@pytest.fixture
+def reused_inv() -> Inventory:
+    return Inventory.build(_reused_transfer_rows(), synced_at="2026-08-14T00:00:00+00:00")
+
+
+@pytest.fixture
+def reused_prefixes(reused_inv: Inventory):
+    return reused_inv.build_prefix_table()
+
+
+async def test_reused_transfer_net_gateway_is_ambiguous(reused_inv, reused_prefixes):
+    """Dieselbe Gateway-IP an mehreren Standorten: daraus darf KEIN Next-Hop
+    abgeleitet werden — sonst zieht es eine standortfremde Firewall in den Pfad,
+    deren implizites Deny den ganzen Trace blockt. Stattdessen entscheidet der
+    Präfix-Besitzer des Ziels."""
+    client, t = make_client()
+    add_route(t, "EUGEBT1", "Router", "10.180.20.148", "Open-Systems",
+              gateway="10.180.56.17")
+    add_policy_lookup(t, "EUGEBT1", "Router",
+                      tcp_params("lan", "10.124.44.169", "10.180.20.148", 105), 20)
+    add_route(t, "xvo001-1", "Router", "10.124.44.169", "Open-Systems")   # Reverse
+    add_route(t, "xvo001-1", "Router", "10.180.20.148", "M2M-Telekom1",
+              gateway="10.180.30.2")
+    add_policy_lookup(t, "xvo001-1", "Router",
+                      tcp_params("Open-Systems", "10.124.44.169", "10.180.20.148", 105), 29)
+
+    hops = await run_trace(
+        src_ip="10.124.44.169", dst_ip="10.180.20.148", protocol="tcp", dst_port=105,
+        inv=reused_inv, prefixes=reused_prefixes, client=client,
+        overlay_pattern=OVERLAY, max_hops=8)
+
+    # EUGERN1 (fremder Standort mit derselben Transfer-IP) darf NICHT auftauchen
+    assert [h.device for h in hops] == ["EUGEBT1", "xvo001-1"]
+    routing = next(c for c in hops[0].debug["classification"]["checks"]
+                   if c["rule"] == "ROUTING")
+    assert routing["gateway_ambiguous"] == ["EUGERN1", "xvo001-1"]
+    assert routing["segment_skipped"] == "gateway_ambiguous"
+    assert "matched_by" not in routing
+    assert len(routing["gateway_candidates"]) == 3      # inkl. eigenem Interface
+    warn = " ".join(hops[0].warnings)
+    assert "10.180.56.17" in warn and "EUGERN1" in warn
+    assert "wiederverwendet" in warn
+
+
 async def test_shared_underlay_without_owner_ends_at_sdwan(
         underlay_inv, underlay_prefixes):
     """Gleiches Underlay, aber das Ziel steht in keinem Präfix: der Pfad endet
