@@ -232,6 +232,8 @@ export const de = {
     requestJson: 'Proxy-Request (JSON)',
     responseJson: 'Response (JSON)',
     copy: 'Kopieren',
+    copyAll: 'Alles kopieren',
+    copyHop: 'Hop kopieren',
     copied: 'Kopiert',
   },
   history: {

@@ -8,12 +8,16 @@ interface Props {
   onClose: () => void;
 }
 
-function CopyBtn({ text }: { text: string }) {
+function CopyBtn({ text, label, prominent }: {
+  text: string; label?: string; prominent?: boolean;
+}) {
   const [done, setDone] = useState(false);
   return (
     <button
       type="button"
-      className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+      className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] ${prominent
+        ? 'border border-slate-700 bg-slate-800/60 text-slate-300 hover:bg-slate-800 hover:text-slate-100'
+        : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
       onClick={async () => {
         try {
           await navigator.clipboard.writeText(text);
@@ -23,7 +27,7 @@ function CopyBtn({ text }: { text: string }) {
       }}
     >
       {done ? <Check size={11} /> : <Copy size={11} />}
-      {done ? de.drawer.copied : de.drawer.copy}
+      {done ? de.drawer.copied : (label ?? de.drawer.copy)}
     </button>
   );
 }
@@ -129,9 +133,12 @@ function HopBlock({ hop }: { hop: Hop }) {
   const pl = hop.debug?.policy_lookup;
   return (
     <section className="mb-4 space-y-2">
-      <h3 className="text-xs font-medium uppercase text-slate-500">
-        Hop {hop.index + 1}: {hop.device}/{hop.vdom}
-      </h3>
+      <div className="flex items-center justify-between">
+        <h3 className="text-xs font-medium uppercase text-slate-500">
+          Hop {hop.index + 1}: {hop.device}/{hop.vdom}
+        </h3>
+        <CopyBtn text={JSON.stringify(hop, null, 2)} label={de.drawer.copyHop} />
+      </div>
       <pre className="overflow-x-auto rounded-md bg-slate-950 p-2 text-xs text-slate-300">{curated}</pre>
       {hop.debug && <DecisionBlock debug={hop.debug} />}
       {rl && (
@@ -149,11 +156,16 @@ function HopBlock({ hop }: { hop: Hop }) {
 export default function ResultDrawer({ result, onClose }: Props) {
   return (
     <div className="fixed inset-y-0 right-0 z-30 w-[32rem] max-w-full overflow-y-auto border-l border-slate-800 bg-slate-900 p-4 shadow-2xl">
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex items-center justify-between gap-2">
         <h2 className="font-medium text-slate-100">{de.drawer.title}</h2>
-        <button type="button" className="text-slate-500 hover:text-slate-300" onClick={onClose}>
-          <X size={18} />
-        </button>
+        <div className="flex items-center gap-1">
+          {/* Alles am Stück: kompletter Trace inkl. aller Hop-Debugs — zum
+              Weiterreichen (Ticket/Chat), ohne Sektion für Sektion zu sammeln. */}
+          <CopyBtn text={JSON.stringify(result, null, 2)} label={de.drawer.copyAll} prominent />
+          <button type="button" className="text-slate-500 hover:text-slate-300" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </div>
       </div>
 
       <section className="mb-4">
