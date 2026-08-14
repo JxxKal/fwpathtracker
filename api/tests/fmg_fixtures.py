@@ -51,14 +51,19 @@ def proxy_offline(device: str) -> dict:
 
 def add_route(t: FixtureTransport, device: str, vdom: str, dst: str,
               interface: str | None, offline: bool = False,
-              gateway: str = "0.0.0.0") -> None:
+              gateway: str = "0.0.0.0", network: str | None = None) -> None:
+    """`network` = getroffenes Routen-Präfix wie im FortiOS-Payload ('0.0.0.0/0'
+    für die Default-Route) — bestimmt mit, ob ein Gateway-Treffer zählt."""
     req = proxy_request(device, vdom, "router/lookup", {"destination": dst})
     if offline:
         t.add(req, proxy_offline(device))
     elif interface is None:
         t.add(req, proxy_ok(device, {}))
     else:
-        t.add(req, proxy_ok(device, {"interface": interface, "gateway": gateway}))
+        res = {"interface": interface, "gateway": gateway}
+        if network is not None:
+            res["network"] = network
+        t.add(req, proxy_ok(device, res))
 
 
 def add_policy_lookup(t: FixtureTransport, device: str, vdom: str, params: dict,

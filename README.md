@@ -46,10 +46,16 @@ Schreibzugriff** auf den FortiManager (No-Write-Garantie, s.u.).
   (Objekte gestapelt, Typ-Icons Adresse/Gruppe/VIP/Dienst).
 - **Regelvorschlag bei Deny** für **jede** blockierende Firewall (CLI +
   JSON-RPC + Deep-Link ins FMG-Policy-Package) — nur Anzeige.
-- **Geteiltes Underlay/SD-WAN**: zeigt die Route ein Gateway, das **keinem**
-  gemanagten FortiGate-Interface gehört (SD-WAN-Appliance, Provider-Router),
-  gilt ein Nachbar im selben Transit-Netz **nicht** als nächster Hop — der Pfad
-  folgt dem Präfix-Besitzer des Ziels bzw. endet sichtbar am Uplink.
+- **Geteiltes Underlay/SD-WAN**: Ein Next-Hop wird nur aus dem Routing abgeleitet,
+  wenn das Gateway ihn wirklich belegt. Nicht belegt ist es, wenn das Gateway
+  keinem gemanagten Interface gehört (SD-WAN-Appliance, Provider-Router), wenn
+  mehrere Geräte dieselbe Gateway-IP tragen (Transfernetze sind pro Standort
+  wiederverwendet) oder wenn das Ziel über die **Default-Route** läuft — dann
+  kennt das Gerät das Ziel nicht und reicht es an den Uplink weiter. In allen
+  drei Fällen entscheidet der Präfix-Besitzer des Ziels bzw. der Pfad endet
+  sichtbar am Uplink, statt eine standortfremde Firewall mit implizitem Deny in
+  den Pfad zu ziehen. Für Inter-VDOM-Links auf demselben Gerät gilt die Sperre
+  nicht — dort IST die Default-Route der Weg zum Router-VDOM.
 - **Degraded Mode**: Gerät offline → Route aus dem Cache, Verdict `UNKNOWN`.
 - **Debug-Drawer**: kopierbare Routing- und Policy-Lookups pro Hop (Proxy-
   Request + Response) plus **Pfad-Entscheidung** je Hop — geprüfte Regeln

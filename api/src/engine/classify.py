@@ -82,6 +82,7 @@ def _intf_facts(inv: Inventory, device: str, name: str | None) -> dict:
         "vdom": info.get("vdom"),
         "type": info.get("type"),
         "enabled": info.get("enabled", True),
+        "status_raw": info.get("status_raw"),
         "ip": str(ip) if ip is not None else None,
         "network": str(ip.network) if ip is not None else None,
         "secondary_ips": [str(s) for s in info.get("secondary_ips", [])],
@@ -102,12 +103,25 @@ def _prefix_facts(entry) -> dict | None:
     }
 
 
+def _is_default_route(network: str | None) -> bool:
+    """Route-Präfix 0.0.0.0/0? Dann kennt das Gerät das Ziel NICHT und schiebt es
+    nur an seinen Uplink — kein Beleg dafür, welches Gerät als Nächstes kommt."""
+    if not network:
+        return False
+    try:
+        return ipaddress.ip_network(network, strict=False).prefixlen == 0
+    except ValueError:
+        return False
+
+
 def classify_egress(inv: Inventory, prefixes: PrefixTable, overlay_pattern: str,
                     device: str, vdom: str, egress_intf: str,
-                    dst_ip: str, gateway: str | None = None) -> Classification:
+                    dst_ip: str, gateway: str | None = None,
+                    route_network: str | None = None) -> Classification:
     overlay_re = re.compile(overlay_pattern)
     dst = ipaddress.IPv4Address(dst_ip)
     intf_info = inv.interface(device, egress_intf)
+    via_default = _is_default_route(route_network)
 
     # Debug-Protokoll: die Fakten, auf denen die Hop-Entscheidung beruht. Jeder
     # geprüfte Schritt landet in 'checks' — auch die, die NICHT gegriffen haben,
@@ -118,6 +132,8 @@ def classify_egress(inv: Inventory, prefixes: PrefixTable, overlay_pattern: str,
         "dst": dst_ip,
         "egress_intf": _intf_facts(inv, device, egress_intf),
         "gateway": gateway,
+        "route_network": route_network,
+        "route_is_default": via_default,
         "overlay_pattern": overlay_pattern,
         "checks": [],
         # Was die PrefixTable über das ZIEL weiß — unabhängig davon, ob die
@@ -221,7 +237,8 @@ def classify_egress(inv: Inventory, prefixes: PrefixTable, overlay_pattern: str,
     #    b) sonst: anderer VDOM/andere FW im selben Transit-Segment wie der Egress
     #    Landet der Hop auf demselben Gerät (anderer VDOM) → VDOM_LINK (z.B. der
     #    172.16er Inter-VDOM-Link Richtung Router-VDOM), sonst ROUTED.
-    nxt = _next_hop_via_routing(inv, device, vdom, egress_intf, gateway, routing_dbg)
+    nxt = _next_hop_via_routing(inv, device, vdom, egress_intf, gateway,
+                                routing_dbg, via_default)
     dbg["checks"].append({"rule": "ROUTING", "hit": nxt is not None, **routing_dbg})
     if nxt is not None:
         nd, nv, nintf = nxt
@@ -249,12 +266,39 @@ def classify_egress(inv: Inventory, prefixes: PrefixTable, overlay_pattern: str,
             f"{m['device']}/{m['vdom']}" for m in routing_dbg.get("segment_members") or []
             if m["device"] != device
         }))
+        segment = routing_dbg.get("segment")
+        down = routing_dbg.get("gateway_candidates_disabled") or []
+        if down:
+            # Die IP existiert im Inventar, aber nur auf einem toten Interface —
+            # ein anderer Befund als "IP völlig unbekannt".
+            gw_note = (
+                f"Gateway {gateway} liegt im Inventar ausschließlich auf "
+                "ABGESCHALTETEN Interfaces ("
+                + ", ".join(f"{m[0]}/{m[1]} '{m[2]}'" for m in down)
+                + ") — kein Next-Hop; der Verkehr geht über die Standardrouting-"
+                  "Kopplung."
+            )
+        else:
+            gw_note = (
+                f"Gateway {gateway} gehört zu keinem gemanagten FortiGate-Interface "
+                "(SD-WAN-Appliance/Provider-Router) — der Verkehr geht über die "
+                "Standardrouting-Kopplung"
+                + (f", nicht zu einem Nachbarn im Transit-Netz {segment}"
+                   if segment else "")
+                + (f" ({neighbours} als nächster Hop verworfen)." if neighbours else ".")
+            )
+    elif skipped == "gateway_via_default_route":
+        # Der Treffer ist bloße Adressgleichheit: über die Default-Route kennt das
+        # Gerät das Ziel nicht. Ohne diese Sperre landet eine standortfremde
+        # Firewall im Pfad, deren implizites Deny den ganzen Trace blockt.
+        hit = routing_dbg.get("gateway_match_via_default") or []
         gw_note = (
-            f"Gateway {gateway} gehört zu keinem gemanagten FortiGate-Interface "
-            f"(SD-WAN-Appliance/Provider-Router) — der Verkehr geht über die "
-            f"Standardrouting-Kopplung, nicht zu einem Nachbarn im Transit-Netz "
-            f"{routing_dbg.get('segment')}"
-            + (f" ({neighbours} als nächster Hop verworfen)." if neighbours else ".")
+            f"Ziel {dst_ip} läuft hier über die DEFAULT-Route (0.0.0.0/0) auf "
+            f"Gateway {gateway} — das Gerät kennt das Ziel nicht, es reicht an den "
+            f"Uplink weiter. Die IP trägt zwar {hit[0] if hit else '?'} "
+            f"(Interface '{hit[2] if len(hit) > 2 else '?'}'), das ist bei "
+            "standortweise wiederverwendeten Transfernetzen aber kein Wegbeleg — "
+            "Gerät NICHT in den Pfad übernommen."
         )
     elif skipped == "gateway_ambiguous":
         # Dieselbe Gateway-IP auf mehreren Geräten: Transfernetze sind pro Standort
@@ -294,17 +338,26 @@ def classify_egress(inv: Inventory, prefixes: PrefixTable, overlay_pattern: str,
     cls = Classification(egress_class="DEFAULT")
     if gw_note:
         cls.warnings.append(gw_note)
-        cls.warnings.append(
-            f"Ziel {dst_ip} ist keinem gemanagten Gerät zuzuordnen — Pfad endet "
-            "hinter dem SD-WAN/Uplink. Fehlt das Ziel-Präfix im Inventar "
-            "(FMG-Sync) oder braucht es einen Site-Override?"
-        )
+        if owner is not None and owner.device == device:
+            # Das Ziel gehört laut Inventar diesem Gerät (z.B. statische Route über
+            # einen M2M-/Provider-Uplink) — dahinter liegt kein gemanagtes Gerät.
+            cls.warnings.append(
+                f"Ziel {dst_ip} liegt laut Inventar hinter diesem Gerät "
+                f"({owner.network} via '{owner.interface}', {owner.source}) — "
+                "letzter gemanagter Hop, dahinter greift keine weitere Policy."
+            )
+        else:
+            cls.warnings.append(
+                f"Ziel {dst_ip} ist keinem gemanagten Gerät zuzuordnen — Pfad endet "
+                "hinter dem SD-WAN/Uplink. Fehlt das Ziel-Präfix im Inventar "
+                "(FMG-Sync) oder braucht es einen Site-Override?"
+            )
     return _done(cls)
 
 
 def _next_hop_via_routing(inv: Inventory, device: str, vdom: str, egress_intf: str,
-                          gateway: str | None,
-                          dbg: dict | None = None) -> tuple[str, str, str] | None:
+                          gateway: str | None, dbg: dict | None = None,
+                          via_default: bool = False) -> tuple[str, str, str] | None:
     """Nächsten Hop (VDOM oder Firewall) aus dem Routing bestimmen.
 
     Reihenfolge: erst SELBES Gerät (Inter-VDOM-Link — dessen 172.16er Netze sind
@@ -318,6 +371,13 @@ def _next_hop_via_routing(inv: Inventory, device: str, vdom: str, egress_intf: s
     das keinem gemanagten Interface gehört (SD-WAN-Appliance, Provider-Router),
     geht das Paket genau dorthin — NICHT zu einer anderen Firewall, die zufällig
     im selben Underlay-Netz hängt. Dann greift stattdessen die Owner-Regel.
+
+    Ebenso bei `via_default`: Läuft das Ziel über die DEFAULT-Route, kennt das
+    Gerät das Ziel gar nicht — es reicht das Paket an seinen Uplink weiter. Ein
+    Gateway-Treffer auf einem ANDEREN Gerät ist dann kein Wegbeleg, sondern nur
+    eine Adressgleichheit (Transfernetze sind pro Standort wiederverwendet). Für
+    den eigenen VDOM-Link (gleiches Gerät) gilt das nicht — dort IST die
+    Default-Route der Weg zum Router-VDOM.
 
     `dbg` (optional) wird mit dem Entscheidungsweg gefüllt: Gateway-Auflösung,
     Segment und ALLE Segment-Mitglieder — nur so ist nachvollziehbar, warum
@@ -337,8 +397,24 @@ def _next_hop_via_routing(inv: Inventory, device: str, vdom: str, egress_intf: s
         # ALLE Geräte mit dieser Gateway-IP — Transfernetze (SD-WAN, Inter-VDOM)
         # sind pro Standort wiederverwendet, ein Treffer ist also nicht
         # automatisch eindeutig.
-        matches = inv.interfaces_by_ip(gateway)
+        # Alle Interfaces mit dieser IP samt Status — abgeschaltete tragen keinen
+        # Verkehr und sind KEIN Next-Hop, aber "IP unbekannt" und "IP liegt auf
+        # einem toten Interface" sind verschiedene Befunde. status_raw zeigt den
+        # FMG-Rohwert, falls die Bewertung mal überrascht.
+        details = []
+        for dev, vd, name in inv.interfaces_by_ip(gateway, include_disabled=True):
+            info = inv.interface(dev, name) or {}
+            details.append({"device": dev, "vdom": vd, "interface": name,
+                            "enabled": info.get("enabled", True),
+                            "status_raw": info.get("status_raw")})
+        d["gateway_candidate_status"] = details
+        matches = [(m["device"], m["vdom"], m["interface"])
+                   for m in details if m["enabled"]]
+        down = [(m["device"], m["vdom"], m["interface"])
+                for m in details if not m["enabled"]]
         d["gateway_candidates"] = [list(m) for m in matches]
+        if down:
+            d["gateway_candidates_disabled"] = [list(m) for m in down]
         others = [m for m in matches if (m[0], m[1]) != (device, vdom)]
         hit_devices = sorted({m[0] for m in others})
         # Kein Interface trägt diese IP ⇒ der echte Next-Hop ist kein gemanagtes
@@ -349,6 +425,12 @@ def _next_hop_via_routing(inv: Inventory, device: str, vdom: str, egress_intf: s
             # ist, sagt die IP nicht. Raten hieße: fremde Firewall im Pfad.
             d["gateway_ambiguous"] = hit_devices
             skip = "gateway_ambiguous"
+        elif others and via_default:
+            # Default-Route: das Gerät kennt das Ziel nicht. Dass die Gateway-IP
+            # auf einem anderen Gerät existiert, ist dann Zufall der Adressierung
+            # (wiederverwendetes Transfernetz), kein Weg zum Ziel.
+            d["gateway_match_via_default"] = list(others[0])
+            skip = "gateway_via_default_route"
         elif others:
             d["gateway_match_global"] = list(others[0])
             d["matched_by"] = "gateway_global"

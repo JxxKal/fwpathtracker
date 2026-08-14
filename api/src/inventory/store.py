@@ -78,6 +78,27 @@ def _flag(value: Any) -> bool:
     return value in (1, "1", "enable", True)
 
 
+def _intf_enabled(value: Any) -> bool:
+    """Interface-Status → administrativ up?
+
+    FMG liefert das Feld je nach Version und Schema unterschiedlich: als String
+    ('up'/'down'/'disable'), als Enum-Zahl (1/0) und teils in eine Liste gewrappt
+    (wie 'vdom'/'ip'). Ein einzelner Vergleich gegen ('down', 0, ...) übersieht
+    genau die gewrappten und großgeschriebenen Varianten — dann zählt ein
+    ABGESCHALTETES Interface als connected/Next-Hop-Kandidat und zieht den Trace
+    auf ein totes Netz. Fehlt das Feld ganz, gilt das Interface als up.
+    """
+    v = _first(value)
+    if v is None:
+        return True
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return int(v) != 0
+    return str(v).strip().lower() not in ("down", "disable", "disabled", "0",
+                                          "false", "off")
+
+
 def _member_names(value: Any) -> list[str]:
     """Gruppen-Member (Adress-/Service-Gruppen) → Namensliste. FMG liefert
     mal ['a','b'], mal [{'name':'a'}, ...]."""
@@ -174,7 +195,10 @@ class Inventory:
                     "vlanid": intf.get("vlanid"),
                     # Deaktivierte Interfaces tragen keinen Verkehr → nicht als
                     # connected zählen (sonst falscher Owner/Ingress). Default: up.
-                    "enabled": intf.get("status") not in ("down", "disable", 0, "0", False),
+                    "enabled": _intf_enabled(intf.get("status")),
+                    # Rohwert fürs Debug: zeigt, WAS das FMG geliefert hat, wenn
+                    # ein Interface unerwartet mitzählt (oder unerwartet fehlt).
+                    "status_raw": intf.get("status"),
                 }
             inv.interfaces[device] = table
 
@@ -278,12 +302,17 @@ class Inventory:
         return (self.interfaces.get(device) or {}).get(name)
 
     def interfaces_by_ip(self, ip: str | ipaddress.IPv4Address,
-                         device: str | None = None) -> list[tuple[str, str, str]]:
+                         device: str | None = None,
+                         include_disabled: bool = False) -> list[tuple[str, str, str]]:
         """ALLE (device, vdom, intf) mit exakt dieser Adresse (inkl. Secondary-IPs).
 
         Mehr als ein Treffer heißt: die Adresse ist nicht eindeutig — Transfer-/
         Transit-Netze sind pro Standort wiederverwendet (172.16er Inter-VDOM-Links,
         SD-WAN-Transfernetze). Dann darf daraus KEIN Next-Hop abgeleitet werden.
+
+        `include_disabled` nimmt abgeschaltete Interfaces mit — nur fürs Debug:
+        so ist unterscheidbar, ob eine Gateway-IP gar nicht bekannt ist oder auf
+        einem administrativ deaktivierten Interface liegt.
         """
         try:
             addr = ipaddress.IPv4Address(ip) if isinstance(ip, str) else ip
@@ -294,7 +323,7 @@ class Inventory:
         out = []
         for dev, table in items:
             for intf in table.values():
-                if not intf.get("enabled", True):
+                if not include_disabled and not intf.get("enabled", True):
                     continue
                 addrs = [intf["ip"]] if intf["ip"] is not None else []
                 addrs += intf.get("secondary_ips", [])

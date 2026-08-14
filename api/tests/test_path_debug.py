@@ -180,35 +180,41 @@ async def test_shared_underlay_skips_segment_neighbour(underlay_inv, underlay_pr
     assert hops[1].srcintf == "wan1" and hops[1].egress_class == "LOCAL"
 
 
-def _reused_transfer_rows() -> list[dict]:
+def _reused_transfer_rows(shared: bool = False) -> list[dict]:
     """Pro Standort dasselbe SD-WAN-Transfernetz (10.180.56.16/29 → Gateway .17):
     das Gateway trägt an JEDEM Standort eine eigene FortiGate. Ein globaler
     IP-Treffer ist damit keine Wegaussage — Feld-Fall Open-Systems-SD-WAN.
+
+    `shared`: trägt zusätzlich das Ziel-Gerät dieselbe Transfer-IP, ist die
+    Gateway-IP gar nicht mehr eindeutig (zwei Kandidaten).
     """
     def row(kind: str, key: str, data) -> dict:
         return {"adom": ADOM, "kind": kind, "key": key, "data": data}
 
-    def site(name: str, lan: str) -> list[dict]:
-        return [
-            row("device", name, {"name": name, "vdom": [{"name": "Router"}]}),
-            row("interface", name, [
-                {"name": "lan", "ip": [lan, "255.255.255.0"], "vdom": ["Router"]},
-                # gleiche Transfer-IP an jedem Standort (Gateway = .17 = Appliance)
-                {"name": "Open-Systems", "ip": ["10.180.56.17", "255.255.255.248"],
-                 "vdom": ["Router"]},
-            ]),
-        ]
-
-    rows = site("EUGEBT1", "10.124.44.1") + site("EUGERN1", "10.130.0.1")
-    # Ziel-Standort: hier hängt 10.180.20.0/24 (statisch hinter dem Gerät)
-    rows += [
+    rows = [
+        # Quell-Standort: Egress ins SD-WAN-Transfernetz, Gateway .17 = Appliance
+        row("device", "EUGEBT1", {"name": "EUGEBT1", "vdom": [{"name": "Router"}]}),
+        row("interface", "EUGEBT1", [
+            {"name": "lan", "ip": ["10.124.44.1", "255.255.255.0"], "vdom": ["Router"]},
+            {"name": "Open-Systems", "ip": ["10.180.56.22", "255.255.255.248"],
+             "vdom": ["Router"]},
+        ]),
+        # Fremder Standort: trägt zufällig GENAU die Gateway-IP (.17) — dasselbe
+        # Transfernetz ist dort ein zweites Mal vergeben.
+        row("device", "EUGERN1", {"name": "EUGERN1", "vdom": [{"name": "Router"}]}),
+        row("interface", "EUGERN1", [
+            {"name": "lan", "ip": ["10.130.0.1", "255.255.255.0"], "vdom": ["Router"]},
+            {"name": "b", "ip": ["10.180.56.17", "255.255.255.248"], "vdom": ["Router"]},
+        ]),
+        # Ziel-Standort: 10.180.20.0/24 hängt statisch hinter dem M2M-Uplink
         row("device", "xvo001-1", {"name": "xvo001-1", "vdom": [{"name": "Router"}]}),
-        row("interface", "xvo001-1", [
-            {"name": "Open-Systems", "ip": ["10.180.56.17", "255.255.255.248"],
+        row("interface", "xvo001-1", ([
+            {"name": "WD-OT-Transfer", "ip": ["10.180.16.2", "255.255.255.0"],
              "vdom": ["Router"]},
             {"name": "M2M-Telekom1", "ip": ["10.180.30.1", "255.255.255.0"],
              "vdom": ["Router"]},
-        ]),
+        ] + ([{"name": "Open-Systems", "ip": ["10.180.56.17", "255.255.255.248"],
+               "vdom": ["Router"]}] if shared else []))),
         row("route", "xvo001-1|Router", [
             {"dst": ["10.180.20.0", "255.255.255.0"], "device": ["M2M-Telekom1"],
              "gateway": "10.180.30.2"},
@@ -219,6 +225,7 @@ def _reused_transfer_rows() -> list[dict]:
 
 @pytest.fixture
 def reused_inv() -> Inventory:
+    """Gateway-IP liegt auf GENAU einem fremden Gerät (wie im Feld)."""
     return Inventory.build(_reused_transfer_rows(), synced_at="2026-08-14T00:00:00+00:00")
 
 
@@ -227,21 +234,33 @@ def reused_prefixes(reused_inv: Inventory):
     return reused_inv.build_prefix_table()
 
 
-async def test_reused_transfer_net_gateway_is_ambiguous(reused_inv, reused_prefixes):
-    """Dieselbe Gateway-IP an mehreren Standorten: daraus darf KEIN Next-Hop
-    abgeleitet werden — sonst zieht es eine standortfremde Firewall in den Pfad,
-    deren implizites Deny den ganzen Trace blockt. Stattdessen entscheidet der
-    Präfix-Besitzer des Ziels."""
+@pytest.fixture
+def shared_inv() -> Inventory:
+    """Gateway-IP liegt auf MEHREREN Geräten → gar nicht mehr eindeutig."""
+    return Inventory.build(_reused_transfer_rows(shared=True),
+                           synced_at="2026-08-14T00:00:00+00:00")
+
+
+@pytest.fixture
+def shared_prefixes(shared_inv: Inventory):
+    return shared_inv.build_prefix_table()
+
+
+async def test_default_route_gateway_hit_is_not_a_next_hop(reused_inv, reused_prefixes):
+    """Feld-Fall: Das Ziel läuft über die DEFAULT-Route auf das SD-WAN-Gateway,
+    dessen IP zufällig ein Interface einer STANDORTFREMDEN Firewall trägt
+    (wiederverwendetes Transfernetz). Diese Firewall darf nicht in den Pfad —
+    ihr implizites Deny würde den ganzen Trace blocken."""
     client, t = make_client()
     add_route(t, "EUGEBT1", "Router", "10.180.20.148", "Open-Systems",
-              gateway="10.180.56.17")
+              gateway="10.180.56.17", network="0.0.0.0/0")       # Default-Route!
     add_policy_lookup(t, "EUGEBT1", "Router",
                       tcp_params("lan", "10.124.44.169", "10.180.20.148", 105), 20)
-    add_route(t, "xvo001-1", "Router", "10.124.44.169", "Open-Systems")   # Reverse
+    add_route(t, "xvo001-1", "Router", "10.124.44.169", "WD-OT-Transfer")  # Reverse
     add_route(t, "xvo001-1", "Router", "10.180.20.148", "M2M-Telekom1",
-              gateway="10.180.30.2")
+              gateway="10.180.30.2", network="10.180.20.0/24")   # spezifische Route
     add_policy_lookup(t, "xvo001-1", "Router",
-                      tcp_params("Open-Systems", "10.124.44.169", "10.180.20.148", 105), 29)
+                      tcp_params("WD-OT-Transfer", "10.124.44.169", "10.180.20.148", 105), 29)
 
     hops = await run_trace(
         src_ip="10.124.44.169", dst_ip="10.180.20.148", protocol="tcp", dst_port=105,
@@ -250,12 +269,155 @@ async def test_reused_transfer_net_gateway_is_ambiguous(reused_inv, reused_prefi
 
     # EUGERN1 (fremder Standort mit derselben Transfer-IP) darf NICHT auftauchen
     assert [h.device for h in hops] == ["EUGEBT1", "xvo001-1"]
+    cls = hops[0].debug["classification"]
+    assert cls["route_is_default"] is True
+    routing = next(c for c in cls["checks"] if c["rule"] == "ROUTING")
+    assert routing["gateway_candidates"] == [["EUGERN1", "Router", "b"]]
+    assert routing["segment_skipped"] == "gateway_via_default_route"
+    assert routing["gateway_match_via_default"] == ["EUGERN1", "Router", "b"]
+    assert "matched_by" not in routing
+    assert cls["result"]["next_device"] == "xvo001-1"
+    warn = " ".join(hops[0].warnings)
+    assert "DEFAULT-Route" in warn and "kein Wegbeleg" in warn
+    assert "EUGERN1" in warn
+
+
+async def test_default_route_still_follows_own_vdom_link():
+    """Gegenprobe zum Feld-Standard: Interne VDOMs default-routen per Inter-VDOM-
+    Link zum Router-VDOM. Diese Default-Route MUSS weiter gelten — die Sperre
+    betrifft nur Gateway-Treffer auf FREMDEN Geräten."""
+    rows = [
+        {"adom": ADOM, "kind": "device", "key": "EUGEBT1",
+         "data": {"name": "EUGEBT1", "vdom": [{"name": "root"}, {"name": "Router"}]}},
+        {"adom": ADOM, "kind": "interface", "key": "EUGEBT1", "data": [
+            {"name": "PLT", "ip": ["10.124.44.1", "255.255.255.0"], "vdom": ["root"]},
+            {"name": "L2-Transfer0", "ip": ["172.16.32.1", "255.255.255.252"],
+             "vdom": ["root"]},
+            {"name": "L2-Transfer1", "ip": ["172.16.32.2", "255.255.255.252"],
+             "vdom": ["Router"]},
+            {"name": "Open-Systems", "ip": ["10.180.56.22", "255.255.255.248"],
+             "vdom": ["Router"]},
+        ]},
+    ]
+    inv = Inventory.build(rows, synced_at="2026-08-14T00:00:00+00:00")
+    prefixes = inv.build_prefix_table()
+
+    client, t = make_client()
+    add_route(t, "EUGEBT1", "root", "10.180.20.148", "L2-Transfer0",
+              gateway="172.16.32.2", network="0.0.0.0/0")     # Default via VDOM-Link
+    add_policy_lookup(t, "EUGEBT1", "root",
+                      tcp_params("PLT", "10.124.44.169", "10.180.20.148", 105), 20)
+    add_route(t, "EUGEBT1", "Router", "10.180.20.148", "Open-Systems",
+              gateway="10.180.56.17", network="0.0.0.0/0")
+    add_policy_lookup(t, "EUGEBT1", "Router",
+                      tcp_params("L2-Transfer1", "10.124.44.169", "10.180.20.148", 105), 2)
+
+    hops = await run_trace(
+        src_ip="10.124.44.169", dst_ip="10.180.20.148", protocol="tcp", dst_port=105,
+        inv=inv, prefixes=prefixes, client=client, overlay_pattern=OVERLAY, max_hops=8)
+
+    assert [(h.device, h.vdom) for h in hops] == [("EUGEBT1", "root"),
+                                                  ("EUGEBT1", "Router")]
+    routing = next(c for c in hops[0].debug["classification"]["checks"]
+                   if c["rule"] == "ROUTING")
+    assert routing["matched_by"] == "gateway_local"      # trotz Default-Route
+    assert hops[0].egress_class == "VDOM_LINK"
+    assert hops[1].srcintf == "L2-Transfer1"
+
+
+@pytest.mark.parametrize("status", ["down", "disable", 0, ["down"], "DOWN"])
+async def test_disabled_interface_is_never_a_next_hop(status):
+    """Trägt die Gateway-IP ein ABGESCHALTETES Interface, ist das kein Next-Hop —
+    egal in welcher Schreibweise das FMG den Status liefert (String, Enum-Zahl,
+    in Liste gewrappt). Der Befund wird getrennt ausgewiesen: die IP ist bekannt,
+    das Interface aber tot."""
+    rows = _reused_transfer_rows()
+    for r in rows:
+        if r["kind"] == "interface" and r["key"] == "EUGERN1":
+            for intf in r["data"]:
+                if intf["name"] == "b":
+                    intf["status"] = status
+    inv = Inventory.build(rows, synced_at="2026-08-14T00:00:00+00:00")
+    prefixes = inv.build_prefix_table()
+    assert inv.interface("EUGERN1", "b")["enabled"] is False
+
+    client, t = make_client()
+    # Spezifische Route (kein Default-Route-Abbruch) — es MUSS am Status scheitern
+    add_route(t, "EUGEBT1", "Router", "10.180.20.148", "Open-Systems",
+              gateway="10.180.56.17", network="10.180.20.0/24")
+    add_policy_lookup(t, "EUGEBT1", "Router",
+                      tcp_params("lan", "10.124.44.169", "10.180.20.148", 105), 20)
+    add_route(t, "xvo001-1", "Router", "10.124.44.169", "WD-OT-Transfer")
+    add_route(t, "xvo001-1", "Router", "10.180.20.148", "M2M-Telekom1",
+              gateway="10.180.30.2", network="10.180.20.0/24")
+    add_policy_lookup(t, "xvo001-1", "Router",
+                      tcp_params("WD-OT-Transfer", "10.124.44.169", "10.180.20.148", 105), 29)
+
+    hops = await run_trace(
+        src_ip="10.124.44.169", dst_ip="10.180.20.148", protocol="tcp", dst_port=105,
+        inv=inv, prefixes=prefixes, client=client, overlay_pattern=OVERLAY, max_hops=8)
+
+    assert [h.device for h in hops] == ["EUGEBT1", "xvo001-1"]
+    routing = next(c for c in hops[0].debug["classification"]["checks"]
+                   if c["rule"] == "ROUTING")
+    assert routing["gateway_candidates"] == []          # tote zählen nicht mit
+    assert routing["gateway_candidates_disabled"] == [["EUGERN1", "Router", "b"]]
+    assert routing["gateway_unresolved"] is True
+    warn = " ".join(hops[0].warnings)
+    assert "ABGESCHALTETEN" in warn and "EUGERN1/Router 'b'" in warn
+
+
+async def test_specific_route_gateway_hit_still_counts(reused_inv, reused_prefixes):
+    """Gegenprobe: Zeigt eine SPEZIFISCHE Route auf das Gateway, bleibt der
+    Gateway-Treffer ein gültiger Next-Hop — sonst würden echte Standort-
+    kopplungen (Lab-Transit /30) aus dem Pfad fallen."""
+    client, t = make_client()
+    add_route(t, "EUGEBT1", "Router", "10.130.0.50", "Open-Systems",
+              gateway="10.180.56.17", network="10.130.0.0/24")
+    add_policy_lookup(t, "EUGEBT1", "Router",
+                      tcp_params("lan", "10.124.44.169", "10.130.0.50", 105), 20)
+    add_route(t, "EUGERN1", "Router", "10.130.0.50", "lan", network="10.130.0.0/24")
+    add_policy_lookup(t, "EUGERN1", "Router",
+                      tcp_params("b", "10.124.44.169", "10.130.0.50", 105), 5)
+
+    hops = await run_trace(
+        src_ip="10.124.44.169", dst_ip="10.130.0.50", protocol="tcp", dst_port=105,
+        inv=reused_inv, prefixes=reused_prefixes, client=client,
+        overlay_pattern=OVERLAY, max_hops=8)
+
+    assert [h.device for h in hops] == ["EUGEBT1", "EUGERN1"]
+    cls = hops[0].debug["classification"]
+    assert cls["route_is_default"] is False
+    routing = next(c for c in cls["checks"] if c["rule"] == "ROUTING")
+    assert routing["matched_by"] == "gateway_global"
+    assert hops[1].srcintf == "b" and hops[1].egress_class == "LOCAL"
+
+
+async def test_reused_transfer_net_gateway_is_ambiguous(shared_inv, shared_prefixes):
+    """Tragen MEHRERE Geräte dieselbe Gateway-IP, ist der Next-Hop daraus auch bei
+    spezifischer Route nicht bestimmbar — es entscheidet der Präfix-Besitzer."""
+    client, t = make_client()
+    add_route(t, "EUGEBT1", "Router", "10.180.20.148", "Open-Systems",
+              gateway="10.180.56.17", network="10.180.20.0/24")
+    add_policy_lookup(t, "EUGEBT1", "Router",
+                      tcp_params("lan", "10.124.44.169", "10.180.20.148", 105), 20)
+    add_route(t, "xvo001-1", "Router", "10.124.44.169", "WD-OT-Transfer")
+    add_route(t, "xvo001-1", "Router", "10.180.20.148", "M2M-Telekom1",
+              gateway="10.180.30.2", network="10.180.20.0/24")
+    add_policy_lookup(t, "xvo001-1", "Router",
+                      tcp_params("WD-OT-Transfer", "10.124.44.169", "10.180.20.148", 105), 29)
+
+    hops = await run_trace(
+        src_ip="10.124.44.169", dst_ip="10.180.20.148", protocol="tcp", dst_port=105,
+        inv=shared_inv, prefixes=shared_prefixes, client=client,
+        overlay_pattern=OVERLAY, max_hops=8)
+
+    assert [h.device for h in hops] == ["EUGEBT1", "xvo001-1"]
     routing = next(c for c in hops[0].debug["classification"]["checks"]
                    if c["rule"] == "ROUTING")
     assert routing["gateway_ambiguous"] == ["EUGERN1", "xvo001-1"]
     assert routing["segment_skipped"] == "gateway_ambiguous"
     assert "matched_by" not in routing
-    assert len(routing["gateway_candidates"]) == 3      # inkl. eigenem Interface
     warn = " ".join(hops[0].warnings)
     assert "10.180.56.17" in warn and "EUGERN1" in warn
     assert "wiederverwendet" in warn

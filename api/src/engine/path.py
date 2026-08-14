@@ -91,6 +91,9 @@ async def _live_route(client: FmgClient, adom: str, device: str, vdom: str,
     return {
         "interface": interface,
         "gateway": results.get("gateway") or results.get("gw"),
+        # Getroffenes Routen-Präfix: 0.0.0.0/0 heißt, das Gerät kennt das Ziel
+        # nicht und schiebt es an den Uplink — wichtig für die Next-Hop-Wahl.
+        "network": results.get("network") or results.get("dst"),
         "raw": results,
         "source": "live",
     }
@@ -112,6 +115,7 @@ def cached_route(inv: Inventory, device: str, vdom: str, dst_ip: str) -> dict | 
                                "gateway": None, "source": "cache-connected"})
             if best is None or net.prefixlen >= best[0]:
                 best = (net.prefixlen, {"interface": intf, "gateway": None,
+                                        "network": str(net),
                                         "source": "cache-connected"})
     for rt in inv.static_routes.get((device, vdom), []):
         if addr in rt["network"] and rt.get("interface"):
@@ -120,7 +124,7 @@ def cached_route(inv: Inventory, device: str, vdom: str, dst_ip: str) -> dict | 
             if best is None or rt["network"].prefixlen > best[0]:
                 best = (rt["network"].prefixlen,
                         {"interface": rt["interface"], "gateway": rt.get("gateway"),
-                         "source": "cache-static"})
+                         "network": str(rt["network"]), "source": "cache-static"})
     if best is None:
         return None
     best[1]["considered"] = considered
@@ -366,6 +370,7 @@ async def _walk_path(*, src_ip: str, dst_ip: str, inv: Inventory, prefixes: Pref
         step.debug["route"] = {
             "interface": (route or {}).get("interface"),
             "gateway": (route or {}).get("gateway"),
+            "network": (route or {}).get("network"),
             "source": (route or {}).get("source"),
             "cache_candidates": (route or {}).pop("considered", None) if route else None,
         }
@@ -381,7 +386,8 @@ async def _walk_path(*, src_ip: str, dst_ip: str, inv: Inventory, prefixes: Pref
 
         # ── b) Klassifikation ────────────────────────────────────────────────
         cls = classify_egress(inv, prefixes, overlay_pattern, device, vdom,
-                              step.egress, dst_ip, gateway=route.get("gateway"))
+                              step.egress, dst_ip, gateway=route.get("gateway"),
+                              route_network=route.get("network"))
         step.egress_class = cls.egress_class
         step.warnings.extend(cls.warnings)
         step.debug["classification"] = cls.debug
