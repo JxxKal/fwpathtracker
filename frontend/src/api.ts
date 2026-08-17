@@ -382,6 +382,128 @@ export async function locateHost(q: string): Promise<LocateResult> {
   return request(`/api/locate?q=${encodeURIComponent(q)}`);
 }
 
+// ── Netzwerkport-Check (VLAN-Sicht eines Hosts) ──────────────────────────────
+
+export interface VlanRef { number: number; name: string | null; device_id?: number }
+
+export interface PortVlans { untagged: number[]; tagged: number[] }
+
+export interface HostPortFinding extends LocateCandidate {
+  vlan: VlanRef | null;
+  port_vlans: PortVlans | null;
+  best: boolean;
+}
+
+export interface L3Interface {
+  device: string; vdom: string; interface: string;
+  vlan: number | null; alias: string | null; description: string | null;
+  zone: string; ip: string | null; network: string | null;
+  secondary_networks: string[]; enabled: boolean; adom: string | null;
+  prefix_source: string; matched_network: string;
+}
+
+export interface HostDevicePort {
+  port_id: number; if_name: string | null; if_alias: string | null;
+  oper_status: string | null; admin_status: string | null;
+  vlans_observed: number[]; mac_count: number;
+}
+
+export interface HostPortsResult {
+  ip: string;
+  names: string[];
+  mac: string | null;
+  mac_readable: string | null;
+  arp: LocateResult['arp'];
+  confidence: LocateResult['confidence'];
+  findings: HostPortFinding[];
+  device: (LocateSelfDevice & {
+    ports: HostDevicePort[]; vlans: { number: number; name: string | null }[];
+  }) | null;
+  l3: L3Interface[];
+  vlan_summary: { vlan: number; name: string | null; where: string[] }[];
+  warnings: string[];
+}
+
+export async function hostPorts(q: string): Promise<HostPortsResult> {
+  if (isDemoMode()) {
+    return {
+      ip: q, names: ['BOCKS2'], mac: '000c2911891a', mac_readable: '00:0c:29:11:89:1a',
+      arp: { provenance: 'fortigate', device: 'fw-a', vdom: 'root', interface: 'lan1' },
+      confidence: 'high',
+      findings: [
+        { ...demoCandidates[0], vlan: { number: 44, name: 'OT-PLT-Bockstedt' },
+          port_vlans: { untagged: [44], tagged: [] }, best: true },
+        { ...demoCandidates[2], vlan: { number: 44, name: 'OT-PLT-Bockstedt' },
+          port_vlans: { untagged: [1], tagged: [44, 90] }, best: false },
+      ],
+      device: null,
+      l3: [{
+        device: 'fw-a', vdom: 'root', interface: 'PLT', vlan: 44,
+        alias: 'OT PLT Bockstedt', description: null, zone: 'inside-a',
+        ip: '10.124.44.1/24', network: '10.124.44.0/24', secondary_networks: [],
+        enabled: true, adom: 'corp', prefix_source: 'connected',
+        matched_network: '10.124.44.0/24',
+      }],
+      vlan_summary: [{ vlan: 44, name: 'OT-PLT-Bockstedt',
+        where: ['moxa-iks-01 / Port 5', 'hpe-core-01 / Gi1/0/1', 'fw-a/root · PLT'] }],
+      warnings: [],
+    };
+  }
+  return request(`/api/host-ports?q=${encodeURIComponent(q)}`);
+}
+
+// ── Globale VLAN-Übersicht ───────────────────────────────────────────────────
+
+export interface VlanRow {
+  vlan: number;
+  names: string[];
+  networks: string[];
+  switches: { device_id: number; hostname: string | null; name: string | null;
+              domain?: string | null }[];
+  switch_count: number;
+  firewall_interfaces: L3Interface[];
+  sources: ('librenms' | 'fmg')[];
+}
+
+export interface VlanOverview {
+  vlans: VlanRow[];
+  free: [number, number][];
+  used_count: number;
+  free_count: number;
+  range: [number, number];
+  sources: { librenms: boolean; fmg: boolean };
+  synced_at: string | null;
+  warnings: string[];
+}
+
+export async function vlanOverview(): Promise<VlanOverview> {
+  if (isDemoMode()) {
+    const fw = (n: number, name: string, net: string): L3Interface => ({
+      device: 'fw-a', vdom: 'root', interface: name, vlan: n, alias: name,
+      description: null, zone: 'inside-a', ip: null, network: net,
+      secondary_networks: [], enabled: true, adom: 'corp',
+      prefix_source: 'connected', matched_network: net,
+    });
+    return {
+      vlans: [
+        { vlan: 44, names: ['OT-PLT-Bockstedt'], networks: ['10.124.44.0/24'],
+          switches: [{ device_id: 169, hostname: 'moxa-iks-01', name: 'OT-PLT' },
+                     { device_id: 42, hostname: 'hpe-core-01', name: 'OT-PLT' }],
+          switch_count: 2, firewall_interfaces: [fw(44, 'PLT', '10.124.44.0/24')],
+          sources: ['fmg', 'librenms'] },
+        { vlan: 90, names: ['OT-Mgmt'], networks: [],
+          switches: [{ device_id: 42, hostname: 'hpe-core-01', name: 'OT-Mgmt' }],
+          switch_count: 1, firewall_interfaces: [], sources: ['librenms'] },
+      ],
+      free: [[1, 43], [45, 89], [91, 4094]],
+      used_count: 2, free_count: 4092, range: [1, 4094],
+      sources: { librenms: true, fmg: true },
+      synced_at: '2026-08-17T06:00:00+00:00', warnings: [],
+    };
+  }
+  return request('/api/vlans');
+}
+
 export async function librenmsTest(): Promise<{
   ok: boolean; version: string; db_schema?: number; devices: number;
 }> {

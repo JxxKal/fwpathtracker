@@ -8,12 +8,14 @@ import ChecksPanel from './components/ChecksPanel';
 import FreeSubnet from './components/FreeSubnet';
 import HopDetailPanel from './components/HopDetailPanel';
 import IpCalc from './components/IpCalc';
+import HostPortCheck from './components/HostPortCheck';
 import LocateHost from './components/LocateHost';
 import NetOwnership from './components/NetOwnership';
 import PathGraph from './components/PathGraph';
 import PortResult from './components/PortResult';
 import ResultDrawer from './components/ResultDrawer';
 import TraceForm, { type TraceMode } from './components/TraceForm';
+import VlanList from './components/VlanList';
 import DnsPanel from './components/settings/DnsPanel';
 import FmgPanel from './components/settings/FmgPanel';
 import ItopPanel from './components/settings/ItopPanel';
@@ -209,6 +211,8 @@ export default function App() {
             <div className="grid gap-4 lg:grid-cols-2">
               <NetOwnership />
               <LocateHost />
+              <HostPortCheck />
+              <VlanList />
               <IpCalc />
               <FreeSubnet />
             </div>

@@ -65,6 +65,11 @@ class LibrenmsClient:
         self._devices: TTLCache = TTLCache(maxsize=2048, ttl=ttl_s)
         self._ports: TTLCache = TTLCache(maxsize=2048, ttl=ttl_s)
         self._port_by_id: TTLCache = TTLCache(maxsize=2048, ttl=ttl_s)
+        # VLANs ändern sich selten — sowohl die globale Liste (VLAN-Übersicht)
+        # als auch die je Gerät (Auflösung der FDB-vlan_id auf die VLAN-Nummer).
+        self._vlans: TTLCache = TTLCache(maxsize=4, ttl=ttl_s)
+        self._device_vlans: TTLCache = TTLCache(maxsize=2048, ttl=ttl_s)
+        self._port_vlans: TTLCache = TTLCache(maxsize=4096, ttl=ttl_s)
         # Kürzer: Basis der MAC-Zählung je Port, ändert sich mit jeder Discovery.
         self._device_fdb: TTLCache = TTLCache(maxsize=512, ttl=fdb_ttl_s)
 
@@ -110,7 +115,8 @@ class LibrenmsClient:
     def invalidate(self) -> None:
         """Alle Caches leeren (Settings-Panel: 'Cache aktualisieren')."""
         for cache in (self._links, self._devices, self._ports,
-                      self._port_by_id, self._device_fdb):
+                      self._port_by_id, self._device_fdb,
+                      self._vlans, self._device_vlans, self._port_vlans):
             cache.clear()
 
     # ── Endpunkte ───────────────────────────────────────────────────────────
@@ -177,6 +183,52 @@ class LibrenmsClient:
         p = rows[0] if rows else {}
         self._port_by_id[key] = p
         return p
+
+    async def vlans(self, cfg: dict) -> list[dict]:
+        """/resources/vlans — ALLE VLANs aller Geräte.
+
+        Felder: vlan_id (interne Zeilen-ID), device_id, vlan_vlan (die eigentliche
+        VLAN-Nummer!), vlan_name, vlan_domain. Die FDB verweist mit ihrer
+        `vlan_id` auf genau diese Zeilen — ohne die Tabelle bleibt sie eine
+        bedeutungslose Zahl.
+        """
+        cached = self._vlans.get("all")
+        if cached is not None:
+            return cached
+        body = await self._get(cfg, "resources/vlans")
+        rows = _rows(body, "vlans")
+        self._vlans["all"] = rows
+        return rows
+
+    async def device_vlans(self, cfg: dict, device_id: int | str) -> list[dict]:
+        """/devices/:id/vlans — VLANs eines Geräts (gleiche Felder wie oben)."""
+        key = str(device_id)
+        cached = self._device_vlans.get(key)
+        if cached is not None:
+            return cached
+        body = await self._get(cfg, f"devices/{device_id}/vlans")
+        rows = _rows(body, "vlans")
+        self._device_vlans[key] = rows
+        return rows
+
+    async def port_vlans(self, cfg: dict, port_id: int | str) -> list[dict]:
+        """VLAN-Mitgliedschaft eines Ports über /ports/:id?with=vlans.
+
+        Das ist die KONFIGURIERTE Sicht (ports_vlans: vlan, untagged, state) —
+        im Gegensatz zur FDB, die nur zeigt, worin tatsächlich MACs gelernt
+        wurden. Fehlt die Relation (ältere LibreNMS-Versionen), kommt eine leere
+        Liste zurück; der Aufrufer fällt dann auf die beobachtete Sicht zurück.
+        """
+        key = str(port_id)
+        cached = self._port_vlans.get(key)
+        if cached is not None:
+            return cached
+        body = await self._get(cfg, f"ports/{port_id}", {"with": "vlans"})
+        rows = _rows(body, "port", "ports")
+        port = rows[0] if rows else {}
+        vlans = [v for v in (port.get("vlans") or []) if isinstance(v, dict)]
+        self._port_vlans[key] = vlans
+        return vlans
 
     async def links(self, cfg: dict) -> list[dict]:
         """/resources/links — LLDP/CDP-Nachbarn, einmal für die ganze Installation."""

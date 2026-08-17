@@ -99,6 +99,22 @@ def _intf_enabled(value: Any) -> bool:
                                           "false", "off")
 
 
+def vlan_number(value: Any) -> int | None:
+    """VLAN-Tag eines Interfaces → Nummer, sonst None.
+
+    FMG liefert die ID als int, String oder in Liste gewrappt; 0 bzw. leer heißt
+    'kein VLAN' (physisches Interface). Gültig ist 1–4094.
+    """
+    v = _first(value)
+    if v is None or v == "":
+        return None
+    try:
+        num = int(str(v).strip())
+    except (TypeError, ValueError):
+        return None
+    return num if 1 <= num <= 4094 else None
+
+
 def _member_names(value: Any) -> list[str]:
     """Gruppen-Member (Adress-/Service-Gruppen) → Namensliste. FMG liefert
     mal ['a','b'], mal [{'name':'a'}, ...]."""
@@ -193,6 +209,10 @@ class Inventory:
                     "vdom": _first(intf.get("vdom")) or "root",
                     "type": intf.get("type"),
                     "vlanid": intf.get("vlanid"),
+                    # Sprechende Bezeichnung des VLANs aus Sicht der Firewall —
+                    # Quelle für die Beschreibung in der VLAN-Übersicht.
+                    "alias": _first(intf.get("alias")) or None,
+                    "description": _first(intf.get("description")) or None,
                     # Deaktivierte Interfaces tragen keinen Verkehr → nicht als
                     # connected zählen (sonst falscher Owner/Ingress). Default: up.
                     "enabled": _intf_enabled(intf.get("status")),
@@ -300,6 +320,42 @@ class Inventory:
 
     def interface(self, device: str, name: str) -> dict | None:
         return (self.interfaces.get(device) or {}).get(name)
+
+    def interface_facts(self, device: str, name: str) -> dict:
+        """Interface aus L3-Sicht: VLAN-Nummer, Beschreibung, Subnetz, Zone.
+
+        Gemeinsame Form für VLAN-Übersicht und Host-Portcheck — beide wollen
+        dieselbe Zeile ('welches VLAN trägt dieses Netz, wie heißt es dort').
+        """
+        info = self.interface(device, name) or {}
+        ip = info.get("ip")
+        vdom = info.get("vdom") or "root"
+        return {
+            "device": device,
+            "vdom": vdom,
+            "interface": name,
+            "vlan": vlan_number(info.get("vlanid")),
+            "alias": info.get("alias"),
+            "description": info.get("description"),
+            "zone": self.zone_of(device, vdom, name) if info else name,
+            "ip": str(ip) if ip is not None else None,
+            "network": str(ip.network) if ip is not None else None,
+            "secondary_networks": [str(s.network) for s in info.get("secondary_ips", [])],
+            "enabled": info.get("enabled", True),
+            "adom": self.adom_of(device),
+        }
+
+    def vlan_interfaces(self) -> list[dict]:
+        """Alle Interfaces mit VLAN-Tag über alle Geräte — die L3-Seite der
+        VLAN-Übersicht. Deaktivierte bleiben drin (als solche markiert): für die
+        Frage 'welche VLAN-Nummer ist vergeben' zählt auch ein stillgelegtes."""
+        out = []
+        for device, table in self.interfaces.items():
+            for name, intf in table.items():
+                if vlan_number(intf.get("vlanid")) is None:
+                    continue
+                out.append(self.interface_facts(device, name))
+        return out
 
     def interfaces_by_ip(self, ip: str | ipaddress.IPv4Address,
                          device: str | None = None,

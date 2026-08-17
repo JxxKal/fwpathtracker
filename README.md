@@ -103,6 +103,17 @@ FMG/iTop/DNS aufgelöst.
   Standorten der L3-Router), MAC→Port aus der **LibreNMS**-FDB. Zeigt alle
   Fundstellen mit Uplink-Kennzeichnung, Konfidenz und Alter des Eintrags —
   siehe [Switchport-Suche](#switchport-suche-librenms).
+- **Netzwerkport-Check** — IP oder Name → **alle** Ports des Hosts mit VLAN, statt
+  nur des besten Treffers: je Fundstelle das VLAN, in dem die MAC gelernt wurde
+  (FDB) und die konfigurierte Mitgliedschaft des Ports (untagged/tagged). Ist der
+  Host selbst ein überwachtes Gerät, dazu seine komplette Portliste mit den je
+  Port beobachteten VLANs. Plus die L3-Seite: welches VLAN-Interface welcher
+  Firewall/VDOM das Subnetz trägt (aus dem FMG-Inventar, ohne Live-Abfrage).
+- **VLAN-Übersicht** — alle bekannten VLAN-Nummern mit Bezeichnung, Subnetz,
+  Switch-Anzahl und Firewall-Interface. Zusammengeführt über die **Nummer**
+  (Switch und Firewall benennen dasselbe VLAN oft verschieden), Quelle je Zeile
+  erkennbar. Freie Nummern als Lücken über 1–4094 — Aussage über den bekannten
+  Bestand, keine Reservierungs-Datenbank.
 
 ### 🔎 Resolver & Namensauflösung
 
