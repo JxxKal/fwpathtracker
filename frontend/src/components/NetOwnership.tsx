@@ -2,6 +2,7 @@ import { Network } from 'lucide-react';
 import { useState } from 'react';
 import { inventoryOwns, type OwnsMatch, type OwnsResult } from '../api';
 import { de } from '../i18n/de';
+import EndpointAutocomplete from './EndpointAutocomplete';
 
 // Diagnose: welche VDOM/Firewall hält ein Netz? Macht falsche/mehrdeutige
 // Ingress-Zuordnungen sichtbar (z.B. Quelle scheinbar an falscher FW).
@@ -43,17 +44,31 @@ export default function NetOwnership() {
         <p className="mt-0.5 text-xs text-slate-500">{de.owns.hint}</p>
       </div>
       <div className="flex gap-2">
-        <input
-          className="fwpt-input" placeholder="10.180.42.208" value={ip}
-          onChange={(e) => setIp(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && ip.trim() && lookup()}
-        />
+        {/* Dasselbe Eingabefeld wie im Pfad-Tracker: IP oder FMG-/iTop-/DNS-Objekt.
+            Ein Werkzeug, das beim Nachschlagen helfen soll, darf nicht selbst
+            verlangen, dass man die IP schon kennt. */}
+        <div className="flex-1">
+          <EndpointAutocomplete value={ip} onChange={setIp}
+            placeholder={de.owns.placeholder}
+            onSubmit={() => ip.trim() && lookup()} />
+        </div>
         <button type="button" className="fwpt-btn" onClick={lookup} disabled={busy || !ip.trim()}>
           {de.owns.check}
         </button>
       </div>
 
       {err && <p className="text-sm text-red-400">{err}</p>}
+
+      {/* Bei Eingabe eines Objektnamens belegen, auf welche IP er aufgelöst wurde —
+          sonst bleibt unklar, worüber die Tabelle darunter eigentlich spricht. */}
+      {res && res.names && res.names.length > 0 && (
+        <p className="text-xs text-slate-400">
+          <span className="font-mono text-slate-200">{res.ip}</span>
+          <span className="ml-2 text-slate-500">
+            {de.owns.resolved} {res.names.join(' · ')}
+          </span>
+        </p>
+      )}
 
       {res && res.matches.length === 0 && (
         <p className="text-sm text-amber-400">{de.owns.none}</p>

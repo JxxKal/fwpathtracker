@@ -2,6 +2,7 @@ import { Network, Router, Server } from 'lucide-react';
 import { useState } from 'react';
 import { hostPorts, type HostPortFinding, type HostPortsResult } from '../api';
 import { de } from '../i18n/de';
+import EndpointAutocomplete from './EndpointAutocomplete';
 
 // Netzwerkport-Check: das vollständige VLAN-Bild eines Hosts. Anders als die
 // Switchport-Suche wird hier nichts verengt — jede Fundstelle bleibt sichtbar,
@@ -72,11 +73,11 @@ export default function HostPortCheck() {
       </div>
 
       <div className="flex gap-2">
-        <input
-          className="fwpt-input" placeholder={de.hostPorts.placeholder} value={q}
-          onChange={(e) => setQ(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && q.trim() && search()}
-        />
+        <div className="flex-1">
+          <EndpointAutocomplete value={q} onChange={setQ}
+            placeholder={de.hostPorts.placeholder}
+            onSubmit={() => q.trim() && search()} />
+        </div>
         <button type="button" className="fwpt-btn" onClick={search} disabled={busy || !q.trim()}>
           {busy ? de.hostPorts.searching : de.hostPorts.search}
         </button>

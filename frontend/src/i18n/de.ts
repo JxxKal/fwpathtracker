@@ -97,8 +97,10 @@ export const de = {
   },
   owns: {
     title: 'Netz-Zugehörigkeit prüfen',
-    hint: 'An welchem VDOM/Interface ist das Netz connected (der Ursprung)? Mit VLAN, Maske und Gateway.',
+    hint: 'An welchem VDOM/Interface ist das Netz connected (der Ursprung)? Mit VLAN, Maske und Gateway. IP oder Objektname (FortiManager, iTop, DNS).',
+    placeholder: '10.180.42.208 oder WD-OT-L3-SVO3230',
     check: 'Prüfen',
+    resolved: 'aufgelöst aus',
     ingressTag: 'Start-Hop',
     none: 'Kein connected-Netz (Ursprung) für diese IP — nur per Routing erreichbar oder nicht synchronisiert. FMG-Sync/Site-Override prüfen.',
     ambiguous: 'Dasselbe Netz ist an mehreren VDOMs connected — der Start-Hop ist mehrdeutig (ggf. deaktiviertes Interface? Site-Override).',
@@ -147,8 +149,8 @@ export const de = {
   },
   locate: {
     title: 'Martin Lehmann, wo hängt das Gerät?',
-    hint: 'IP oder Name eingeben — Switch und Port, an dem das Gerät physisch steckt. IP→MAC live von der FortiGate, MAC→Port aus LibreNMS.',
-    placeholder: '10.133.167.42',
+    hint: 'IP oder Objektname (FortiManager, iTop, DNS) — Switch und Port, an dem das Gerät physisch steckt. IP→MAC live von der FortiGate, MAC→Port aus LibreNMS.',
+    placeholder: '10.133.167.42 oder WD-OT-L3-SVO3230',
     search: 'Suchen',
     searching: 'Suche …',
     mac: 'MAC-Adresse',

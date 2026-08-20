@@ -4,6 +4,7 @@ import {
   locateHost, type LocateCandidate, type LocateResult, type MatchReason, type PortKind,
 } from '../api';
 import { de } from '../i18n/de';
+import EndpointAutocomplete from './EndpointAutocomplete';
 
 // Wo steckt das Gerät physisch? IP→MAC von der FortiGate (live, über den
 // FMG-Proxy), MAC→Port aus der LibreNMS-FDB. Die Kandidatenliste bleibt
@@ -87,11 +88,11 @@ export default function LocateHost() {
       </div>
 
       <div className="flex gap-2">
-        <input
-          className="fwpt-input" placeholder={de.locate.placeholder} value={q}
-          onChange={(e) => setQ(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && q.trim() && search()}
-        />
+        <div className="flex-1">
+          <EndpointAutocomplete value={q} onChange={setQ}
+            placeholder={de.locate.placeholder}
+            onSubmit={() => q.trim() && search()} />
+        </div>
         <button type="button" className="fwpt-btn" onClick={search} disabled={busy || !q.trim()}>
           {busy ? de.locate.searching : de.locate.search}
         </button>

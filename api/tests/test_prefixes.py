@@ -112,3 +112,26 @@ def test_site_override_wins(inventory):
         [{"name": "Sonderfall", "cidr": "10.1.1.0/24", "device": "fw-x", "vdom": "root"}]
     )
     assert table.lookup("10.1.1.10").device == "fw-x"
+
+
+def test_owns_endpoint_body_takes_resolved_ip_and_names(inventory, prefixes):
+    """Die Netz-Zugehörigkeit arbeitet nach dem Umbau auf einer bereits
+    aufgelösten IP — bei Eingabe eines FMG-Objektnamens muss die Antwort
+    belegen, worauf aufgelöst wurde."""
+    from types import SimpleNamespace
+
+    from routers.fmg_admin import _owns
+
+    request = SimpleNamespace(app=SimpleNamespace(
+        state=SimpleNamespace(inventory=inventory, prefixes=prefixes)))
+
+    res = _owns(request, "10.2.1.30", ["srv-db"])
+    assert res["ip"] == "10.2.1.30"
+    assert res["names"] == ["srv-db"]
+    assert res["ingress"] == {"device": "fw-b", "vdom": "root", "interface": "lan1"}
+    assert [(m["device"], m["vdom"], m["cidr"]) for m in res["matches"]] \
+        == [("fw-b", "root", "10.2.1.0/24")]
+    assert res["matches"][0]["gateway"] == "10.2.1.1"
+
+    # Reine IP-Eingabe: gleiche Antwort, nur ohne Namen
+    assert _owns(request, "10.2.1.30", [])["names"] == []

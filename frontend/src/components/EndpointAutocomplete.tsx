@@ -21,9 +21,12 @@ interface Props {
   value: string;
   onChange: (v: string) => void;
   placeholder: string;
+  /** Enter im Feld — die Werkzeug-Kacheln lösen damit ihre Suche aus.
+   *  Ohne diesen Prop verhält sich das Feld wie bisher (Formular im Tracker). */
+  onSubmit?: () => void;
 }
 
-export default function EndpointAutocomplete({ value, onChange, placeholder }: Props) {
+export default function EndpointAutocomplete({ value, onChange, placeholder, onSubmit }: Props) {
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
@@ -78,6 +81,10 @@ export default function EndpointAutocomplete({ value, onChange, placeholder }: P
         className="fwpt-input" placeholder={placeholder} value={value}
         onChange={(e) => onChange(e.target.value)}
         onFocus={() => (hits.length > 0 || loading) && setOpen(true)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && onSubmit) { setOpen(false); onSubmit(); }
+          if (e.key === 'Escape') setOpen(false);
+        }}
         autoComplete="off"
       />
       {open && (loading || hits.length > 0 || value.trim().length >= 2) && (

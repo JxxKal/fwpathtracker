@@ -131,6 +131,9 @@ export interface OwnsMatch {
 }
 export interface OwnsResult {
   ip: string;
+  /** Namen, unter denen die IP bekannt ist — bei Eingabe eines Objektnamens
+   *  belegt das, worauf er aufgelöst wurde. */
+  names?: string[];
   ingress: { device: string; vdom: string; interface: string } | null;
   matches: OwnsMatch[];
 }
@@ -255,16 +258,19 @@ export async function freeSubnets(supernet: string, prefix: number): Promise<Fre
   return request('/api/itop/free-subnets', { method: 'POST', body: JSON.stringify({ supernet, prefix }) });
 }
 
-export async function inventoryOwns(ip: string): Promise<OwnsResult> {
+export async function inventoryOwns(q: string): Promise<OwnsResult> {
   if (isDemoMode()) {
     return {
-      ip, ingress: { device: 'fw-a', vdom: 'root', interface: 'lan1' },
+      ip: q, names: ['WD-OT-L3-SVO3230'],
+      ingress: { device: 'fw-a', vdom: 'root', interface: 'lan1' },
       matches: [
         { device: 'fw-a', vdom: 'root', interface: 'lan1', vlan: 42, cidr: '10.1.1.0/24', prefixlen: 24, netmask: '255.255.255.0', gateway: '10.1.1.1', source: 'connected', site_name: null },
       ],
     };
   }
-  return request(`/api/fmg/inventory/owns/${encodeURIComponent(ip)}`);
+  // Query-Parameter statt Pfadsegment: FMG-Objektnamen dürfen Schrägstriche und
+  // Leerzeichen enthalten ('NET-10.1.0.0/16').
+  return request(`/api/fmg/inventory/owns?q=${encodeURIComponent(q)}`);
 }
 
 export async function itopTest(): Promise<{ ok: boolean; organisations: string[] }> {
