@@ -250,3 +250,42 @@ async def test_host_ports_warns_when_no_connected_interface(inv, prefixes):
 
     assert res["l3"] == []
     assert any("Kein connected VLAN-Interface" in w for w in res["warnings"])
+
+
+async def test_overview_reports_unusable_vlan_rows(inv):
+    """Zeilen ohne verwertbare Nummer (0, leer, Unsinn) dürfen nicht spurlos
+    verschwinden — sonst fehlt ein VLAN und niemand erfährt warum."""
+    rows = VLAN_ROWS + [
+        {"vlan_id": 200, "device_id": 9, "vlan_vlan": 0, "vlan_name": "moxa-l2"},
+        {"vlan_id": 201, "device_id": 9, "vlan_vlan": "", "vlan_name": "leer"},
+        {"vlan_id": 202, "device_id": 9, "vlan_vlan": 9999, "vlan_name": "zu-gross"},
+    ]
+    client = FakeClient(vlans=rows,
+                        devices={"sw9": {"device_id": 9, "hostname": "hpe-l2-01"}})
+    res = await overview.build(inv, client, CFG)
+
+    assert res["stats"]["librenms_rows"] == 6
+    assert res["stats"]["librenms_skipped"] == 3
+    warn = " ".join(res["warnings"])
+    assert "3 VLAN-Zeile(n)" in warn and "hpe-l2-01" in warn
+    assert "0" in warn and "9999" in warn
+    # Die verwertbaren Zeilen stehen weiterhin drin
+    assert [v["vlan"] for v in res["vlans"]] == [7, 44, 90]
+
+
+async def test_overview_stats_show_contributing_devices(inv):
+    """Fehlt ein VLAN, ist die erste Frage: hat sein Switch überhaupt VLANs
+    geliefert? Die Bilanz macht das beantwortbar."""
+    client = FakeClient(devices={
+        "sw1": {"device_id": 3, "hostname": "sw-bocks-01"},
+        "sw2": {"device_id": 4, "hostname": "sw-bocks-02"},
+        "sw3": {"device_id": 5, "hostname": "hpe-ohne-vlan-discovery"},
+    })
+    res = await overview.build(inv, client, CFG)
+
+    st = res["stats"]
+    assert st["librenms_devices"] == 2          # nur 3 und 4 liefern VLANs
+    assert st["librenms_devices_known"] == 3    # LibreNMS überwacht drei
+    assert st["contributing_devices"] == ["sw-bocks-01", "sw-bocks-02"]
+    assert "hpe-ohne-vlan-discovery" not in st["contributing_devices"]
+    assert st["fmg_interfaces"] == 2

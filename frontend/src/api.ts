@@ -471,6 +471,18 @@ export interface VlanRow {
   sources: ('librenms' | 'fmg')[];
 }
 
+export interface VlanStats {
+  librenms_rows: number;
+  librenms_skipped: number;
+  /** Geräte, die tatsächlich VLANs geliefert haben … */
+  librenms_devices: number;
+  /** … gegenüber allen, die LibreNMS überwacht. Fehlt ein VLAN, ist das die
+   *  erste Frage: hat sein Switch überhaupt VLAN-Daten geliefert? */
+  librenms_devices_known: number;
+  contributing_devices: string[];
+  fmg_interfaces: number;
+}
+
 export interface VlanOverview {
   vlans: VlanRow[];
   free: [number, number][];
@@ -478,6 +490,7 @@ export interface VlanOverview {
   free_count: number;
   range: [number, number];
   sources: { librenms: boolean; fmg: boolean };
+  stats: VlanStats;
   synced_at: string | null;
   warnings: string[];
 }
@@ -504,6 +517,9 @@ export async function vlanOverview(): Promise<VlanOverview> {
       free: [[1, 43], [45, 89], [91, 4094]],
       used_count: 2, free_count: 4092, range: [1, 4094],
       sources: { librenms: true, fmg: true },
+      stats: { librenms_rows: 3, librenms_skipped: 0, librenms_devices: 2,
+        librenms_devices_known: 3, contributing_devices: ['moxa-iks-01', 'hpe-core-01'],
+        fmg_interfaces: 1 },
       synced_at: '2026-08-17T06:00:00+00:00', warnings: [],
     };
   }

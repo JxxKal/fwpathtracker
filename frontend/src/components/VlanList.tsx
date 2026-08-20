@@ -53,7 +53,11 @@ export default function VlanList() {
 
   const filtered = useMemo(
     () => (res ? res.vlans.filter((r) => matches(r, q.trim())) : []), [res, q]);
-  const rows = expanded ? filtered : filtered.slice(0, VISIBLE_ROWS);
+  // Gefilterte Treffer immer vollständig zeigen: Wer gezielt sucht, darf sein
+  // VLAN nicht hinter einem "weitere anzeigen" verlieren — genau so entsteht der
+  // Eindruck, ein VLAN fehle in der Übersicht.
+  const truncate = !expanded && q.trim().length === 0;
+  const rows = truncate ? filtered.slice(0, VISIBLE_ROWS) : filtered;
   const hidden = filtered.length - rows.length;
 
   return (
@@ -83,6 +87,15 @@ export default function VlanList() {
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
             <span>{de.vlans.used}: <span className="text-slate-200">{res.used_count}</span></span>
             <span>{de.vlans.free}: <span className="text-slate-200">{res.free_count}</span></span>
+            <span>{de.vlans.shown}: <span className="text-slate-200">
+              {rows.length}/{res.vlans.length}</span></span>
+            {/* Fehlt ein VLAN, ist die erste Frage, ob sein Switch überhaupt
+                VLANs geliefert hat — LibreNMS gibt nur zurück, was seine
+                VLAN-Discovery gefunden und das Token sehen darf. */}
+            <span title={res.stats.contributing_devices.join(', ')}>
+              {de.vlans.fromDevices(res.stats.librenms_devices,
+                res.stats.librenms_devices_known)}
+            </span>
             <button type="button" className="text-cyan-400 hover:text-cyan-300"
               onClick={() => setShowFree((v) => !v)}>
               {showFree ? de.vlans.hideFree : de.vlans.showFree}

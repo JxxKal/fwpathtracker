@@ -29,7 +29,14 @@ VLAN_MIN, VLAN_MAX = 1, 4094
 
 
 def _vlan_num(row: dict) -> int | None:
-    """VLAN-Nummer aus einer LibreNMS-Zeile (`vlan_vlan`), robust gegen Strings."""
+    """VLAN-Nummer aus einer LibreNMS-Zeile (`vlan_vlan`), robust gegen Strings.
+
+    None heißt: nicht als VLAN-Nummer verwertbar (leer, keine Zahl, außerhalb
+    1–4094). Solche Zeilen dürfen NICHT stillschweigend verschwinden — sonst
+    fehlt ein VLAN in der Übersicht, ohne dass irgendwo steht warum. Der Aufrufer
+    zählt sie und weist sie aus. Praktischer Fall: Geräte, die 0 melden (MOXA
+    macht das in der FDB, siehe docs/wiki/LibreNMS-MOXA-FDB.md).
+    """
     raw = row.get("vlan_vlan")
     if raw is None:
         return None
@@ -82,30 +89,49 @@ async def build(inv: Inventory, client: LibrenmsClient, librenms_cfg: dict) -> d
         warnings.append(f"LibreNMS-VLANs konnten nicht geladen werden: {exc}")
 
     device_names: dict[str, str] = {}
+    known_devices = 0
     if vlan_rows:
         try:
             index = await client.device_index(librenms_cfg)
             for dev in index.values():
                 did = str(dev.get("device_id"))
                 device_names[did] = dev.get("hostname") or dev.get("sysName") or did
+            known_devices = len(device_names)
         except Exception as exc:      # Namen sind Kür, die Nummern sind Pflicht
             log.info("Geräteindex nicht abrufbar: %s", exc)
 
+    skipped: list[dict] = []
+    contributing: set[str] = set()
     for r in vlan_rows:
         num = _vlan_num(r)
+        did = str(r.get("device_id"))
         if num is None:
+            skipped.append({"device_id": r.get("device_id"),
+                            "hostname": device_names.get(did),
+                            "vlan_vlan": r.get("vlan_vlan"),
+                            "vlan_name": r.get("vlan_name")})
             continue
+        contributing.add(did)
         entry = row(num)
         name = (r.get("vlan_name") or "").strip()
         if name and name not in entry["names"]:
             entry["names"].append(name)
-        did = str(r.get("device_id"))
         entry["switches"].append({
             "device_id": r.get("device_id"),
             "hostname": device_names.get(did),
             "name": name or None,
             "domain": r.get("vlan_domain"),
         })
+
+    if skipped:
+        values = sorted({str(s0["vlan_vlan"]) for s0 in skipped})[:6]
+        hosts = sorted({s0["hostname"] or str(s0["device_id"]) for s0 in skipped})[:6]
+        warnings.append(
+            f"{len(skipped)} VLAN-Zeile(n) aus LibreNMS ohne verwertbare Nummer "
+            f"übersprungen (Werte: {', '.join(values)}; Geräte: {', '.join(hosts)}) "
+            "— gültig ist 1–4094. Meldet ein Switch 0 oder leer, fehlt das VLAN "
+            "hier zwangsläufig."
+        )
 
     # ── FortiGate: L3-Sicht aus dem FMG-Inventar ─────────────────────────────
     fw_interfaces = inv.vlan_interfaces()
@@ -138,6 +164,22 @@ async def build(inv: Inventory, client: LibrenmsClient, librenms_cfg: dict) -> d
         "free_count": (VLAN_MAX - VLAN_MIN + 1) - len(used),
         "range": [VLAN_MIN, VLAN_MAX],
         "sources": {"librenms": librenms_ok, "fmg": bool(inv.devices)},
+        # Herkunfts-Bilanz: Fehlt ein VLAN, ist die erste Frage, ob sein Switch
+        # überhaupt VLANs geliefert hat. LibreNMS gibt in `list_vlans` nur die
+        # `vlans`-Tabelle zurück (gefiltert auf vlan_vlan IS NOT NULL und auf die
+        # Geräte-Rechte des Tokens) — ein Gerät ohne VLAN-Discovery oder ohne
+        # Leserecht taucht schlicht nicht auf, und das ist von außen nicht von
+        # 'VLAN existiert nicht' zu unterscheiden.
+        "stats": {
+            "librenms_rows": len(vlan_rows),
+            "librenms_skipped": len(skipped),
+            "librenms_devices": len(contributing),
+            "librenms_devices_known": known_devices,
+            "contributing_devices": sorted(
+                filter(None, (device_names.get(d, d) for d in contributing))
+            )[:100],
+            "fmg_interfaces": len(fw_interfaces),
+        },
         "synced_at": inv.synced_at,
         "warnings": warnings,
     }

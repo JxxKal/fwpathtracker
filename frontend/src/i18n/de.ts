@@ -133,6 +133,9 @@ export const de = {
     reload: 'Neu laden',
     used: 'Belegt',
     free: 'Frei',
+    shown: 'Angezeigt',
+    fromDevices: (n: number, total: number) =>
+      `VLAN-Daten von ${n}${total ? ` von ${total}` : ''} überwachten Geräten`,
     showFree: 'Freie Nummern zeigen',
     hideFree: 'Freie Nummern ausblenden',
     noneFree: 'Keine freien Nummern.',
