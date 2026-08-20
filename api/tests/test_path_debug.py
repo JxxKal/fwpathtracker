@@ -440,3 +440,72 @@ async def test_shared_underlay_without_owner_ends_at_sdwan(
     warn = " ".join(hops[0].warnings)
     assert "keinem gemanagten Gerät zuzuordnen" in warn
     assert "Site-Override" in warn
+
+
+# ── FortiOS-interne Policy-IDs (>= 2^30) ─────────────────────────────────────
+
+def test_internal_policy_id_detection():
+    from engine.path import INTERNAL_POLICY_ID_MIN, is_internal_policy_id
+    assert INTERNAL_POLICY_ID_MIN == 1073741824
+    assert is_internal_policy_id(1073741828) is True      # 0x40000004, Feld-Fall
+    assert is_internal_policy_id("1073741824") is True
+    assert is_internal_policy_id(820) is False            # normale Package-Regel
+    assert is_internal_policy_id(0) is False
+    assert is_internal_policy_id(None) is False
+    assert is_internal_policy_id("keine-zahl") is False
+
+
+async def test_internal_policy_hit_does_not_blame_the_sync(inventory, prefixes):
+    """Matcht live eine Regel mit interner ID, ist sie im FortiManager per
+    Definition unbekannt — die Meldung darf nicht auf einen veralteten Sync
+    zeigen, denn ein erneuter Sync kann sie nie liefern."""
+    client, t = make_client()
+    add_route(t, "fw-a", "root", "10.1.2.20", "lan2")
+    add_policy_lookup(t, "fw-a", "root",
+                      tcp_params("lan1", "10.1.1.10", "10.1.2.20", 443), 1073741828)
+
+    hops = await _trace(inventory, prefixes, client, "10.1.1.10", "10.1.2.20")
+
+    assert hops[0].verdict == "UNKNOWN"          # Aktion bleibt unbekannt
+    warn = " ".join(hops[0].warnings)
+    assert "FortiOS-INTERNE" in warn and "1073741828" in warn
+    assert "reserviert" in warn
+    assert "Sync veraltet" not in warn           # genau die falsche Fährte
+    assert "iprope" in warn
+
+
+async def test_hairpin_is_flagged_with_owner_vdom(inventory, prefixes):
+    """Tritt der Trace auf einem VDOM ein und routet über DASSELBE Interface
+    wieder hinaus, stimmt der Eintritt nicht — inklusive Hinweis, auf welchem
+    VDOM das Ziel laut Präfix-Tabelle liegt."""
+    client, t = make_client()
+    # fw-a/root: Ziel 10.1.8.5 (liegt connected auf VDOM dmz) über lan1 zurück
+    add_route(t, "fw-a", "root", "10.1.8.5", "lan1", network="0.0.0.0/0")
+    add_policy_lookup(t, "fw-a", "root",
+                      tcp_params("lan1", "10.1.1.10", "10.1.8.5", 443), 100)
+
+    hops = await _trace(inventory, prefixes, client, "10.1.1.10", "10.1.8.5")
+
+    warn = " ".join(hops[0].warnings)
+    assert "Hairpin" in warn and "'lan1'" in warn
+    assert hops[0].debug["hairpin"]["interface"] == "lan1"
+    assert hops[0].debug["hairpin"]["owner_vdom"] == "dmz"
+    assert "dmz" in warn
+
+
+async def test_same_subnet_is_not_reported_as_hairpin(inventory, prefixes):
+    """Quelle und Ziel am selben Interface ist kein Hairpin, sondern Verkehr,
+    den die Firewall nie sieht — die Meldung muss das sagen, nicht 'Eintritt
+    falsch angesetzt'."""
+    client, t = make_client()
+    add_route(t, "fw-a", "root", "10.1.1.20", "lan1")
+    add_policy_lookup(t, "fw-a", "root",
+                      tcp_params("lan1", "10.1.1.10", "10.1.1.20", 443), 100)
+
+    hops = await _trace(inventory, prefixes, client, "10.1.1.10", "10.1.1.20")
+
+    warn = " ".join(hops[0].warnings)
+    assert hops[0].egress_class == "LOCAL"
+    assert "selben Netzsegment" in warn and "über den Switch" in warn
+    assert "Hairpin" not in warn
+    assert "hairpin" not in hops[0].debug

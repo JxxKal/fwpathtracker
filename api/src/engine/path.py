@@ -22,6 +22,24 @@ log = logging.getLogger("engine.path")
 
 PROTO_NUMBERS = {"tcp": 6, "udp": 17, "icmp": 1}
 
+# FortiOS vergibt Policy-IDs ab 2^30 an INTERNE Regeln — implizit bzw.
+# automatisch erzeugt (SD-WAN/ADVPN-Shortcuts, Local-In, VPN-Hilfsregeln). Der
+# FortiManager reserviert denselben Bereich für sich: Regeln mit solchen IDs
+# lassen sich dort weder importieren noch anlegen. Sie fehlen im A38-Snapshot
+# also PER DEFINITION und nicht, weil ein Sync alt wäre — genau das behauptete
+# die frühere Meldung und schickte damit auf die falsche Fährte.
+# (FortiManager-Doku 'Appendix B – Policy ID support'; FortiGate erlaubt
+# 0–4294967294, der FortiManager nur den Bereich unterhalb dieser Grenze.)
+INTERNAL_POLICY_ID_MIN = 1 << 30
+
+
+def is_internal_policy_id(pid) -> bool:
+    """True für FortiOS-interne Policy-IDs (>= 2^30), die es im FMG nie gibt."""
+    try:
+        return int(str(pid).strip()) >= INTERNAL_POLICY_ID_MIN
+    except (TypeError, ValueError):
+        return False
+
 
 class TraceError(Exception):
     """Harter Fehler, der den Trace verhindert (z.B. Quelle unbekannt)."""
@@ -391,6 +409,38 @@ async def _walk_path(*, src_ip: str, dst_ip: str, inv: Inventory, prefixes: Pref
         step.egress_class = cls.egress_class
         step.warnings.extend(cls.warnings)
         step.debug["classification"] = cls.debug
+
+        # Hairpin: Das Paket verlässt den Hop über dasselbe Interface, über das es
+        # hereinkam. Für einen Trace heißt das fast immer, dass der EINTRITT nicht
+        # stimmt (falscher VDOM oder falsches Gerät) — und ein Policy-Lookup mit
+        # srcintf == dstintf beantwortet dann eine Frage, die es so nicht gibt.
+        if (step.egress and step.srcintf and step.srcintf == step.egress
+                and cls.egress_class == "LOCAL"):
+            # Sonderfall desselben Interfaces: Quelle UND Ziel hängen am selben
+            # connected Netz. Kein Hairpin-Indiz, sondern schlicht Verkehr, den
+            # die Firewall nie sieht — er bleibt im Switch.
+            step.warnings.append(
+                f"Quelle und Ziel liegen beide an '{step.egress}' ({device}/{vdom}) "
+                "— im selben Netzsegment läuft der Verkehr über den Switch und "
+                "erreicht die Firewall gar nicht. Der Policy-Treffer sagt hier "
+                "nichts über die tatsächliche Erreichbarkeit."
+            )
+        elif step.egress and step.srcintf and step.srcintf == step.egress:
+            owner = cls.debug.get("dst_owner") or {}
+            hint = ""
+            if owner.get("device") == device and owner.get("vdom") != vdom:
+                hint = (f" Laut Präfix-Tabelle liegt {dst_ip} auf {device}/"
+                        f"{owner['vdom']} (via '{owner.get('interface')}'), der "
+                        f"Eintritt erfolgte aber auf VDOM '{vdom}' — führt von dort "
+                        "kein VDOM-Link weiter, ist der Hop falsch angesetzt.")
+            step.warnings.append(
+                f"Ein- und Ausgang sind dasselbe Interface ('{step.egress}') — das "
+                f"Paket würde {device}/{vdom} über denselben Port wieder verlassen "
+                f"(Hairpin). Der Policy-Treffer dieses Hops ist damit fraglich." + hint
+            )
+            step.debug["hairpin"] = {"interface": step.egress, "vdom": vdom,
+                                     "owner_vdom": owner.get("vdom"),
+                                     "owner_interface": owner.get("interface")}
         steps.append(step)
 
         # ── c) Nächster Hop ──────────────────────────────────────────────────
@@ -511,6 +561,21 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
                 match.hit = True
                 hop.matched_policy = match
                 hop.verdict = "ALLOW" if match.action == "accept" else "DENY"
+            elif is_internal_policy_id(pid):
+                # Kein Sync-Problem: Der FortiManager reserviert diesen ID-Bereich
+                # für sich, solche Regeln KÖNNEN dort nicht liegen.
+                hop.verdict = "UNKNOWN"
+                hop.warnings.append(
+                    f"Live matcht Policy #{pid} — das ist eine FortiOS-INTERNE "
+                    f"Regel (ID ab {INTERNAL_POLICY_ID_MIN}, hier "
+                    f"{INTERNAL_POLICY_ID_MIN} + {int(pid) - INTERNAL_POLICY_ID_MIN}), "
+                    "keine Regel aus dem Policy-Package. Solche IDs sind im "
+                    "FortiManager reserviert und lassen sich dort weder importieren "
+                    "noch anlegen — ein erneuter Sync ändert daran nichts. Typisch "
+                    "für automatisch erzeugte Regeln (SD-WAN-/ADVPN-Shortcut, "
+                    "Local-In, VPN-Hilfsregel). Aktion nur auf dem Gerät selbst "
+                    "nachvollziehbar: 'diagnose firewall iprope list'."
+                )
             else:
                 hop.verdict = "UNKNOWN"
                 hop.warnings.append(
