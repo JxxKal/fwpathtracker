@@ -455,10 +455,10 @@ def test_internal_policy_id_detection():
     assert is_internal_policy_id("keine-zahl") is False
 
 
-async def test_internal_policy_hit_does_not_blame_the_sync(inventory, prefixes):
-    """Matcht live eine Regel mit interner ID, ist sie im FortiManager per
-    Definition unbekannt — die Meldung darf nicht auf einen veralteten Sync
-    zeigen, denn ein erneuter Sync kann sie nie liefern."""
+async def test_reserved_policy_id_without_global_package(inventory, prefixes):
+    """Ohne synchronisiertes globales Package bleibt die Aktion offen — die
+    Meldung muss auf die globalen Header-/Footer-Regeln zeigen und NICHT auf
+    einen veralteten Sync des Geräte-Packages."""
     client, t = make_client()
     add_route(t, "fw-a", "root", "10.1.2.20", "lan2")
     add_policy_lookup(t, "fw-a", "root",
@@ -468,10 +468,67 @@ async def test_internal_policy_hit_does_not_blame_the_sync(inventory, prefixes):
 
     assert hops[0].verdict == "UNKNOWN"          # Aktion bleibt unbekannt
     warn = " ".join(hops[0].warnings)
-    assert "FortiOS-INTERNE" in warn and "1073741828" in warn
-    assert "reserviert" in warn
+    assert "1073741828" in warn and "Header-/Footer" in warn
     assert "Sync veraltet" not in warn           # genau die falsche Fährte
     assert "iprope" in warn
+
+
+async def test_global_header_policy_is_resolved(prefixes):
+    """Ist das globale Package gesynct, wird der Treffer aufgelöst: Regelname,
+    Aktion und Herkunft stehen fest — kein 'Unbekannt' mehr."""
+    from conftest import lab_snapshot_rows
+
+    rows = lab_snapshot_rows() + [{
+        "adom": "global", "kind": "global_policy", "key": "GLOBAL-PKG|header",
+        "data": [{
+            "policyid": 1073741826, "name": "GLOBAL-Admin-Zugriff", "action": 1,
+            "status": 1, "srcintf": ["any"], "dstintf": ["any"],
+            "srcaddr": ["all"], "dstaddr": ["all"], "service": ["ALL"],
+        }],
+    }]
+    inv = Inventory.build(rows, synced_at="2026-08-21T05:00:00+00:00")
+    assert inv.adoms == ["corp"]                 # 'global' ist kein Kunden-ADOM
+    prefixes = inv.build_prefix_table()
+
+    client, t = make_client()
+    add_route(t, "fw-a", "root", "10.1.2.20", "lan2")
+    add_policy_lookup(t, "fw-a", "root",
+                      tcp_params("lan1", "10.1.1.10", "10.1.2.20", 443), 1073741826)
+
+    hops = await _trace(inv, prefixes, client, "10.1.1.10", "10.1.2.20")
+
+    hop = hops[0]
+    assert hop.verdict == "ALLOW"
+    assert hop.matched_policy.policyid == 1073741826
+    assert hop.matched_policy.name == "GLOBAL-Admin-Zugriff"
+    assert hop.matched_policy.scope == "header"
+    assert hop.matched_policy.package == "GLOBAL-PKG"
+    assert hop.matched_policy.hit is True
+    assert hop.candidates[0].policyid == 1073741826   # steht oben in der Liste
+    warn = " ".join(hop.warnings)
+    assert "GLOBALE header-Regel" in warn and "vor den Regeln" in warn
+    assert "GLOBAL-PKG" in warn
+
+
+async def test_global_policy_lookup_tolerates_offset_ids():
+    """Ob der FortiManager die ID bereits im reservierten Bereich führt oder das
+    Gerät nur den 2^30-Offset aufschlägt, ist nicht dokumentiert — beide
+    Lesarten müssen treffen."""
+    from conftest import lab_snapshot_rows
+
+    rows = lab_snapshot_rows() + [{
+        "adom": "global", "kind": "global_policy", "key": "GP|footer",
+        "data": [{"policyid": 2, "name": "GLOBAL-Deny-Rest", "action": 0,
+                  "status": 1, "srcintf": ["any"], "dstintf": ["any"],
+                  "srcaddr": ["all"], "dstaddr": ["all"], "service": ["ALL"]}],
+    }]
+    inv = Inventory.build(rows)
+    # Gerät meldet 2^30 + 2, FMG führt die Regel als 2
+    hit = inv.global_policy(1073741826)
+    assert hit is not None and hit["name"] == "GLOBAL-Deny-Rest"
+    assert hit["scope"] == "footer" and hit["package"] == "GP"
+    assert inv.global_policy(2)["name"] == "GLOBAL-Deny-Rest"
+    assert inv.global_policy(1073741999) is None
 
 
 async def test_hairpin_is_flagged_with_owner_vdom(inventory, prefixes):

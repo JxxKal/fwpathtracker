@@ -14,7 +14,7 @@ from typing import Any, Callable
 import asyncpg
 
 from fmg.client import FmgClient, FmgError
-from inventory.store import Inventory
+from inventory.store import GLOBAL_ADOM, Inventory
 
 log = logging.getLogger("inventory.sync")
 
@@ -50,6 +50,7 @@ class SyncManager:
         })
         try:
             counts: dict[str, int] = {}
+            await self._sync_global(pool, client, counts)
             for adom in adoms:
                 await self._sync_adom(pool, client, adom, counts)
             self.state["stats"] = counts
@@ -65,6 +66,43 @@ class SyncManager:
             self._log(f"FEHLER: {exc}")
         finally:
             self.state["finished_at"] = datetime.now(timezone.utc).isoformat()
+
+    async def _sync_global(self, pool: asyncpg.Pool, client: FmgClient,
+                           counts: dict[str, int]) -> None:
+        """Globale Header-/Footer-Regeln (FMG-'global'-ADOM).
+
+        Sie umschließen die Package-Regeln jedes Geräts — Header davor, Footer
+        danach — und tauchen in der Geräte-Policy-Liste NICHT auf. Auf der
+        FortiGate tragen sie IDs aus dem reservierten Bereich (ab 2^30). Ohne
+        diesen Sync kann der Tracker einen Treffer darauf nur benennen, aber
+        nicht auflösen: Regelname und Aktion blieben unbekannt.
+        """
+        self._log("Globale Header-/Footer-Regeln laden ...")
+        try:
+            pkgs_raw = await client.rpc("get", "/pm/pkg/global") or []
+        except FmgError as exc:
+            # Kein globales Package (oder keine Rechte) ist ein legitimer Zustand.
+            self._log(f"Globale Packages nicht abrufbar ({exc}) – übersprungen.")
+            return
+
+        items: list[tuple[str, Any]] = []
+        total = 0
+        for pkg in _flatten_packages(pkgs_raw):
+            path = pkg["_path"]
+            for scope in ("header", "footer"):
+                try:
+                    policies = await client.rpc(
+                        "get", f"/pm/config/global/pkg/{path}/global/{scope}/policy"
+                    ) or []
+                except FmgError as exc:
+                    self._log(f"  Global '{path}' {scope}: {exc} – übersprungen.")
+                    continue
+                if policies:
+                    items.append((f"{path}|{scope}", policies))
+                    total += len(policies)
+        await self._store(pool, GLOBAL_ADOM, "global_policy", items)
+        counts["global:policies"] = total
+        self._log(f"Globale Regeln: {total}")
 
     async def _sync_adom(self, pool: asyncpg.Pool, client: FmgClient, adom: str,
                          counts: dict[str, int]) -> None:

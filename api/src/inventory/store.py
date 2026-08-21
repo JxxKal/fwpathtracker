@@ -99,6 +99,10 @@ def _intf_enabled(value: Any) -> bool:
                                           "false", "off")
 
 
+# Pseudo-ADOM, unter dem die globalen Header-/Footer-Regeln abgelegt werden.
+GLOBAL_ADOM = "global"
+
+
 def vlan_number(value: Any) -> int | None:
     """VLAN-Tag eines Interfaces → Nummer, sonst None.
 
@@ -148,6 +152,10 @@ class Inventory:
     def __init__(self) -> None:
         self.synced_at: str | None = None
         self.adoms: list[str] = []
+        # Globale Header-/Footer-Regeln aus dem FortiManager (ADOM 'global').
+        # Sie umschließen die Package-Regeln des Geräts und tragen IDs aus dem
+        # reservierten Bereich — in der Geräte-Policy-Liste stehen sie nicht.
+        self.global_policies: dict[int, dict] = {}
         # device → {adom, vdoms:[...], data}
         self.devices: dict[str, dict] = {}
         # device → {intf_name: {ip, vdom, type, name}}
@@ -180,7 +188,9 @@ class Inventory:
         by_kind: dict[str, list[dict]] = defaultdict(list)
         for r in rows:
             by_kind[r["kind"]].append(r)
-        inv.adoms = sorted({r["adom"] for r in rows})
+        # 'global' ist ein FMG-Pseudo-ADOM (Header-/Footer-Regeln), kein
+        # Kunden-ADOM — er darf nicht in Objekt-Suchen und VIP-Scans landen.
+        inv.adoms = sorted({r["adom"] for r in rows if r["adom"] != GLOBAL_ADOM})
 
         for r in by_kind.get("device", []):
             data = r["data"]
@@ -263,6 +273,20 @@ class Inventory:
             for r in by_kind.get(kind, []):
                 name = r["data"].get("name") or r["key"]
                 target.setdefault(r["adom"], {})[name] = r["data"]
+
+        # Globale Header-/Footer-Policies: key = '<paket>|header' bzw. '|footer'.
+        for r in by_kind.get("global_policy", []):
+            pkg, _, scope = r["key"].partition("|")
+            for p in _as_list(r["data"]):
+                norm = inv._normalize_policy(p)
+                pid = norm.get("policyid")
+                if pid is None:
+                    continue
+                norm["scope"] = scope or "header"
+                norm["package"] = pkg
+                # Erster Treffer gewinnt: dieselbe ID in Header UND Footer wäre
+                # eine FMG-Inkonsistenz, kein Normalfall.
+                inv.global_policies.setdefault(int(pid), norm)
 
         for r in by_kind.get("route", []):
             device, _, vdom = r["key"].partition("|")
@@ -456,6 +480,23 @@ class Inventory:
         if info.get("type") in ("vdom-link", "npu-vlink"):
             return True
         return bool(re.search(r"(?i)(vlink|vd-?link|vdom)", intf_name))
+
+    def global_policy(self, policyid) -> dict | None:
+        """Globale Header-/Footer-Regel zu einer vom Gerät gemeldeten Policy-ID.
+
+        FortiOS meldet für diese Regeln IDs aus dem reservierten Bereich (ab
+        2^30). Ob der FortiManager sie dort schon so führt oder nur den Offset
+        aufschlägt, ist nicht dokumentiert — deshalb beide Lesarten probieren:
+        erst die ID selbst, dann ohne den 2^30-Offset.
+        """
+        try:
+            pid = int(str(policyid).strip())
+        except (TypeError, ValueError):
+            return None
+        hit = self.global_policies.get(pid)
+        if hit is not None:
+            return hit
+        return self.global_policies.get(pid - (1 << 30))
 
     def object_type(self, adom: str, name: str) -> str:
         """Typ eines in einer Policy referenzierten Objekts — für die FortiManager-
@@ -679,5 +720,6 @@ class Inventory:
                 "services": sum(len(v) for v in self.services.values()),
                 "vips": sum(len(v) for v in self.vips.values()),
                 "zones": sum(len(v) for v in self.zones.values()),
+                "global_policies": len(self.global_policies),
             },
         }

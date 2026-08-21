@@ -562,20 +562,39 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
                 hop.matched_policy = match
                 hop.verdict = "ALLOW" if match.action == "accept" else "DENY"
             elif is_internal_policy_id(pid):
-                # Kein Sync-Problem: Der FortiManager reserviert diesen ID-Bereich
-                # für sich, solche Regeln KÖNNEN dort nicht liegen.
-                hop.verdict = "UNKNOWN"
-                hop.warnings.append(
-                    f"Live matcht Policy #{pid} — das ist eine FortiOS-INTERNE "
-                    f"Regel (ID ab {INTERNAL_POLICY_ID_MIN}, hier "
-                    f"{INTERNAL_POLICY_ID_MIN} + {int(pid) - INTERNAL_POLICY_ID_MIN}), "
-                    "keine Regel aus dem Policy-Package. Solche IDs sind im "
-                    "FortiManager reserviert und lassen sich dort weder importieren "
-                    "noch anlegen — ein erneuter Sync ändert daran nichts. Typisch "
-                    "für automatisch erzeugte Regeln (SD-WAN-/ADVPN-Shortcut, "
-                    "Local-In, VPN-Hilfsregel). Aktion nur auf dem Gerät selbst "
-                    "nachvollziehbar: 'diagnose firewall iprope list'."
-                )
+                # IDs ab 2^30 kommen nicht aus dem Geräte-Package. In dieser
+                # Umgebung sind das die GLOBALEN Header-/Footer-Regeln des
+                # FortiManagers: sie umschließen die Package-Regeln und greifen
+                # deshalb auf mehreren VDOMs gleich.
+                gp = inv.global_policy(pid)
+                if gp is not None:
+                    match = Candidate(**{k: v for k, v in gp.items()
+                                         if k in Candidate.model_fields})
+                    match.hit = True
+                    hop.matched_policy = match
+                    hop.verdict = "ALLOW" if match.action == "accept" else "DENY"
+                    candidates.insert(0, match)
+                    where = "vor" if gp.get("scope") == "header" else "nach"
+                    hop.warnings.append(
+                        f"Treffer ist die GLOBALE {gp.get('scope', 'header')}-Regel "
+                        f"#{pid} „{match.name or '—'}“ aus dem FortiManager-Package "
+                        f"'{gp.get('package')}' — sie steht {where} den Regeln des "
+                        "Geräte-Packages und gilt für alle zugewiesenen VDOMs. Zu "
+                        "ändern ist sie im globalen Package, nicht am Gerät."
+                    )
+                else:
+                    hop.verdict = "UNKNOWN"
+                    hop.warnings.append(
+                        f"Live matcht Policy #{pid} — eine Regel aus dem "
+                        f"reservierten ID-Bereich (ab {INTERNAL_POLICY_ID_MIN}). "
+                        "Das sind die globalen Header-/Footer-Regeln des "
+                        "FortiManagers, die alle Packages umschließen; im "
+                        "Geräte-Package stehen sie nicht. Der Sync hat kein "
+                        "globales Package gefunden (keins vorhanden oder keine "
+                        "Leserechte darauf) — deshalb bleiben Name und Aktion "
+                        "offen. Am Gerät nachvollziehbar mit "
+                        "'diagnose firewall iprope list'."
+                    )
             else:
                 hop.verdict = "UNKNOWN"
                 hop.warnings.append(

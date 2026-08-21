@@ -21,6 +21,10 @@ class Candidate(BaseModel):
     comments: str = ""
     hit: bool = False
     obj_types: dict[str, str] = Field(default_factory=dict)  # Objektname → Typ (für Icons)
+    # Gesetzt, wenn die Regel NICHT aus dem Geräte-Package stammt, sondern aus
+    # dem globalen Header-/Footer-Package des FortiManagers.
+    scope: str | None = None          # header | footer
+    package: str | None = None
 
 
 class Endpoint(BaseModel):

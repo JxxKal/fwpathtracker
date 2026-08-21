@@ -1,4 +1,5 @@
 import { ArrowLeftRight, Boxes, Globe, Monitor, Wrench, type LucideIcon } from 'lucide-react';
+import { de } from '../i18n/de';
 import type { Candidate } from '../types';
 
 const ICONS: Record<string, LucideIcon> = {
@@ -48,6 +49,14 @@ export default function PolicyCard({ policy }: { policy: Candidate }) {
         <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
           policy.action === 'accept' ? 'bg-emerald-900/60 text-emerald-300' : 'bg-red-900/60 text-red-300'
         }`}>{policy.action}</span>
+        {/* Globale Regel: steht nicht im Geräte-Package, sondern umschließt es —
+            wer sie am Gerät sucht, sucht vergeblich. */}
+        {policy.scope && (
+          <span className="rounded bg-violet-900/60 px-1.5 py-0.5 text-[11px] font-medium text-violet-300"
+            title={de.hop.globalPolicyTitle(policy.scope, policy.package ?? '')}>
+            {de.hop.globalPolicy(policy.scope)}
+          </span>
+        )}
       </div>
       <div className="grid gap-4 text-xs sm:grid-cols-2 lg:grid-cols-5">
         <Col label="Quell-Interface" names={policy.srcintf} def="interface" />

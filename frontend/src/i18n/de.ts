@@ -74,6 +74,11 @@ export const de = {
     suggestion: 'Regelvorschlag',
     degraded: 'Gerät offline — Daten aus Cache',
     downstream: 'nachgelagert',
+    globalPolicy: (scope: string) => scope === 'footer' ? 'Global-Footer' : 'Global-Header',
+    globalPolicyTitle: (scope: string, pkg: string) =>
+      `Globale ${scope === 'footer' ? 'Footer' : 'Header'}-Regel aus dem FortiManager-Package „${pkg}". `
+      + `Sie steht ${scope === 'footer' ? 'nach' : 'vor'} den Regeln des Geräte-Packages und gilt für alle `
+      + 'zugewiesenen VDOMs — geändert wird sie im globalen Package, nicht am Gerät.',
     downstreamHint: 'Hinter einer früheren Blockade — Verkehr erreicht diese Firewall erst, wenn die vorigen Hops geöffnet sind.',
   },
   freesubnet: {

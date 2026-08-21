@@ -28,6 +28,10 @@ export interface Candidate {
   comments: string;
   hit: boolean;
   obj_types?: Record<string, string>;
+  /** Gesetzt bei globalen Header-/Footer-Regeln des FortiManagers — die stehen
+   *  nicht im Geräte-Package und sind auch nur dort zu ändern. */
+  scope?: 'header' | 'footer' | null;
+  package?: string | null;
 }
 
 export interface Suggestion {
