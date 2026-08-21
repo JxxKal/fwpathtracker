@@ -129,12 +129,24 @@ export default function VlanList() {
                         <span className="font-mono text-slate-200">{r.vlan}</span>
                       </span>
                     </td>
-                    <td className="py-1 pr-2 text-slate-300">{r.names.join(' · ') || '—'}</td>
+                    <td className="py-1 pr-2 text-slate-300">
+                      {r.names.length > 0 ? r.names.join(' · ') : (
+                        // Kein echter Name: den LibreNMS-Platzhalter NICHT als
+                        // Bezeichnung ausgeben — er verdeckt sonst, dass am
+                        // Switch nichts hinterlegt ist.
+                        <span className="text-slate-600" title={de.vlans.unnamedTitle}>
+                          {de.vlans.unnamed}
+                        </span>
+                      )}
+                    </td>
                     <td className="py-1 pr-2 font-mono text-slate-400">
                       {r.networks.join(', ') || '—'}
                     </td>
                     <td className="py-1 pr-2 text-slate-400"
-                      title={r.switches.map((s) => s.hostname ?? s.device_id).join(', ')}>
+                      title={r.switches
+                        .map((s) => `${s.hostname ?? s.device_id}: ${s.placeholder
+                          ? de.vlans.unnamed : (s.name ?? de.vlans.unnamed)}`)
+                        .join('\n')}>
                       {r.switch_count || '—'}
                     </td>
                     <td className="py-1 text-slate-400">

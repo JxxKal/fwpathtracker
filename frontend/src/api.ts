@@ -465,10 +465,13 @@ export interface VlanRow {
   names: string[];
   networks: string[];
   switches: { device_id: number; hostname: string | null; name: string | null;
-              domain?: string | null }[];
+              /** Name ist nur der LibreNMS-Platzhalter 'VLAN <Nr>' */
+              placeholder?: boolean; domain?: string | null }[];
   switch_count: number;
   firewall_interfaces: L3Interface[];
   sources: ('librenms' | 'fmg')[];
+  /** Keine echte Bezeichnung aus irgendeiner Quelle. */
+  unnamed?: boolean;
 }
 
 export interface VlanStats {
@@ -479,6 +482,8 @@ export interface VlanStats {
   /** … gegenüber allen, die LibreNMS überwacht. Fehlt ein VLAN, ist das die
    *  erste Frage: hat sein Switch überhaupt VLAN-Daten geliefert? */
   librenms_devices_known: number;
+  /** VLANs, für die kein Gerät einen Namen liefert (nur Platzhalter). */
+  unnamed_vlans: number;
   contributing_devices: string[];
   fmg_interfaces: number;
 }
@@ -513,13 +518,22 @@ export async function vlanOverview(): Promise<VlanOverview> {
         { vlan: 90, names: ['OT-Mgmt'], networks: [],
           switches: [{ device_id: 42, hostname: 'hpe-core-01', name: 'OT-Mgmt' }],
           switch_count: 1, firewall_interfaces: [], sources: ['librenms'] },
+        // Reines L2-VLAN: keine IP nirgends, Bezeichnung nur vom Switch
+        { vlan: 815, names: ['Kamera-Netz Halle 3'], networks: [],
+          switches: [{ device_id: 42, hostname: 'hpe-core-01', name: 'Kamera-Netz Halle 3' }],
+          switch_count: 1, firewall_interfaces: [], sources: ['librenms'] },
+        // L2-VLAN, dessen Switch keinen Namen meldet
+        { vlan: 816, names: [], networks: [],
+          switches: [{ device_id: 42, hostname: 'hpe-core-01', name: 'VLAN 816',
+            placeholder: true }],
+          switch_count: 1, firewall_interfaces: [], sources: ['librenms'], unnamed: true },
       ],
       free: [[1, 43], [45, 89], [91, 4094]],
       used_count: 2, free_count: 4092, range: [1, 4094],
       sources: { librenms: true, fmg: true },
       stats: { librenms_rows: 3, librenms_skipped: 0, librenms_devices: 2,
-        librenms_devices_known: 3, contributing_devices: ['moxa-iks-01', 'hpe-core-01'],
-        fmg_interfaces: 1 },
+        librenms_devices_known: 3, unnamed_vlans: 0,
+        contributing_devices: ['moxa-iks-01', 'hpe-core-01'], fmg_interfaces: 1 },
       synced_at: '2026-08-17T06:00:00+00:00', warnings: [],
     };
   }

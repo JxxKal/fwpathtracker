@@ -47,6 +47,19 @@ def _vlan_num(row: dict) -> int | None:
     return num if VLAN_MIN <= num <= VLAN_MAX else None
 
 
+def is_placeholder_name(name: str, num: int) -> bool:
+    """LibreNMS-Platzhalter statt echtem VLAN-Namen?
+
+    Meldet ein Gerät über `dot1qVlanStaticName` keinen Namen, schreibt LibreNMS
+    'VLAN <Nr>' in die Tabelle (LibreNMS/Modules/Vlans.php). Das sieht in einer
+    Spalte 'Bezeichnung' wie eine Angabe aus, ist aber genau das Gegenteil — die
+    Information fehlt. Als Name durchgereicht würde es verdecken, dass am Switch
+    nichts zu holen war.
+    """
+    squashed = "".join(ch for ch in name.lower() if ch.isalnum())
+    return squashed == f"vlan{num}"
+
+
 def free_ranges(used: set[int], lo: int = VLAN_MIN, hi: int = VLAN_MAX) -> list[list[int]]:
     """Nicht belegte VLAN-IDs als zusammenhängende [von, bis]-Bereiche."""
     out: list[list[int]] = []
@@ -113,13 +126,15 @@ async def build(inv: Inventory, client: LibrenmsClient, librenms_cfg: dict) -> d
             continue
         contributing.add(did)
         entry = row(num)
-        name = (r.get("vlan_name") or "").strip()
-        if name and name not in entry["names"]:
+        name = str(r.get("vlan_name") or "").strip()
+        placeholder = bool(name) and is_placeholder_name(name, num)
+        if name and not placeholder and name not in entry["names"]:
             entry["names"].append(name)
         entry["switches"].append({
             "device_id": r.get("device_id"),
             "hostname": device_names.get(did),
             "name": name or None,
+            "placeholder": placeholder,
             "domain": r.get("vlan_domain"),
         })
 
@@ -147,13 +162,30 @@ async def build(inv: Inventory, client: LibrenmsClient, librenms_cfg: dict) -> d
             if net not in entry["networks"]:
                 entry["networks"].append(net)
 
+    unnamed: list[int] = []
     for entry in rows.values():
         entry["switch_count"] = len(entry["switches"])
+        # Kein echter Name aus irgendeiner Quelle — die Switches melden nur den
+        # Platzhalter, und ein VLAN-Interface (mit Alias) gibt es nicht.
+        entry["unnamed"] = not entry["names"]
+        if entry["unnamed"] and entry["switches"]:
+            unnamed.append(entry["vlan"])
         # Ein VLAN, das nur die Firewall kennt, ist ein anderer Befund als eines,
         # das nur auf Switches steht — sichtbar machen statt verrechnen.
         entry["sources"] = sorted(
             ({"librenms"} if entry["switches"] else set())
             | ({"fmg"} if entry["firewall_interfaces"] else set())
+        )
+
+    if unnamed:
+        shown = ", ".join(str(v) for v in sorted(unnamed)[:12])
+        more = f" … (+{len(unnamed) - 12})" if len(unnamed) > 12 else ""
+        warnings.append(
+            f"{len(unnamed)} VLAN(s) ohne Bezeichnung: {shown}{more}. LibreNMS "
+            "liest den VLAN-Namen aus 'dot1qVlanStaticName' (Q-BRIDGE-MIB) und "
+            "trägt 'VLAN <Nr>' ein, wenn das Gerät dort nichts liefert. Auf "
+            "HPE/Comware ist das der VLAN-NAME — eine reine 'description' steht "
+            "in einer anderen MIB und wird von LibreNMS nicht erfasst."
         )
 
     used = set(rows)
@@ -175,6 +207,7 @@ async def build(inv: Inventory, client: LibrenmsClient, librenms_cfg: dict) -> d
             "librenms_skipped": len(skipped),
             "librenms_devices": len(contributing),
             "librenms_devices_known": known_devices,
+            "unnamed_vlans": len(unnamed),
             "contributing_devices": sorted(
                 filter(None, (device_names.get(d, d) for d in contributing))
             )[:100],

@@ -145,6 +145,8 @@ export const de = {
     colSwitches: 'Switches',
     colFirewall: 'Firewall-Interface',
     empty: 'Kein VLAN passt zum Filter.',
+    unnamed: 'ohne Bezeichnung',
+    unnamedTitle: 'Kein Gerät liefert einen VLAN-Namen. LibreNMS liest ihn aus dot1qVlanStaticName (Q-BRIDGE-MIB) und trägt sonst den Platzhalter „VLAN <Nr>“ ein. Auf HPE/Comware ist das der VLAN-NAME — eine reine „description“ steht in einer anderen MIB und wird nicht erfasst.',
     sourceBoth: 'Auf Switches und an der Firewall bekannt',
     sourceLibrenms: 'Nur auf Switches bekannt (kein Firewall-Interface)',
     sourceFmg: 'Nur an der Firewall bekannt (auf keinem überwachten Switch)',

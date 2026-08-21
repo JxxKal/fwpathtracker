@@ -289,3 +289,60 @@ async def test_overview_stats_show_contributing_devices(inv):
     assert st["contributing_devices"] == ["sw-bocks-01", "sw-bocks-02"]
     assert "hpe-ohne-vlan-discovery" not in st["contributing_devices"]
     assert st["fmg_interfaces"] == 2
+
+
+# ── Bezeichnung reiner L2-VLANs ──────────────────────────────────────────────
+
+def test_placeholder_name_detection():
+    """LibreNMS schreibt 'VLAN <Nr>', wenn dot1qVlanStaticName leer ist — das ist
+    keine Bezeichnung, sondern deren Fehlen."""
+    assert overview.is_placeholder_name("VLAN 44", 44) is True
+    assert overview.is_placeholder_name("vlan44", 44) is True
+    assert overview.is_placeholder_name("VLAN 0044", 44) is False   # anderer Wert
+    assert overview.is_placeholder_name("OT-PLT-Bockstedt", 44) is False
+    assert overview.is_placeholder_name("VLAN 44", 45) is False
+
+
+async def test_l2_only_vlan_keeps_switch_description(inv):
+    """Ein reines L2-VLAN (kein Firewall-Interface) muss seine Beschreibung vom
+    Switch tragen — sie ist dort die einzige Quelle."""
+    rows = [
+        {"vlan_id": 300, "device_id": 9, "vlan_vlan": 815, "vlan_name": "Kamera-Netz Halle 3"},
+        {"vlan_id": 301, "device_id": 10, "vlan_vlan": 815, "vlan_name": "Kamera-Netz Halle 3"},
+    ]
+    client = FakeClient(vlans=rows, devices={
+        "a": {"device_id": 9, "hostname": "hpe-l2-01"},
+        "b": {"device_id": 10, "hostname": "hpe-l2-02"}})
+    res = await overview.build(inv, client, CFG)
+
+    v = next(v for v in res["vlans"] if v["vlan"] == 815)
+    assert v["sources"] == ["librenms"]           # rein L2, kein Firewall-IF
+    assert v["names"] == ["Kamera-Netz Halle 3"]  # Beschreibung steht trotzdem da
+    assert v["unnamed"] is False
+    assert v["switch_count"] == 2
+    assert all(s["placeholder"] is False for s in v["switches"])
+    assert res["stats"]["unnamed_vlans"] == 0
+
+
+async def test_placeholder_is_not_shown_as_description(inv):
+    """Meldet der Switch keinen Namen, darf der LibreNMS-Platzhalter nicht als
+    Bezeichnung durchgehen — sonst verdeckt er, dass die Angabe fehlt."""
+    rows = [
+        {"vlan_id": 300, "device_id": 9, "vlan_vlan": 815, "vlan_name": "VLAN 815"},
+        {"vlan_id": 301, "device_id": 10, "vlan_vlan": 816, "vlan_name": "Gäste-WLAN"},
+    ]
+    client = FakeClient(vlans=rows, devices={"a": {"device_id": 9, "hostname": "hpe-l2-01"},
+                                             "b": {"device_id": 10, "hostname": "hpe-l2-02"}})
+    res = await overview.build(inv, client, CFG)
+
+    v815 = next(v for v in res["vlans"] if v["vlan"] == 815)
+    assert v815["names"] == [] and v815["unnamed"] is True
+    assert v815["switches"][0]["name"] == "VLAN 815"      # Rohwert bleibt sichtbar
+    assert v815["switches"][0]["placeholder"] is True
+
+    v816 = next(v for v in res["vlans"] if v["vlan"] == 816)
+    assert v816["names"] == ["Gäste-WLAN"] and v816["unnamed"] is False
+
+    assert res["stats"]["unnamed_vlans"] == 1
+    warn = " ".join(res["warnings"])
+    assert "815" in warn and "dot1qVlanStaticName" in warn and "description" in warn
