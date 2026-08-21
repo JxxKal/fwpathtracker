@@ -29,20 +29,35 @@ def resolve_ip(inv: Inventory, ip: str) -> dict | None:
 
 
 def search(inv: Inventory, q: str, limit: int = 10) -> list[dict]:
-    """Teilstring-Suche über FMG-Adress-Objekte (Host /32 + FQDN).
+    """Teilstring-Suche über FMG-Adress-Objekte — über Name, IP UND FQDN.
 
-    Ranking: exakter Name < Präfix < Teilstring, danach alphabetisch — so steht
-    z.B. bei Suche 'svo3101' das Objekt 'WD-OT-L3-SVO3101' (Teilstring) sinnvoll
-    einsortiert, ein exakt gleichnamiges Objekt aber immer oben.
+    Die IP mitzusuchen ist kein Zusatz, sondern der halbe Zweck: Wer eine
+    Adresse aus einem Log hat, sucht genau danach das Objekt. Vorher traf die
+    Suche nur den Namen, sodass ein Objekt per Name auffindbar war, über seine
+    eigene IP aber nicht.
+
+    Ranking: exakter Treffer (Name oder IP) < Präfix < Teilstring, danach
+    alphabetisch — so steht bei 'svo3101' das Objekt 'WD-OT-L3-SVO3101'
+    sinnvoll einsortiert, ein exakt gleichnamiges aber immer oben.
     """
     needle = q.strip().lower()
+    # Nur bei ziffern-/punktartiger Eingabe auch IP-Präfixe matchen — sonst
+    # würde ein Namensfragment quer durch alle Adressen streuen.
+    looks_ip = bool(needle) and all(ch.isdigit() or ch == "." for ch in needle)
     scored: list[tuple[int, str, dict]] = []
     for adom in inv.adoms:
         for entry in inv.object_names(adom):
             name_l = entry["name"].lower()
-            if needle not in name_l:
+            ip = (entry.get("ip") or "").lower()
+            fqdn = (entry.get("fqdn") or "").lower()
+            if name_l == needle or (ip and ip == needle):
+                rank = 0
+            elif name_l.startswith(needle) or (looks_ip and ip.startswith(needle)):
+                rank = 1
+            elif needle in name_l or (fqdn and needle in fqdn):
+                rank = 2
+            else:
                 continue
-            rank = 0 if name_l == needle else 1 if name_l.startswith(needle) else 2
             scored.append((rank, entry["name"], {**entry, "provenance": "fmg"}))
     scored.sort(key=lambda t: (t[0], t[1].lower()))
     return [entry for _, _, entry in scored[:limit]]

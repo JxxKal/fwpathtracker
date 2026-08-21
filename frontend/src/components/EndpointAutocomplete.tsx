@@ -29,18 +29,21 @@ interface Props {
 export default function EndpointAutocomplete({ value, onChange, placeholder, onSubmit }: Props) {
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [loading, setLoading] = useState(false);
+  // Ohne gelaufene Suche darf die Liste nichts behaupten — "nichts gefunden"
+  // und "noch nicht gesucht" sind verschiedene Aussagen.
+  const [searched, setSearched] = useState(false);
   const [open, setOpen] = useState(false);
   const timer = useRef<number>();
   const box = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     window.clearTimeout(timer.current);
-    // Nur überspringen, wenn die Eingabe wie eine (Teil-)IP aussieht (Ziffern
-    // MIT Punkt). Reine Ziffern wie "3101"/"0042" sind gültige Objektnamen-Teile
-    // (z.B. WD-OT-L3-SVO3101) und sollen durchsucht werden.
-    const looksLikeIp = /^[0-9]+(\.[0-9]*)+$/.test(value.trim());
-    if (value.trim().length < 2 || looksLikeIp) {
+    // Auch IP-Eingaben durchsuchen: Wer eine Adresse aus einem Log hat, sucht
+    // genau danach das Objekt. Früher wurde hier abgebrochen — die Liste meldete
+    // dann "kein Objekt gefunden", ohne je gesucht zu haben.
+    if (value.trim().length < 2) {
       setHits([]);
+      setSearched(false);
       setLoading(false);
       return;
     }
@@ -49,9 +52,11 @@ export default function EndpointAutocomplete({ value, onChange, placeholder, onS
       try {
         const res = await searchEndpoints(value.trim());
         setHits(res);
+        setSearched(true);
         setOpen(true);
       } catch {
         setHits([]);
+        setSearched(true);
       } finally {
         setLoading(false);
       }
@@ -87,12 +92,12 @@ export default function EndpointAutocomplete({ value, onChange, placeholder, onS
         }}
         autoComplete="off"
       />
-      {open && (loading || hits.length > 0 || value.trim().length >= 2) && (
+      {open && (loading || hits.length > 0 || searched) && (
         <div className="absolute z-20 mt-1 max-h-80 w-full overflow-auto rounded-md border border-slate-700 bg-slate-900 shadow-xl">
           {loading && (
             <p className="px-3 py-2 text-xs text-slate-500">Suche in FortiManager …</p>
           )}
-          {!loading && hits.length === 0 && (
+          {!loading && searched && hits.length === 0 && (
             <p className="px-3 py-2 text-xs text-slate-500">
               Kein Objekt in FortiManager, iTop oder DNS gefunden.
             </p>

@@ -123,3 +123,47 @@ async def test_chain_unresolvable_raises(inventory, monkeypatch):
 
     with pytest.raises(ValueError, match="keine Quelle"):
         await chain.resolve_endpoint("gibts-nicht", inventory, {}, {})
+
+
+def test_fmg_search_finds_object_by_ip():
+    """Feld-Fall: Objekt per Name auffindbar, über seine eigene IP aber nicht.
+    Wer eine Adresse aus einem Log hat, sucht genau danach das Objekt."""
+    inv = _ot_inventory()
+
+    # Vollständige IP → exakter Treffer, steht oben
+    hits = fmg_source.search(inv, "10.2.1.31")
+    assert [h["name"] for h in hits] == ["WD-OT-L3-SVO3101"]
+
+    # Teil-IP → Präfix-Treffer über alle passenden Objekte
+    names = [h["name"] for h in fmg_source.search(inv, "10.2.1.1")]
+    assert names == ["SVO3101", "SVO3101-MGMT"]      # .10 und .11, alphabetisch
+
+    # Ein exakter Namenstreffer schlägt weiterhin alles andere
+    assert fmg_source.search(inv, "SVO3101")[0]["name"] == "SVO3101"
+
+    # Ziffernfolge ohne Punkt bleibt Namenssuche (Objektnamen enthalten Nummern)
+    assert [h["name"] for h in fmg_source.search(inv, "3101")] == [
+        "SVO3101", "SVO3101-MGMT", "WD-OT-L3-SVO3101"]
+
+    # Subnet-Objekt bleibt außen vor — auch über seine Adresse
+    assert fmg_source.search(inv, "10.9.0.0") == []
+
+
+async def test_chain_search_reverse_dns_for_bare_ip(monkeypatch):
+    """Findet keine Quelle ein Objekt zur IP, ist Reverse-DNS die letzte, die aus
+    einer Adresse noch einen Namen macht."""
+    from inventory.store import Inventory
+
+    chain = ResolverChain()
+    called: dict = {}
+
+    async def fake_ptr(cfg, ip):
+        called["ip"] = ip
+        return {"name": "host7.op-tech.com", "provenance": "dns"}
+
+    monkeypatch.setattr(dns_source, "resolve_ip", fake_ptr)
+    hits = await chain.search("10.99.99.7", Inventory(), {}, {"servers": ["1.2.3.4"]})
+
+    assert called["ip"] == "10.99.99.7"
+    assert hits == [{"name": "host7.op-tech.com", "ip": "10.99.99.7",
+                     "type": "ptr", "provenance": "dns"}]

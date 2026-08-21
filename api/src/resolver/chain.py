@@ -100,12 +100,20 @@ class ResolverChain:
                 out += await self.itop.search(itop_cfg, q, limit - len(out))
             except Exception as exc:
                 log.warning("iTop-Suche '%s': %s", q, exc)
-        if not out and dns_cfg is not None and len(q.strip()) >= 4 and not is_ip(q):
+        if not out and dns_cfg is not None and len(q.strip()) >= 4:
             try:
-                hit = await dns_source.resolve_name(dns_cfg, q.strip(), timeout_s=1.5)
-                if hit:
-                    out.append({"name": hit["name"], "ip": hit["ip"],
-                                "type": "dns", "provenance": "dns"})
+                if is_ip(q):
+                    # Vollständige IP ohne Objekt-Treffer: Reverse-DNS ist die
+                    # letzte Quelle, die aus einer Adresse noch einen Namen macht.
+                    hit = await dns_source.resolve_ip(dns_cfg, q.strip())
+                    if hit:
+                        out.append({"name": hit["name"], "ip": q.strip(),
+                                    "type": "ptr", "provenance": "dns"})
+                else:
+                    hit = await dns_source.resolve_name(dns_cfg, q.strip(), timeout_s=1.5)
+                    if hit:
+                        out.append({"name": hit["name"], "ip": hit["ip"],
+                                    "type": "dns", "provenance": "dns"})
             except Exception as exc:
                 log.warning("DNS-Suche '%s': %s", q, exc)
         return out
