@@ -337,6 +337,20 @@ export interface LocateArp {
   interface: string | null;
 }
 
+/** Aufgezeichnete IP↔MAC-Bindung aus der Historie. */
+export interface ArpBinding {
+  ip: string;
+  mac: string;
+  device: string | null;
+  vdom: string | null;
+  interface: string | null;
+  source: string;
+  first_seen: string | null;
+  last_seen: string | null;
+  age_s: number | null;
+  seen_count: number;
+}
+
 export interface LocateResult {
   ip: string;
   mac: string | null;
@@ -347,6 +361,11 @@ export interface LocateResult {
   confidence: 'high' | 'medium' | 'low' | 'none';
   self_device: LocateSelfDevice | null;
   aliases: string[];
+  /** Gesetzt, wenn die MAC nicht live, sondern aus der Historie stammt — der
+   *  Host antwortet gerade nicht. */
+  from_cache?: ArpBinding | null;
+  /** Alle je gesehenen MACs dieser IP, zuletzt gesehene zuerst. */
+  ip_history?: ArpBinding[];
   warnings: string[];
 }
 
@@ -382,7 +401,8 @@ export async function locateHost(q: string): Promise<LocateResult> {
       ip: q, mac: '000c2911891a', mac_readable: '00:0c:29:11:89:1a',
       arp: { provenance: 'fortigate', device: 'fw-a', vdom: 'root', interface: 'lan1' },
       best: demoCandidates[0], candidates: demoCandidates,
-      confidence: 'high', self_device: null, aliases: [], warnings: [],
+      confidence: 'high', self_device: null, aliases: [],
+      from_cache: null, ip_history: [], warnings: [],
     };
   }
   return request(`/api/locate?q=${encodeURIComponent(q)}`);
@@ -538,6 +558,42 @@ export async function vlanOverview(): Promise<VlanOverview> {
     };
   }
   return request('/api/vlans');
+}
+
+export interface ArpCacheStatus {
+  sweep: {
+    phase: 'idle' | 'running' | 'done' | 'error';
+    log: string[];
+    started_at: string | null;
+    finished_at: string | null;
+    vdoms: number;
+    observations: number;
+    purged: number;
+  };
+  stats: { bindings?: number; macs?: number; ips?: number;
+           newest?: string | null; oldest?: string | null; error?: string };
+  interval_s: number;
+  retention_days: number;
+}
+
+export async function arpCacheStatus(): Promise<ArpCacheStatus> {
+  if (isDemoMode()) {
+    return {
+      sweep: { phase: 'done', log: [], started_at: null, finished_at: null,
+        vdoms: 12, observations: 843, purged: 0 },
+      stats: { bindings: 843, macs: 690, ips: 812, newest: null, oldest: null },
+      interval_s: 900, retention_days: 180,
+    };
+  }
+  return request('/api/arp-cache/status');
+}
+
+export async function arpCacheSweep(): Promise<ArpCacheStatus['sweep']> {
+  if (isDemoMode()) {
+    return { phase: 'done', log: [], started_at: null, finished_at: null,
+      vdoms: 12, observations: 843, purged: 0 };
+  }
+  return request('/api/arp-cache/sweep', { method: 'POST' });
 }
 
 export async function librenmsTest(): Promise<{

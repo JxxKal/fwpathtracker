@@ -49,9 +49,60 @@ def _find_ip(rows, ip: str) -> dict | None:
     return None
 
 
+async def fetch_table(client, adom: str, device: str, vdom: str,
+                      warnings: list[str]) -> list[dict] | None:
+    """Komplette ARP-Tabelle eines VDOMs (Rohzeilen) oder None.
+
+    Der Monitor-Endpunkt liefert ohnehin die ganze Tabelle — die Einzelsuche
+    filtert sie nur clientseitig. Deshalb ist ein Sweep über alle VDOMs
+    derselbe Aufruf und kostet nichts extra.
+    """
+    for path in ARP_PATHS:
+        try:
+            resp = await monitor_get(client, adom, device, vdom, path)
+        except FmgTargetOffline as exc:
+            warnings.append(f"{device} nicht erreichbar: {exc}")
+            return None
+        except FmgError as exc:
+            log.info("ARP-Endpunkt %s auf %s nicht nutzbar: %s", path, device, exc)
+            continue
+        rows = fortios_results(resp)
+        return rows if isinstance(rows, list) else []
+    warnings.append(
+        f"{device} kennt keinen ARP-Monitor-Endpunkt "
+        f"({', '.join(ARP_PATHS)}) — FortiOS-Version zu alt?"
+    )
+    return None
+
+
+def observations(rows, device: str, vdom: str,
+                 default_interface: str | None = None) -> list[dict]:
+    """ARP-Rohzeilen → IP↔MAC-Beobachtungen für die Historie."""
+    out: list[dict] = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        ip = _first(row, _IP_KEYS)
+        mac = normalize_mac(_first(row, _MAC_KEYS) or "")
+        if not ip or not mac:
+            continue
+        out.append({
+            "ip": ip, "mac": mac, "device": device, "vdom": vdom,
+            "interface": _first(row, _IF_KEYS) or default_interface,
+            "source": "fortigate",
+        })
+    return out
+
+
 async def resolve(ip: str, prefixes: PrefixTable, fmg_cfg: dict,
-                  app_cfg: Config, warnings: list[str]) -> dict | None:
-    """IP → {mac, device, vdom, interface} aus der Live-ARP-Tabelle, sonst None."""
+                  app_cfg: Config, warnings: list[str],
+                  seen: list[dict] | None = None) -> dict | None:
+    """IP → {mac, device, vdom, interface} aus der Live-ARP-Tabelle, sonst None.
+
+    `seen` (optional) sammelt ALLE Zeilen der abgerufenen Tabelle als
+    Beobachtungen ein. Die Antwort enthält sie ohnehin — so füllt jede
+    Einzelsuche nebenbei die Historie des ganzen VDOMs.
+    """
     entry = prefixes.lookup_owner(ip)
     if entry is None:
         warnings.append(
@@ -70,37 +121,28 @@ async def resolve(ip: str, prefixes: PrefixTable, fmg_cfg: dict,
 
     adom = entry.adom or "root"
     try:
-        for path in ARP_PATHS:
-            try:
-                resp = await monitor_get(client, adom, entry.device, entry.vdom, path)
-            except FmgTargetOffline as exc:
-                warnings.append(f"{entry.device} nicht erreichbar: {exc}")
-                return None
-            except FmgError as exc:
-                log.info("ARP-Endpunkt %s auf %s nicht nutzbar: %s", path, entry.device, exc)
-                continue
-            row = _find_ip(fortios_results(resp), ip)
-            if row is None:
-                warnings.append(
-                    f"{ip} steht nicht in der ARP-Tabelle von {entry.device}/{entry.vdom} — "
-                    "das Gerät ist vermutlich still. Einmal anpingen und erneut suchen."
-                )
-                return None
-            mac = normalize_mac(_first(row, _MAC_KEYS))
-            if mac is None:
-                warnings.append(f"ARP-Eintrag von {entry.device} ohne verwertbare MAC.")
-                return None
-            return {
-                "mac": mac,
-                "provenance": "fortigate",
-                "device": entry.device,
-                "vdom": entry.vdom,
-                "interface": _first(row, _IF_KEYS) or entry.interface,
-            }
-        warnings.append(
-            f"{entry.device} kennt keinen ARP-Monitor-Endpunkt "
-            f"({', '.join(ARP_PATHS)}) — FortiOS-Version zu alt?"
-        )
-        return None
+        rows = await fetch_table(client, adom, entry.device, entry.vdom, warnings)
+        if rows is None:
+            return None
+        if seen is not None:
+            seen.extend(observations(rows, entry.device, entry.vdom, entry.interface))
+        row = _find_ip(rows, ip)
+        if row is None:
+            warnings.append(
+                f"{ip} steht nicht in der ARP-Tabelle von {entry.device}/{entry.vdom} — "
+                "das Gerät ist vermutlich still. Einmal anpingen und erneut suchen."
+            )
+            return None
+        mac = normalize_mac(_first(row, _MAC_KEYS))
+        if mac is None:
+            warnings.append(f"ARP-Eintrag von {entry.device} ohne verwertbare MAC.")
+            return None
+        return {
+            "mac": mac,
+            "provenance": "fortigate",
+            "device": entry.device,
+            "vdom": entry.vdom,
+            "interface": _first(row, _IF_KEYS) or entry.interface,
+        }
     finally:
         await client.close()

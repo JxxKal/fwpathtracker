@@ -102,7 +102,9 @@ FMG/iTop/DNS aufgelöst.
   physisch steckt. IP→MAC live von der FortiGate (die ist an fast allen
   Standorten der L3-Router), MAC→Port aus der **LibreNMS**-FDB. Zeigt alle
   Fundstellen mit Uplink-Kennzeichnung, Konfidenz und Alter des Eintrags —
-  siehe [Switchport-Suche](#switchport-suche-librenms).
+  siehe [Switchport-Suche](#switchport-suche-librenms). Findet **auch einen
+  Host, der gerade aus ist**: die IP↔MAC-Bindungen werden mitgeschrieben,
+  solange er läuft, und das Ergebnis dann klar als Aufzeichnung gekennzeichnet.
 - **Netzwerkport-Check** — IP oder Name → **alle** Ports des Hosts mit VLAN, statt
   nur des besten Treffers: je Fundstelle das VLAN, in dem die MAC gelernt wurde
   (FDB) und die konfigurierte Mitgliedschaft des Ports (untagged/tagged). Ist der
@@ -419,6 +421,37 @@ Die vollständige Reihenfolge ist damit:
 Das Ergebnis bekommt eine Konfidenz (`high`/`medium`/`low`) und immer das
 **Alter** des Eintrags — FDB-Einträge altern in Minuten, LibreNMS discovert per
 Default alle 6 Stunden.
+
+### Wenn der Host gerade aus ist — IP↔MAC-Historie
+
+Ein abgeschalteter Host bricht die Suche **nicht** am Port, sondern eine Stufe
+davor: LibreNMS hält seinen FDB-Eintrag noch tagelang vor (`ports_fdb_purge`,
+Default 10 Tage), aber ohne IP→MAC kommt die Kette dort nie an. Die FortiGate
+verwirft ARP-Einträge binnen Minuten, und LibreNMS gleicht seine `ipv4_mac`-
+Tabelle bei jeder Discovery mit dem Gerät ab — beide Quellen kennen nur die
+Gegenwart.
+
+Deshalb zeichnet der Tracker die Bindungen auf (Tabelle `arp_history`):
+
+| Quelle | Wann |
+|---|---|
+| ARP-Sweep über alle FortiGate-VDOMs mit connected Netz | alle `arp_sweep_interval_s` (Default 15 min) |
+| jede Switchport-Suche nebenbei | die Monitor-Antwort enthält ohnehin die ganze ARP-Tabelle des VDOMs |
+
+Findet keine Live-Quelle eine MAC, greift die zuletzt aufgezeichnete Bindung.
+Das Ergebnis wird dann **deutlich als Aufzeichnung gekennzeichnet** (Zeitpunkt,
+Alter, aufzeichnendes Gerät), die Konfidenz nie höher als `medium` — der Port
+beschreibt den letzten bekannten Stand, nicht den aktuellen Aufenthalt.
+
+Standen an einer IP nacheinander mehrere MACs (Gerätetausch, Neuvergabe), gewinnt
+die zuletzt gesehene, und die anderen werden genannt statt verschwiegen. Der
+vollständige Verlauf je IP ist ausklappbar.
+
+Aufbewahrung `arp_retention_days` (Default 180), Bestand und letzter Lauf unter
+**Einstellungen → LibreNMS**. Bewusst *kein* Spiegel der FDB: Der Cache
+überbrückt nur, was die Live-Quellen vergessen — sonst gäbe es zwei Bestände,
+die auseinanderlaufen. Reicht die 10-Tage-Grenze von LibreNMS nicht, ist
+`ports_fdb_purge` dort hochzusetzen die günstigere Antwort.
 
 ### Wenn die gesuchte IP selbst ein Switch ist
 

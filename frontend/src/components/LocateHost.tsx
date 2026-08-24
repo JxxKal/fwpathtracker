@@ -1,4 +1,4 @@
-import { MapPin, Server } from 'lucide-react';
+import { History, MapPin, Server } from 'lucide-react';
 import { useState } from 'react';
 import {
   locateHost, type LocateCandidate, type LocateResult, type MatchReason, type PortKind,
@@ -100,6 +100,34 @@ export default function LocateHost() {
 
       {err && <p className="text-sm text-red-400">{err}</p>}
 
+      {/* Der Host antwortet nicht — die MAC stammt aus der Aufzeichnung. Das
+          muss vor dem Ergebnis stehen, nicht darunter: alles Folgende
+          beschreibt die Vergangenheit. */}
+      {res?.from_cache && (
+        <div className="rounded-md border border-amber-800 bg-amber-950/50 p-3 text-sm text-amber-300">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <History size={15} />
+            <span className="font-semibold">{de.locate.cacheTitle}</span>
+            <span className="font-mono text-slate-200">{res.from_cache.mac}</span>
+          </div>
+          <p className="mt-1 text-xs text-amber-200/90">
+            {de.locate.cacheHint(
+              res.from_cache.last_seen
+                ? new Date(res.from_cache.last_seen).toLocaleString('de-DE')
+                : '—',
+              age(res.from_cache.age_s),
+            )}
+          </p>
+          {res.from_cache.device && (
+            <p className="mt-0.5 text-xs text-slate-400">
+              {de.locate.cacheSeenOn}: {res.from_cache.device}
+              {res.from_cache.vdom && `/${res.from_cache.vdom}`}
+              {res.from_cache.interface && ` · ${res.from_cache.interface}`}
+            </p>
+          )}
+        </div>
+      )}
+
       {res?.self_device && (
         <div className="rounded-md border border-sky-800 bg-sky-950/60 p-3 text-sm text-sky-300">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -196,6 +224,49 @@ export default function LocateHost() {
           {res.warnings.map((w) => (
             <p key={w} className="text-xs text-amber-400">⚠ {w}</p>
           ))}
+
+          {/* Verlauf: welche MAC hing wann an dieser IP. Mehr als eine Zeile
+              heißt Gerätetausch oder Neuvergabe — beides will man sehen, bevor
+              man losläuft. */}
+          {(res.ip_history?.length ?? 0) > 0 && (
+            <details>
+              <summary className="cursor-pointer text-xs text-slate-500 hover:text-slate-300">
+                {de.locate.historyTitle(res.ip_history!.length)}
+              </summary>
+              <table className="mt-1 w-full text-left text-xs">
+                <thead className="text-slate-500">
+                  <tr>
+                    <th className="py-1 pr-3 font-medium">{de.locate.mac}</th>
+                    <th className="py-1 pr-3 font-medium">{de.locate.historyFirst}</th>
+                    <th className="py-1 pr-3 font-medium">{de.locate.historyLast}</th>
+                    <th className="py-1 pr-3 font-medium">{de.locate.historyWhere}</th>
+                    <th className="py-1 font-medium">{de.locate.historySource}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {res.ip_history!.map((b, i) => (
+                    <tr key={b.mac} className="border-t border-slate-800">
+                      <td className={`py-1 pr-3 font-mono ${i === 0 ? 'text-slate-200' : 'text-slate-500'}`}>
+                        {b.mac}
+                      </td>
+                      <td className="py-1 pr-3 text-slate-500">
+                        {b.first_seen ? new Date(b.first_seen).toLocaleDateString('de-DE') : '—'}
+                      </td>
+                      <td className="py-1 pr-3 text-slate-400">
+                        {b.last_seen ? new Date(b.last_seen).toLocaleString('de-DE') : '—'}
+                        <span className="ml-1 text-slate-600">{age(b.age_s)}</span>
+                      </td>
+                      <td className="py-1 pr-3 text-slate-500">
+                        {b.device ?? '—'}{b.vdom && `/${b.vdom}`}
+                        {b.interface && ` · ${b.interface}`}
+                      </td>
+                      <td className="py-1 text-slate-500">{b.source}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </details>
+          )}
 
           {res.candidates.length > 0 && (
             <div>

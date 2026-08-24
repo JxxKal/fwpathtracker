@@ -22,6 +22,8 @@ import migrate
 from config import Config
 from inventory.store import Inventory
 from inventory.sync import SyncManager, load_inventory
+from locate.arp_store import ArpStore
+from locate.arp_sweep import ArpSweeper
 from locate.chain import LocateChain
 from resolver.chain import ResolverChain
 from routers import auth as auth_router
@@ -86,6 +88,34 @@ async def _periodic_sync(app: FastAPI) -> None:
             await client.close()
 
 
+async def _periodic_arp_sweep(app: FastAPI) -> None:
+    """ARP-Tabellen aller FortiGate-VDOMs einsammeln (arp_sweep_interval_s,
+    Default 15 min). <= 0 → aus.
+
+    Deutlich enger getaktet als der FMG-Sync: Die FortiGate wirft ARP-Einträge
+    nach Minuten weg. Was hier nicht aufgezeichnet wird, solange ein Host läuft,
+    ist später nicht mehr zu bekommen — dann endet die Switchport-Suche für ein
+    abgeschaltetes Gerät bei 'keine MAC ermittelbar'.
+    """
+    while True:
+        tracker_cfg = await read_config("tracker")
+        interval = int(tracker_cfg.get("arp_sweep_interval_s", 900))
+        if interval <= 0:
+            await asyncio.sleep(300)
+            continue
+        await asyncio.sleep(max(interval, 60))
+        fmg_cfg = await read_config("fmg")
+        if not fmg_cfg.get("host") and not fmg_cfg.get("fixture_mode"):
+            continue
+        try:
+            await app.state.arp_sweeper.run(
+                app.state.arp_store, app.state.prefixes, fmg_cfg, app.state.cfg,
+                retention_days=int(tracker_cfg.get("arp_retention_days", 180)),
+            )
+        except Exception as exc:
+            log.warning("Periodischer ARP-Sweep fehlgeschlagen: %s", exc)
+
+
 async def _periodic_itop_refresh(app: FastAPI) -> None:
     """Täglicher Refresh des iTop-Namens-Index (itop_refresh_interval_s, Default
     täglich). <= 0 → aus. iTop ist nur Namensauflösung, kein Trace-Inventory."""
@@ -116,17 +146,21 @@ async def lifespan(app: FastAPI):
 
     app.state.sync_manager = SyncManager()
     app.state.resolver = ResolverChain()
-    app.state.locate = LocateChain()
+    app.state.arp_store = ArpStore(pool)
+    app.state.arp_sweeper = ArpSweeper()
+    app.state.locate = LocateChain(store=app.state.arp_store)
     app.state.set_inventory = lambda inv: _rebuild_state(app, inv)
     await _rebuild_state(app, await load_inventory(pool))
 
     sync_task = asyncio.create_task(_periodic_sync(app))
     itop_task = asyncio.create_task(_periodic_itop_refresh(app))
+    arp_task = asyncio.create_task(_periodic_arp_sweep(app))
     try:
         yield
     finally:
         sync_task.cancel()
         itop_task.cancel()
+        arp_task.cancel()
         await database.close_pool()
 
 

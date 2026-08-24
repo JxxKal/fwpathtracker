@@ -164,6 +164,15 @@ export const de = {
     search: 'Suchen',
     searching: 'Suche …',
     mac: 'MAC-Adresse',
+    cacheTitle: 'Aus der Aufzeichnung — der Host antwortet gerade nicht',
+    cacheHint: (when: string, rel: string) =>
+      `Keine Live-Quelle kennt derzeit eine MAC zu dieser IP. Verwendet wird die zuletzt aufgezeichnete Bindung vom ${when} (${rel}). Alles Folgende beschreibt den letzten bekannten Stand, nicht den aktuellen Aufenthalt — der Port kann inzwischen anders belegt sein.`,
+    cacheSeenOn: 'Aufgezeichnet an',
+    historyTitle: (n: number) => `Verlauf dieser IP (${n} ${n === 1 ? 'Bindung' : 'Bindungen'})`,
+    historyFirst: 'Erstmals',
+    historyLast: 'Zuletzt',
+    historyWhere: 'Gesehen an',
+    historySource: 'Quelle',
     arpFrom: 'ARP-Quelle',
     seen: 'Zuletzt gesehen',
     stale: 'veraltet',
@@ -298,6 +307,15 @@ export const de = {
     fmg: 'FortiManager',
     itop: 'iTop CMDB',
     librenms: 'LibreNMS (Switchport-Suche)',
+    arpCache: 'IP↔MAC-Historie',
+    arpCacheHint: 'Zeichnet die ARP-Tabellen der FortiGates auf, damit die Switchport-Suche auch einen Host findet, der gerade aus ist. ARP altert binnen Minuten — was hier nicht mitgeschrieben wurde, während der Host lief, ist später nicht mehr zu bekommen.',
+    arpSweepNow: 'Jetzt einsammeln',
+    arpCacheStats: (b: number, m: number, i: number) =>
+      `${b} Bindungen · ${m} MACs · ${i} IPs`,
+    arpCacheKeep: (days: number, min: number) =>
+      `Aufbewahrung ${days} Tage, Takt ${min} min`,
+    arpLastSweep: (when: string, vdoms: number, obs: number) =>
+      `Letzter Lauf ${when}: ${obs} Bindungen aus ${vdoms} VDOMs`,
     dns: 'DNS',
     sites: 'Standorte',
     siteSupernets: 'Standort-Supernetze (Subnetz-Finder)',

@@ -26,12 +26,29 @@ from locate.naming import build_aliases, is_mac_like
 log = logging.getLogger("locate.chain")
 
 
+def _when(last_seen: str | None, age_s: int | None) -> str:
+    """Lesbare Altersangabe für Cache-Treffer — Datum UND Abstand, weil das eine
+    ohne das andere schwer einzuordnen ist."""
+    if age_s is None:
+        return last_seen or "unbekannten Zeitpunkt"
+    if age_s < 5400:
+        rel = f"vor {max(1, age_s // 60)} min"
+    elif age_s < 172800:
+        rel = f"vor {age_s // 3600} h"
+    else:
+        rel = f"vor {age_s // 86400} Tagen"
+    return f"{last_seen} ({rel})" if last_seen else rel
+
+
 class LocateChain:
-    def __init__(self, ttl_s: int = 60) -> None:
+    def __init__(self, ttl_s: int = 60, store=None) -> None:
         self.librenms = LibrenmsClient()
         # Kurzer Cache: Doppelklicks und Re-Renders sollen keine neue
         # Live-Abfrage gegen FortiGate und LibreNMS auslösen.
         self._cache: TTLCache = TTLCache(maxsize=512, ttl=ttl_s)
+        # Persistente IP↔MAC-Historie (locate.arp_store.ArpStore). Optional —
+        # ohne sie verhält sich die Kette wie zuvor, nur ohne Offline-Treffer.
+        self.store = store
 
     async def locate(self, ip: str, prefixes: PrefixTable, librenms_cfg: dict,
                      fmg_cfg: dict, app_cfg: Config,
@@ -43,6 +60,48 @@ class LocateChain:
         result = await self._locate(ip, prefixes, librenms_cfg, fmg_cfg, app_cfg, names)
         self._cache[key] = result
         return result
+
+    async def _record(self, observations: list[dict]) -> None:
+        """Beobachtungen wegschreiben — nie auf Kosten der Suche.
+
+        Eine hakende Datenbank darf die Portsuche nicht scheitern lassen; das
+        Aufzeichnen ist Beiwerk, nicht Zweck.
+        """
+        if self.store is None or not observations:
+            return
+        try:
+            await self.store.record(observations)
+        except Exception as exc:
+            log.warning("ARP-Historie nicht schreibbar: %s", exc)
+
+    async def _from_history(self, ip: str, warnings: list[str]) -> tuple[dict | None, list[dict]]:
+        """Letzte bekannte MAC dieser IP + vollständiger Verlauf.
+
+        Der neueste Eintrag gewinnt. Gab es im Aufbewahrungsfenster mehrere MACs
+        an dieser IP, ist das ein Gerätetausch (oder eine Neuvergabe) — dann muss
+        die Wahl begründet und die Alternative sichtbar sein, sonst lokalisiert
+        man mit gutem Gewissen das falsche Gerät.
+        """
+        if self.store is None:
+            return None, []
+        try:
+            history = await self.store.by_ip(ip)
+        except Exception as exc:
+            log.warning("ARP-Historie nicht lesbar: %s", exc)
+            return None, []
+        if not history:
+            return None, []
+        newest = history[0]
+        if len(history) > 1:
+            others = ", ".join(
+                f"{h['mac']} (zuletzt {h['last_seen'] or '?'})" for h in history[1:4])
+            warnings.append(
+                f"An {ip} standen im Aufbewahrungszeitraum mehrere MACs — gewählt "
+                f"ist die zuletzt gesehene {newest['mac']}. Ebenfalls gesehen: "
+                f"{others}. Bei einem Gerätetausch zeigt der Treffer sonst auf den "
+                "Vorgänger."
+            )
+        return newest, history
 
     async def _clean_uplinks(self, cfg: dict, device_id, raw: list[dict]) -> list[dict]:
         """LLDP-Nachbarn lesbar machen: lokalen Port auflösen, entrümpeln.
@@ -134,20 +193,55 @@ class LocateChain:
             (self_device or {}).get("sys_name"),
         ])
 
-        arp = await arp_fortigate.resolve(ip, prefixes, fmg_cfg, app_cfg, warnings)
+        # Jede gelesene ARP-Tabelle wandert in die Historie — die Antwort enthält
+        # ohnehin alle Zeilen des VDOMs, nicht nur die gesuchte.
+        seen: list[dict] = []
+        arp = await arp_fortigate.resolve(ip, prefixes, fmg_cfg, app_cfg, warnings,
+                                          seen=seen)
         if arp is None:
             arp = await arp_librenms.resolve(self.librenms, librenms_cfg, ip, warnings)
+            if arp is not None:
+                seen.append({"ip": ip, "mac": arp["mac"], "device": arp.get("device"),
+                             "vdom": arp.get("vdom"), "interface": arp.get("interface"),
+                             "source": "librenms"})
+        await self._record(seen)
+
+        from_cache: dict | None = None
+        history: list[dict] = []
+        if arp is None:
+            # Live nichts — jetzt zählt, was der Host hinterlassen hat, ALS er
+            # noch lief. Genau dieser Fall ist der Grund für die Historie.
+            from_cache, history = await self._from_history(ip, warnings)
+            if from_cache is not None:
+                arp = {"mac": from_cache["mac"], "provenance": "cache",
+                       "device": from_cache.get("device"),
+                       "vdom": from_cache.get("vdom"),
+                       "interface": from_cache.get("interface")}
+                warnings.append(
+                    f"{ip} antwortet gerade nicht — keine der Live-Quellen kennt "
+                    f"eine MAC dazu. Verwendet wird die zuletzt aufgezeichnete "
+                    f"Bindung {from_cache['mac']} vom "
+                    f"{_when(from_cache.get('last_seen'), from_cache.get('age_s'))}. "
+                    "Die Portangaben unten beschreiben damit den letzten bekannten "
+                    "Stand, nicht den aktuellen Aufenthalt."
+                )
+        elif self.store is not None:
+            try:
+                history = await self.store.by_ip(ip)
+            except Exception as exc:
+                log.warning("ARP-Historie nicht lesbar: %s", exc)
 
         if arp is None:
             warnings.append(
                 f"Für {ip} ließ sich keine MAC-Adresse ermitteln — weder über die "
-                "FortiGate noch über LibreNMS. Ohne MAC ist keine Portsuche möglich."
+                "FortiGate noch über LibreNMS noch aus der aufgezeichneten "
+                "Historie. Ohne MAC ist keine Portsuche möglich."
             )
             return {
                 "ip": ip, "mac": None, "mac_readable": None, "arp": None,
                 "best": None, "candidates": [], "confidence": "none",
                 "self_device": self_device, "aliases": sorted(aliases),
-                "warnings": warnings,
+                "from_cache": None, "ip_history": [], "warnings": warnings,
             }
 
         mac = normalize_mac(arp["mac"])
@@ -157,6 +251,11 @@ class LocateChain:
         )
         ranked = fdb_librenms.rank(cands)
         conf = fdb_librenms.confidence(ranked, librenms_cfg)
+        if from_cache is not None and conf == "high":
+            # Die Portsuche mag eindeutig sein — die MAC stammt trotzdem aus
+            # einer Aufzeichnung. 'Hoch' würde eine Gegenwart behaupten, für die
+            # es keinen Beleg gibt.
+            conf = "medium"
 
         if not ranked:
             warnings.append(
@@ -215,5 +314,9 @@ class LocateChain:
             # Sichtbar machen, wogegen abgeglichen wurde — sonst ist ein
             # Description-Treffer für den Benutzer nicht nachvollziehbar.
             "aliases": sorted(aliases),
+            # Gesetzt, wenn die MAC aus der Historie kam statt von einer
+            # Live-Quelle — die Anzeige muss das kenntlich machen.
+            "from_cache": from_cache,
+            "ip_history": history,
             "warnings": warnings,
         }
