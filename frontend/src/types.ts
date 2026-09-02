@@ -51,6 +51,35 @@ export interface Suggestion {
   fmg_url?: string | null;
 }
 
+/** Ist-Nachweis eines Hops: passende Einträge der FortiOS-Session-Tabelle.
+ *  `truncated`/`server_filtered` gehören dazu, weil "0 Sessions" nur bei
+ *  vollständiger Liste etwas bedeutet. */
+export interface SessionProbe {
+  match_count: number;
+  returned: number;
+  truncated: boolean;
+  server_filtered: boolean | null;
+  samples: SessionSample[];
+  policy_ids: number[];
+  params: Record<string, unknown>;
+}
+
+export interface SessionSample {
+  src: string | null;
+  srcport: number | null;
+  dst: string | null;
+  dstport: number | null;
+  proto: number | null;
+  protocol: string | null;
+  srcintf: string | null;
+  dstintf: string | null;
+  policyid: number | null;
+  nat_src: string | null;
+  nat_dst: string | null;
+  duration: number | null;
+  expire: number | null;
+}
+
 export interface Hop {
   index: number;
   device: string;
@@ -66,6 +95,8 @@ export interface Hop {
   matched_policy: Candidate | null;
   candidates: Candidate[];
   suggestion: Suggestion | null;
+  /** Nur gesetzt, wenn der Trace mit Session-Probe lief. */
+  sessions?: SessionProbe | null;
   warnings: string[];
   degraded: boolean;
   after_deny: boolean;
@@ -77,6 +108,7 @@ export interface Hop {
 export interface HopDebug {
   router_lookup?: { proxy: unknown; source?: string | null; response?: unknown };
   policy_lookup?: { proxy: unknown; response?: unknown };
+  session_probe?: { proxy: unknown; summary?: Record<string, unknown> };
   ingress?: unknown;          // Präfix-Treffer der Quelle (nur Hop 1)
   route?: unknown;            // Interface/Gateway/Herkunft + Cache-Kandidaten
   classification?: {          // geprüfte Regeln + Präfix-Besitzer des Ziels
@@ -149,6 +181,8 @@ export interface TraceRequest {
   src_port?: number | null;
   icmp_type?: number | null;
   icmp_code?: number | null;
+  /** Opt-in: zusätzlich die Session-Tabelle jeder Firewall im Pfad lesen. */
+  sessions?: boolean;
 }
 
 export interface TraceHistoryEntry {

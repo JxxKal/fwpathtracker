@@ -6,6 +6,7 @@ Lab-Mitschnitte (RecordingTransport) landen im selben Format.
 """
 from __future__ import annotations
 
+from engine.sessions import session_params
 from fmg.proxy import build_monitor_request
 from fmg.transport import FixtureTransport
 
@@ -80,3 +81,29 @@ def add_policy_lookup(t: FixtureTransport, device: str, vdom: str, params: dict,
 def tcp_params(srcintf: str, src: str, dst: str, port: int) -> dict:
     return {"srcintf": srcintf, "sourceip": src, "dest": dst,
             "protocol": "tcp", "destport": port}
+
+
+def session_entry(src: str, dst: str, *, dport: int = 443, sport: int = 51001,
+                  proto: int = 6, policyid: int | None = None,
+                  srcintf: str = "", dstintf: str = "") -> dict:
+    """Ein ROHER Session-Eintrag, wie ihn FortiOS in firewall/session liefert."""
+    return {"src": src, "srcport": sport, "dst": dst, "dstport": dport,
+            "proto": proto, "policyid": policyid,
+            "src_intf": srcintf, "dst_intf": dstintf,
+            "duration": 42, "expire": 3598}
+
+
+def add_sessions(t: FixtureTransport, device: str, vdom: str, *,
+                 src: str, dst: str, protocol: str = "tcp",
+                 dst_port: int | None = None,
+                 sessions: list[dict] | None = None,
+                 offline: bool = False) -> None:
+    """Fixture für die Session-Probe (firewall/session). `sessions` sind rohe
+    FortiOS-Einträge — auch bewusst NICHT passende, um den clientseitigen
+    Nachfilter zu prüfen."""
+    req = proxy_request(device, vdom, "firewall/session",
+                        session_params(src, dst, protocol, dst_port))
+    if offline:
+        t.add(req, proxy_offline(device))
+    else:
+        t.add(req, proxy_ok(device, sessions or []))

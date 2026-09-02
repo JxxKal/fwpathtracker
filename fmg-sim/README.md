@@ -24,6 +24,10 @@ bleibt unangetastet.
 - `monitor/firewall/policy-lookup` — geordnetes Policy-Matching (Zonen, Adress-
   und Service-Objekte) → `{success, policy_id, action}` bzw. `{success:false}`
   (implizites Deny)
+- `monitor/firewall/session` — laufende Sessions je VDOM (Block `sessions:` in
+  `lab.yaml`). Emuliert einen Build, der die Filter `srcaddr`/`dstaddr`/
+  `dstport`/`protocol` serverseitig anwendet; `ignore_filters: true` am Gerät
+  spielt den älteren Build durch, der stur alles liefert
 
 **Auth**: Token (`Authorization: Bearer <beliebig>`) und Session-Login
 (`exec /sys/login/user` → `session`). Beides wird permissiv akzeptiert.
@@ -31,8 +35,8 @@ bleibt unangetastet.
 ## Topologie bearbeiten
 
 Alles steckt in [`lab.yaml`](./lab.yaml) — Standorte (/20), VDOMs, Interfaces,
-Zonen, Policies, Objekte, statische Routen. `online: false` auf einem Gerät
-lässt den Proxy „Ziel offline" melden (Degraded-Mode-Test).
+Zonen, Policies, Objekte, statische Routen, laufende Sessions. `online: false`
+auf einem Gerät lässt den Proxy „Ziel offline" melden (Degraded-Mode-Test).
 
 `lab.yaml` ist als Volume gemountet — nach dem Editieren ohne Rebuild neu laden:
 

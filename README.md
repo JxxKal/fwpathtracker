@@ -56,6 +56,14 @@ Schreibzugriff** auf den FortiManager (No-Write-Garantie, s.u.).
   sichtbar am Uplink, statt eine standortfremde Firewall mit implizitem Deny in
   den Pfad zu ziehen. Für Inter-VDOM-Links auf demselben Gerät gilt die Sperre
   nicht — dort IST die Default-Route der Weg zum Router-VDOM.
+- **Live-Sessions (opt-in)**: Checkbox „Live-Sessions prüfen" liest zusätzlich
+  `firewall/session` jeder Firewall im Pfad — der **Ist-Zustand** neben der
+  Theorie des Policy-Lookups. Das Hop-Panel zeigt die passenden Sessions
+  (Flow, Interface-Paar, getroffene Regel, Dauer); gewarnt wird nur bei
+  Widersprüchen: Verkehr trotz `DENY`, oder Verkehr über eine **andere** Regel
+  als der Lookup meldet (globale Header-Regel, NAT, geänderte Policy). Kostet
+  einen weiteren Live-Aufruf je Hop, deshalb standardmäßig aus — Batch-Checks
+  bleiben unberührt. Rein lesend (GET), die No-Write-Garantie gilt unverändert.
 - **Degraded Mode**: Gerät offline → Route aus dem Cache, Verdict `UNKNOWN`.
 - **Debug-Drawer**: kopierbare Routing- und Policy-Lookups pro Hop (Proxy-
   Request + Response) plus **Pfad-Entscheidung** je Hop — geprüfte Regeln
@@ -515,7 +523,12 @@ FMG-Antwort landet als `{request, response}`-JSON im `fmg-fixtures`-Volume. Nach
 **Offene Lab-Validierungen (ASSUMPTIONS):** exaktes Erfolgs-Payload von
 `firewall/policy-lookup`; Feldnamen der `router/lookup`-Antwort
 (`interface`/`oif`/`gateway`); `rpc-permit read` vs. `read-write` für
-`/sys/proxy/json`; vdom-link-Erkennung (`<base>0/<base>1` + Typ).
+`/sys/proxy/json`; vdom-link-Erkennung (`<base>0/<base>1` + Typ); Filter-
+Verhalten von `firewall/session` (der generische `filter=`-Ausdruck wird für
+diese Tabelle laut Fortinet-KB FD224183 ignoriert, die dedizierten Parameter
+`srcaddr`/`dstaddr`/`dstport`/`protocol` greifen erst auf neueren Builds —
+der Tracker filtert deshalb immer zusätzlich clientseitig und markiert im
+Ergebnis, ob das Gerät gefiltert hat und ob die Liste abgeschnitten war).
 
 ---
 

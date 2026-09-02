@@ -1,7 +1,7 @@
 // Demo-Antworten: entsprechen der Phase-4-Testmatrix (Lab-Fixtures).
 import type {
   InventorySummary, PortTraceResult, SearchHit, Session, SyncStatus,
-  TraceHistoryEntry, TraceRequest, TraceResult,
+  SessionProbe, TraceHistoryEntry, TraceRequest, TraceResult,
 } from '../types';
 
 export function login(): Session {
@@ -28,6 +28,24 @@ const denyCandidate = {
   service: ['ALL'], comments: '', hit: false,
 };
 
+// Demo-Session-Probe: Hop 1 sieht Verkehr über die getroffene Regel, Hop 2 im
+// Deny-Fall gar keinen — genau die beiden Fälle, die das Panel unterscheidet.
+function demoSessions(req: TraceRequest, policyid: number | null,
+                      srcintf: string, dstintf: string): SessionProbe | null {
+  if (!req.sessions) return null;
+  const samples = policyid === null ? [] : [{
+    src: '10.1.1.10', srcport: 51001, dst: '10.2.1.30',
+    dstport: req.dst_port ?? 443, proto: 6, protocol: req.protocol,
+    srcintf, dstintf, policyid, nat_src: null, nat_dst: null,
+    duration: 42, expire: 3598,
+  }];
+  return {
+    match_count: samples.length, returned: samples.length, truncated: false,
+    server_filtered: samples.length ? true : null, samples,
+    policy_ids: policyid === null ? [] : [policyid], params: {},
+  };
+}
+
 export function trace(req: TraceRequest): TraceResult {
   const deny = req.dst.includes('9.9') || req.dst_port === 23;
   return {
@@ -52,7 +70,8 @@ export function trace(req: TraceRequest): TraceResult {
         route: { interface: 'vpn-to-b', gateway: '0.0.0.0', source: 'live' },
         verdict: 'ALLOW', matched_policy: allowCandidate,
         candidates: [allowCandidate, denyCandidate],
-        suggestion: null, warnings: [], degraded: false, after_deny: false,
+        suggestion: null, sessions: demoSessions(req, 100, 'lan1', 'vpn-to-b'),
+        warnings: [], degraded: false, after_deny: false,
       },
       {
         index: 1, device: 'fw-b', vdom: 'root', adom: 'corp',
@@ -77,6 +96,7 @@ export function trace(req: TraceRequest): TraceResult {
           note: 'Nur Vorschlag — Installation via FortiManager erforderlich. Der Tracker hat keinen Schreibzugriff.',
           fmg_url: 'https://fmg.example.net/p/app/#!/pm/config/adom/corp/pkg/pkg-b/firewall/policy',
         } : null,
+        sessions: demoSessions(req, deny ? null : 200, 'vpn-to-a', 'lan1'),
         warnings: [], degraded: false, after_deny: false,
       },
     ],

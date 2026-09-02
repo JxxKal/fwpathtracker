@@ -23,6 +23,7 @@ export default function TraceForm({ onSubmit, onPortSubmit, busy, mode, onModeCh
   const [srcPort, setSrcPort] = useState('');
   const [icmpType, setIcmpType] = useState('8');
   const [icmpCode, setIcmpCode] = useState('0');
+  const [sessions, setSessions] = useState(initial?.sessions ?? false);
 
   const ports = mode === 'ports';
 
@@ -36,6 +37,7 @@ export default function TraceForm({ onSubmit, onPortSubmit, busy, mode, onModeCh
       src_port: isIcmp || !srcPort ? null : Number(srcPort),
       icmp_type: isIcmp ? Number(icmpType) : null,
       icmp_code: isIcmp ? Number(icmpCode) : null,
+      sessions,
     };
   }
 
@@ -127,6 +129,14 @@ export default function TraceForm({ onSubmit, onPortSubmit, busy, mode, onModeCh
             ? (busy ? de.trace.portsRunning : de.trace.portsRun)
             : (busy ? de.trace.running : de.trace.run)}
         </button>
+        {!ports && (
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-400"
+            title={de.trace.sessionsHint}>
+            <input type="checkbox" className="accent-cyan-600" checked={sessions}
+              onChange={(e) => setSessions(e.target.checked)} />
+            {de.trace.sessions}
+          </label>
+        )}
         {!ports && (
           <button
             type="button" className="fwpt-btn-ghost" title={de.trace.reverseHint}

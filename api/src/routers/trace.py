@@ -44,6 +44,10 @@ class TraceRequest(BaseModel):
     src_port: int | None = Field(default=None, ge=1, le=65535)
     icmp_type: int | None = Field(default=None, ge=0, le=255)
     icmp_code: int | None = Field(default=None, ge=0, le=255)
+    # Opt-in: zusätzlich die Session-Tabelle jeder Firewall im Pfad lesen
+    # (Ist-Nachweis zum Policy-Lookup). Kostet einen weiteren Live-Aufruf je Hop,
+    # deshalb standardmäßig aus — Batch-Checks bleiben davon unberührt.
+    sessions: bool = False
 
 
 async def _execute_trace(state, body: "TraceRequest", *, fmg_cfg: dict,
@@ -81,6 +85,7 @@ async def _execute_trace(state, body: "TraceRequest", *, fmg_cfg: dict,
             overlay_pattern=tracker_cfg.get("overlay_pattern", "(?i)(vpn|ovl|sdwan|tun|ipsec)"),
             router_vdom_pattern=tracker_cfg.get("router_vdom_pattern", "(?i)(router|wan.?edge)"),
             max_hops=int(tracker_cfg.get("max_hops", 8)),
+            probe_sessions=body.sessions,
         )
     except TraceError as exc:
         raise HTTPException(422, str(exc)) from exc

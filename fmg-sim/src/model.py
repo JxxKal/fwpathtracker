@@ -49,6 +49,9 @@ class Vdom:
     interfaces: dict[str, Interface] = field(default_factory=dict)
     zones: dict[str, list[str]] = field(default_factory=dict)
     routes: list[Route] = field(default_factory=list)
+    # Aktuell "laufende" Sessions (firewall/session) — der Ist-Zustand, den ein
+    # Policy-Lookup NICHT kennt. In lab.yaml je VDOM pflegbar.
+    sessions: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -58,6 +61,9 @@ class Device:
     serial: str
     os_ver: str
     online: bool
+    # true = Build, der die Filter-Parameter von firewall/session ignoriert und
+    # immer ALLE Sessions liefert (siehe fortios.firewall_session).
+    ignore_filters: bool = False
     vdoms: dict[str, Vdom] = field(default_factory=dict)
 
 
@@ -80,6 +86,7 @@ class Model:
                 serial=d.get("serial", f"FGVMSIM{dname}"),
                 os_ver=str(d.get("os_ver", "7.4")),
                 online=bool(d.get("online", True)),
+                ignore_filters=bool(d.get("ignore_filters", False)),
             )
             for vname, v in (d.get("vdoms") or {}).items():
                 vdom = Vdom(name=vname)
@@ -92,6 +99,7 @@ class Model:
                     vdom.routes.append(Route(
                         network=ipaddress.ip_network(r["dst"], strict=False),
                         via=r["via"], gateway=r.get("gateway")))
+                vdom.sessions = [dict(s) for s in (v.get("sessions") or [])]
                 dev.vdoms[vname] = vdom
             self.devices[dname] = dev
 

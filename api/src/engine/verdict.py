@@ -27,6 +27,21 @@ class Candidate(BaseModel):
     package: str | None = None
 
 
+class SessionProbe(BaseModel):
+    """Ist-Nachweis eines Hops: passende Einträge der FortiOS-Session-Tabelle.
+
+    `truncated`/`server_filtered` sind Teil des Ergebnisses, weil ein
+    "0 Sessions" nur dann etwas bedeutet, wenn die Liste vollständig war.
+    """
+    match_count: int = 0
+    returned: int = 0
+    truncated: bool = False
+    server_filtered: bool | None = None
+    samples: list[dict] = Field(default_factory=list)
+    policy_ids: list[int] = Field(default_factory=list)
+    params: dict = Field(default_factory=dict)
+
+
 class Endpoint(BaseModel):
     ip: str
     names: list[dict] = Field(default_factory=list)   # {name, provenance}
@@ -48,6 +63,8 @@ class Hop(BaseModel):
     matched_policy: Candidate | None = None
     candidates: list[Candidate] = Field(default_factory=list)
     suggestion: dict | None = None
+    # Nur gesetzt, wenn der Trace mit Session-Probe angefordert wurde.
+    sessions: SessionProbe | None = None
     warnings: list[str] = Field(default_factory=list)
     # Router-/Policy-Lookup (Requests+Responses) + Pfad-Entscheidung:
     # ingress | route | classification | next_hop | loop_detected

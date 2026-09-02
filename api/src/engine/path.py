@@ -3,6 +3,11 @@
 Pro Hop laufen genau zwei Live-Aufrufe gegen die FortiGate (via FMG-Proxy);
 alles andere (Kandidaten, Zonen, Namen) kommt aus dem Inventory-Cache.
 Gerät offline ⇒ Degraded Mode: Route aus dem Cache, Verdict UNKNOWN.
+
+Optional (probe_sessions=True) kommt ein DRITTER Lookup je Hop dazu:
+firewall/session als Ist-Nachweis zur Theorie des Policy-Lookups — bewusst
+opt-in, weil die Session-Tabelle groß ist und für die reine Soll-Frage
+("dürfte der Flow?") nicht gebraucht wird.
 """
 from __future__ import annotations
 
@@ -12,15 +17,15 @@ import re
 
 from engine.classify import classify_egress
 from engine.ports import combine, hop_allowed
-from engine.verdict import Candidate, Hop
+from engine.sessions import probe_sessions as _probe_sessions
+from engine.sessions import session_warnings
+from engine.verdict import Candidate, Hop, SessionProbe
 from fmg.client import FmgClient, FmgError, FmgTargetOffline
 from fmg.proxy import build_monitor_request, fortios_results, monitor_get
 from inventory.prefixes import PrefixTable
 from inventory.store import Inventory
 
 log = logging.getLogger("engine.path")
-
-PROTO_NUMBERS = {"tcp": 6, "udp": 17, "icmp": 1}
 
 # FortiOS vergibt Policy-IDs ab 2^30 an INTERNE Regeln — implizit bzw.
 # automatisch erzeugt (SD-WAN/ADVPN-Shortcuts, Local-In, VPN-Hilfsregeln). Der
@@ -31,6 +36,14 @@ PROTO_NUMBERS = {"tcp": 6, "udp": 17, "icmp": 1}
 # (FortiManager-Doku 'Appendix B – Policy ID support'; FortiGate erlaubt
 # 0–4294967294, der FortiManager nur den Bereich unterhalb dieser Grenze.)
 INTERNAL_POLICY_ID_MIN = 1 << 30
+
+
+def _as_policy_id(pid) -> int | None:
+    """Policy-ID des Lookups als int (FortiOS liefert je nach Build str/int)."""
+    try:
+        return int(str(pid).strip())
+    except (TypeError, ValueError):
+        return None
 
 
 def is_internal_policy_id(pid) -> bool:
@@ -486,7 +499,8 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
                     icmp_type: int | None = None, icmp_code: int | None = None,
                     inv: Inventory, prefixes: PrefixTable, client: FmgClient,
                     overlay_pattern: str, max_hops: int = 8,
-                    router_vdom_pattern: str = "(?i)(router|wan.?edge)") -> list[Hop]:
+                    router_vdom_pattern: str = "(?i)(router|wan.?edge)",
+                    probe_sessions: bool = False) -> list[Hop]:
     steps = await _walk_path(
         src_ip=src_ip, dst_ip=dst_ip, inv=inv, prefixes=prefixes, client=client,
         overlay_pattern=overlay_pattern, router_vdom_pattern=router_vdom_pattern,
@@ -604,6 +618,25 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
                 )
         hop.candidates = candidates
 
+        # ── e) Session-Probe (optional, read-only) ───────────────────────────
+        # Ist-Nachweis zur Theorie: läuft für diesen Flow gerade Verkehr über
+        # dieses Gerät — und über welche Regel? Scheitert die Abfrage, bleibt
+        # der Trace gültig; der Nachweis fehlt dann eben.
+        probe = None
+        if probe_sessions and adom is not None and not hop.degraded:
+            try:
+                probe = await _probe_sessions(
+                    client, adom, device, vdom, src_ip=src_ip, dst_ip=dst_ip,
+                    protocol=protocol, dst_port=dst_port)
+            except FmgTargetOffline as exc:
+                hop.warnings.append(f"Session-Abfrage übersprungen: {exc}")
+            except FmgError as exc:
+                hop.warnings.append(f"Session-Abfrage fehlgeschlagen: {exc}")
+            else:
+                hop.sessions = SessionProbe(**probe)
+                hop.warnings.extend(session_warnings(
+                    probe, verdict=hop.verdict, policy_id=_as_policy_id(pid)))
+
         # ── Debug: die tatsächlichen FortiOS-Monitor-Lookups (Router + Policy) —
         # zum Kopieren/Reproduzieren, wenn ein Hop hakt.
         if adom is not None:
@@ -619,6 +652,17 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
                                                    "firewall/policy-lookup",
                                                    lookup.get("params", {})),
                     "response": lookup.get("raw"),
+                }
+            if probe is not None:
+                # Bewusst OHNE die rohe Session-Liste: die kann tausende
+                # Einträge haben und landet sonst in der Trace-History.
+                hop.debug["session_probe"] = {
+                    "proxy": build_monitor_request(adom, device, vdom,
+                                                   "firewall/session",
+                                                   probe.get("params", {})),
+                    "summary": {k: probe[k] for k in
+                                ("match_count", "returned", "truncated",
+                                 "server_filtered", "policy_ids")},
                 }
 
         if hop.verdict == "DENY":
