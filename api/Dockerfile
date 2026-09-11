@@ -6,6 +6,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential pkg-config \
       libxml2-dev libxmlsec1-dev libxmlsec1-openssl libssl-dev libltdl-dev \
+      iputils-ping \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

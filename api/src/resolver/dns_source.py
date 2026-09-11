@@ -43,8 +43,9 @@ async def resolve_name(dns_cfg: dict, name: str,
     return None
 
 
-async def resolve_ip(dns_cfg: dict, ip: str) -> dict | None:
-    res = _resolver(dns_cfg)
+async def resolve_ip(dns_cfg: dict, ip: str,
+                     timeout_s: float = _TIMEOUT_S) -> dict | None:
+    res = _resolver(dns_cfg, timeout_s)
     try:
         answer = await res.resolve(dns.reversename.from_address(ip), "PTR")
         names = [r.to_text().rstrip(".") for r in answer]

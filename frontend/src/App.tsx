@@ -5,6 +5,7 @@ import LoginPage from './components/LoginPage';
 import HistoryList from './components/HistoryList';
 import AddToChecks from './components/AddToChecks';
 import ChecksPanel from './components/ChecksPanel';
+import FreeIp from './components/FreeIp';
 import FreeSubnet from './components/FreeSubnet';
 import HopDetailPanel from './components/HopDetailPanel';
 import IpCalc from './components/IpCalc';
@@ -215,6 +216,7 @@ export default function App() {
               <VlanList />
               <IpCalc />
               <FreeSubnet />
+              <FreeIp />
             </div>
           </>
         )}

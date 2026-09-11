@@ -43,8 +43,14 @@ async def _core_get(client: httpx.AsyncClient, base_url: str, user: str, pwd: st
     body = r.json()
     if body.get("code", 0) != 0:
         raise RuntimeError(f"iTop-Fehler ({cls}): {body.get('message', body)}")
-    return [obj["fields"] for obj in (body.get("objects") or {}).values()
-            if obj.get("code", 0) == 0]
+    out: list[dict] = []
+    for obj in (body.get("objects") or {}).values():
+        if obj.get("code", 0) != 0:
+            continue
+        fields = dict(obj.get("fields") or {})
+        fields.setdefault("_key", obj.get("key"))   # iTop-Objekt-ID (z.B. subnet_id-Bezug)
+        out.append(fields)
+    return out
 
 
 class ItopSource:
@@ -52,6 +58,8 @@ class ItopSource:
         self._hosts: list[dict] = []   # {name, ip, description}
         self._loaded_at: float = 0.0
         self._ttl_s = 900
+        self._ipam: dict | None = None  # {subnets, ranges, loaded_at} — Bereichsbaum
+        self._ipam_ttl_s = 300
 
     @staticmethod
     def _client(cfg: dict) -> httpx.AsyncClient:
@@ -91,7 +99,12 @@ class ItopSource:
         Refresh-Button und den täglichen Auto-Refresh. Gibt die Anzahl Hosts zurück.
         """
         self._loaded_at = 0.0
+        self._ipam = None
         return len(await self._index(cfg))
+
+    async def hosts(self, cfg: dict) -> list[dict]:
+        """Host-Index (Server/NetworkDevice mit Management-IP) — TTL-gecacht."""
+        return await self._index(cfg)
 
     async def subnets(self, cfg: dict) -> list[dict]:
         """IPv4-Subnetze aus iTop (IPAM/TeemIP) — für den Free-Subnet-Finder.
@@ -121,6 +134,87 @@ class ItopSource:
             except ValueError:
                 continue
             out.append({"cidr": str(net), "name": str(r.get("name") or "").strip()})
+        return out
+
+    async def ipam(self, cfg: dict) -> dict:
+        """Subnetze + Ranges für den Bereichsbaum (TTL-gecacht, 5 min).
+
+        subnets: [{id, cidr, name, gateway}] — wie subnets(), plus Objekt-ID und
+        Gateway. ranges: [{subnet_id, first, last, name, dhcp}] aus IPv4Range;
+        die Klasse ist TeemIP-Standard — fehlt sie, gibt es eben keine Ranges,
+        der Rest funktioniert weiter.
+        """
+        import ipaddress
+        if self._ipam and time.monotonic() - self._ipam["loaded_at"] < self._ipam_ttl_s:
+            return self._ipam
+        if not cfg.get("base_url") or not cfg.get("enabled", True):
+            return {"subnets": [], "ranges": [], "loaded_at": time.monotonic()}
+        guard_egress_url(cfg["base_url"], "iTop-URL")
+        cls = cfg.get("subnet_class") or "IPv4Subnet"
+        ipf = cfg.get("subnet_ip_field") or "ip"
+        maskf = cfg.get("subnet_mask_field") or "mask"
+        org = (cfg.get("org_filter") or "").strip()
+        where = f" WHERE org_name = '{_oql_str(org)}'" if org else ""
+        subnets: list[dict] = []
+        ranges: list[dict] = []
+        async with self._client(cfg) as client:
+            # gatewayip ist TeemIP-Standard; bei angepasster Subnetz-Klasse
+            # ohne das Feld schlägt der erste Versuch fehl → ohne Gateway laden.
+            try:
+                rows = await _core_get(client, cfg["base_url"], cfg["user"], cfg["password"],
+                                       cls, f"{ipf},{maskf},name,gatewayip", f"SELECT {cls}{where}")
+            except Exception:
+                rows = await _core_get(client, cfg["base_url"], cfg["user"], cfg["password"],
+                                       cls, f"{ipf},{maskf},name", f"SELECT {cls}{where}")
+            for r in rows:
+                ipv, mv = str(r.get(ipf) or "").strip(), str(r.get(maskf) or "").strip()
+                if not ipv or not mv:
+                    continue
+                try:
+                    net = ipaddress.IPv4Network(f"{ipv}/{mv}", strict=False)
+                except ValueError:
+                    continue
+                gw = str(r.get("gatewayip") or "").strip() or None
+                subnets.append({"id": str(r.get("_key")), "cidr": str(net),
+                                "name": str(r.get("name") or "").strip(), "gateway": gw})
+            try:
+                rrows = await _core_get(client, cfg["base_url"], cfg["user"], cfg["password"],
+                                        "IPv4Range", "subnet_id,firstip,lastip,range,dhcp",
+                                        f"SELECT IPv4Range{where}")
+            except Exception as exc:
+                log.info("iTop IPv4Range nicht ladbar (%s) — Baum ohne Ranges.", exc)
+                rrows = []
+            for r in rrows:
+                try:
+                    lo = ipaddress.IPv4Address(str(r.get("firstip") or "").strip())
+                    hi = ipaddress.IPv4Address(str(r.get("lastip") or "").strip())
+                except ValueError:
+                    continue
+                ranges.append({"subnet_id": str(r.get("subnet_id")), "first": str(lo),
+                               "last": str(hi), "name": str(r.get("range") or "").strip(),
+                               "dhcp": str(r.get("dhcp") or "").lower() in ("yes", "1", "true")})
+        self._ipam = {"subnets": subnets, "ranges": ranges, "loaded_at": time.monotonic()}
+        return self._ipam
+
+    async def addresses(self, cfg: dict, subnet_ids: list[str]) -> dict[str, dict]:
+        """IPv4Address-Objekte der Subnetze — immer frisch, denn genau hier
+        trägt jemand kurz vorher eine Reservierung ein und sucht dann weiter.
+        Rückgabe ip → {status, name}; name = short_name oder fqdn."""
+        ids = [i for i in subnet_ids if i and i.isdigit()]
+        if not ids or not cfg.get("base_url") or not cfg.get("enabled", True):
+            return {}
+        guard_egress_url(cfg["base_url"], "iTop-URL")
+        oql = f"SELECT IPv4Address WHERE subnet_id IN ({','.join(ids)})"
+        async with self._client(cfg) as client:
+            rows = await _core_get(client, cfg["base_url"], cfg["user"], cfg["password"],
+                                   "IPv4Address", "ip,status,short_name,fqdn", oql)
+        out: dict[str, dict] = {}
+        for r in rows:
+            ip = str(r.get("ip") or "").strip()
+            if not ip:
+                continue
+            name = str(r.get("fqdn") or r.get("short_name") or "").strip()
+            out[ip] = {"status": str(r.get("status") or "").strip().lower(), "name": name}
         return out
 
     async def resolve_name(self, cfg: dict, name: str) -> dict | None:

@@ -106,6 +106,19 @@ FMG/iTop/DNS aufgelöst.
 - **Freies Subnetz finden** — freie Blöcke gewünschter Größe in einem Supernet;
   belegter Bestand aus iTop (IPAM). Standort-Supernetze als Vorauswahl (in den
   Einstellungen pflegbar).
+- **Freie IP-Adresse finden** — eine Stufe tiefer: Bereich aus dem iTop-IPAM
+  wählen (Baum: Standort → Subnetz → Range, oder Netz/Von/Bis manuell), dann
+  scheidet der Bestand aus — iTop-Adressobjekte mit Status *allocated/reserved*,
+  Management-IPs von Servern/Netzgeräten (auch ohne Adressobjekt: nicht jede
+  zugewiesene IP ist in iTop reserviert), Firewall-Interfaces aus dem
+  FMG-Inventar, Gateway und DHCP-Ranges. Was iTop als frei durchlässt, wird
+  live geprüft: **Ping**, **Reverse-DNS** (PTR, z. B. in der konfigurierten
+  Suchdomain) und die **ARP-Historie** (hat hier kürzlich ein Gerät gesprochen,
+  das gerade aus ist? — vorher wird die Live-ARP-Tabelle des zuständigen VDOMs
+  einmal eingesammelt). Bewertung je Adresse: *frei* (alles still),
+  *zweifelhaft* (DNS oder ARP kennen sie), *belegt* (antwortet), *nicht
+  prüfbar* (kein Ping im Container). Geprüft wird in Wellen, bis die gewünschte
+  Anzahl freier Adressen beisammen ist.
 - **Martin Lehmann, wo hängt das Gerät?** — IP oder Name → **Switch und Port**, an dem das Gerät
   physisch steckt. IP→MAC live von der FortiGate (die ist an fast allen
   Standorten der L3-Router), MAC→Port aus der **LibreNMS**-FDB. Zeigt alle

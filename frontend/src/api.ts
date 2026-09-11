@@ -258,6 +258,66 @@ export async function freeSubnets(supernet: string, prefix: number): Promise<Fre
   return request('/api/itop/free-subnets', { method: 'POST', body: JSON.stringify({ supernet, prefix }) });
 }
 
+// ── Free-IP-Finder (iTop-IPAM × Ping × PTR × ARP-Historie) ───────────────────
+
+export interface IpamNode {
+  kind: 'site' | 'subnet' | 'range'; cidr: string; name: string; children: IpamNode[];
+  id?: string; gateway?: string | null; first?: string; last?: string; dhcp?: boolean;
+}
+export interface FreeIpEntry {
+  ip: string; itop: { status: string; name: string } | null;
+  ping: boolean | null; dns: string | null;
+  arp: { mac: string; device: string | null; vdom: string | null; last_seen: string | null; age_s: number | null } | null;
+  verdict: 'free' | 'suspect' | 'in_use' | 'unknown';
+}
+export interface FreeIpResult {
+  cidr: string; start: string | null; end: string | null; want: number;
+  gateway: string | null; itop_subnets: string[]; dns_domain: string | null;
+  warnings: string[]; results: FreeIpEntry[]; exhausted: boolean; ping_available: boolean;
+  stats: { hosts: number; itop_used: number; ci_used: number; fw_used: number;
+    dhcp_skipped: number; gateway_skipped: number; probed: number; free: number };
+}
+export async function ipamTree(): Promise<{ nodes: IpamNode[]; subnets: number; ranges: number }> {
+  if (isDemoMode()) {
+    const sub = (id: string, cidr: string, name: string, gw: string, children: IpamNode[] = []): IpamNode =>
+      ({ kind: 'subnet', id, cidr, name, gateway: gw, children });
+    return { subnets: 4, ranges: 1, nodes: [
+      { kind: 'site', cidr: '10.180.0.0/20', name: 'Holstein', children: [
+        sub('1', '10.180.1.0/24', 'Server', '10.180.1.1'),
+        sub('2', '10.180.5.0/24', 'Ofen 3', '10.180.5.1', [
+          { kind: 'range', cidr: '10.180.5.0/24', name: 'DHCP', first: '10.180.5.100', last: '10.180.5.199', dhcp: true, children: [] },
+        ]),
+      ] },
+      { kind: 'site', cidr: '10.180.32.0/20', name: 'Hamburg', children: [
+        sub('3', '10.180.33.0/24', 'Büro', '10.180.33.1'),
+      ] },
+      { kind: 'site', cidr: '0.0.0.0/0', name: 'Weitere Netze', children: [
+        sub('4', '192.168.1.0/24', 'Lab', '192.168.1.1'),
+      ] },
+    ] };
+  }
+  return request('/api/itop/ipam-tree');
+}
+export async function freeIps(cidr: string, want: number, start?: string, end?: string): Promise<FreeIpResult> {
+  if (isDemoMode()) {
+    const base = cidr.replace(/\.\d+\/\d+$/, '');
+    return {
+      cidr, start: start ?? null, end: end ?? null, want, gateway: `${base}.1`, itop_subnets: [cidr],
+      dns_domain: 'op-tech.com', warnings: [], exhausted: false, ping_available: true,
+      stats: { hosts: 254, itop_used: 40, ci_used: 12, fw_used: 1, dhcp_skipped: 100, gateway_skipped: 1, probed: 6, free: 3 },
+      results: [
+        { ip: `${base}.7`, itop: null, ping: true, dns: `plc-7.op-tech.com`, arp: null, verdict: 'in_use' },
+        { ip: `${base}.8`, itop: { status: 'released', name: '' }, ping: false, dns: null, arp: null, verdict: 'free' },
+        { ip: `${base}.9`, itop: null, ping: false, dns: `alt-hmi.op-tech.com`, arp: null, verdict: 'suspect' },
+        { ip: `${base}.10`, itop: null, ping: false, dns: null, arp: { mac: '000c29aabbcc', device: 'fw-a', vdom: 'root', last_seen: null, age_s: 86400 * 3 }, verdict: 'suspect' },
+        { ip: `${base}.11`, itop: null, ping: false, dns: null, arp: null, verdict: 'free' },
+        { ip: `${base}.12`, itop: null, ping: false, dns: null, arp: null, verdict: 'free' },
+      ],
+    };
+  }
+  return request('/api/itop/free-ips', { method: 'POST', body: JSON.stringify({ cidr, want, start: start || null, end: end || null }) });
+}
+
 export async function inventoryOwns(q: string): Promise<OwnsResult> {
   if (isDemoMode()) {
     return {
