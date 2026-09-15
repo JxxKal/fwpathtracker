@@ -19,6 +19,7 @@ import ResultDrawer from './components/ResultDrawer';
 import TraceForm, { type TraceMode } from './components/TraceForm';
 import VlanList from './components/VlanList';
 import DnsPanel from './components/settings/DnsPanel';
+import DrawioPanel from './components/settings/DrawioPanel';
 import FmgPanel from './components/settings/FmgPanel';
 import ItopPanel from './components/settings/ItopPanel';
 import LibrenmsPanel from './components/settings/LibrenmsPanel';
@@ -234,6 +235,7 @@ export default function App() {
             <FmgPanel />
             <ItopPanel />
             <LibrenmsPanel />
+            <DrawioPanel />
             <DnsPanel />
             <SitesPanel />
             <SiteSupernetsPanel />

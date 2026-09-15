@@ -9,8 +9,11 @@ import re
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from deps import get_current_user
+import httpx
+
+from deps import get_current_user, require_admin
 from diagram import drawio, model as diagram_model
+from netguard import guard_egress_url
 from routers.config import read_config
 
 log = logging.getLogger("routers.diagram")
@@ -24,13 +27,42 @@ class DiagramRequest(BaseModel):
     hosts: str = Field(default="auto", pattern="^(auto|all|netdev|none)$")
 
 
+async def drawio_url() -> str | None:
+    """Selbst gehostete draw.io-Instanz (system_config['drawio'].base_url) —
+    ohne Schrägstrich am Ende, leer = kein „In draw.io öffnen"."""
+    cfg = await read_config("drawio")
+    url = str(cfg.get("base_url") or "").strip().rstrip("/")
+    return url or None
+
+
 @router.get("/scopes")
 async def scopes(request: Request, _user: dict = Depends(get_current_user)) -> dict:
-    """Geräte und VDOMs aus dem FMG-Inventar — Auswahl im Werkzeug."""
+    """Geräte und VDOMs aus dem FMG-Inventar — Auswahl im Werkzeug. Dazu die
+    draw.io-URL, damit das Werkzeug den Öffnen-Button anbieten kann."""
     inv = request.app.state.inventory
     devices = [{"device": d, "adom": info["adom"], "vdoms": list(info["vdoms"] or ["root"])}
                for d, info in sorted(inv.devices.items())]
-    return {"devices": devices, "max_hosts": diagram_model.MAX_HOSTS}
+    return {"devices": devices, "max_hosts": diagram_model.MAX_HOSTS,
+            "drawio_url": await drawio_url()}
+
+
+@router.post("/drawio/test")
+async def drawio_test(_admin: dict = Depends(require_admin)) -> dict:
+    """Erreichbarkeit der draw.io-Instanz vom Server aus — ein GET auf die
+    Basis-URL. Der Browser der Kollegen muss sie zusätzlich selbst erreichen."""
+    url = await drawio_url()
+    if not url:
+        raise HTTPException(400, "draw.io-URL nicht konfiguriert – bitte zuerst speichern.")
+    guard_egress_url(url, "draw.io-URL")
+    try:
+        async with httpx.AsyncClient(timeout=10, verify=False, follow_redirects=True) as client:
+            r = await client.get(url + "/")
+    except Exception as exc:
+        raise HTTPException(502, f"draw.io nicht erreichbar: {exc}") from exc
+    if r.status_code >= 400:
+        raise HTTPException(502, f"draw.io antwortet mit HTTP {r.status_code}.")
+    looks = "draw.io" in r.text or "diagrams.net" in r.text or "mxgraph" in r.text.lower()
+    return {"ok": True, "status": r.status_code, "looks_like_drawio": looks}
 
 
 @router.post("")

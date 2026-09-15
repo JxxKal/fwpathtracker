@@ -1,4 +1,4 @@
-import { Download, Map } from 'lucide-react';
+import { Download, ExternalLink, Map } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { buildDiagram, diagramScopes, type DiagramHosts, type DiagramResult, type DiagramScopes } from '../api';
 import { de } from '../i18n/de';
@@ -6,6 +6,14 @@ import { de } from '../i18n/de';
 // Netzplan als draw.io: Scope wählen, Datei bauen lassen, herunterladen.
 // Die Datei wird im Browser aus der API-Antwort erzeugt — kein Server-Download,
 // kein zweiter Request mit Token in der URL.
+// draw.io öffnet ein Diagramm aus dem URL-Hash (#R = rohes XML, URI-kodiert).
+// Bei sehr großen Zeichnungen wird der Link unhandlich — dann Datei-Weg.
+const MAX_LINK_BYTES = 1_500_000;
+function openInDrawio(base: string, filename: string, xml: string) {
+  const url = `${base}/?title=${encodeURIComponent(filename)}#R${encodeURIComponent(xml)}`;
+  window.open(url, '_blank', 'noopener');
+}
+
 function download(filename: string, xml: string) {
   const blob = new Blob([xml], { type: 'application/xml' });
   const url = URL.createObjectURL(blob);
@@ -108,6 +116,17 @@ export default function NetDiagram() {
               {de.diagram.again}
             </button>
           </p>
+          {scopes?.drawio_url && (
+            res.xml.length <= MAX_LINK_BYTES ? (
+              <p className="flex flex-wrap items-center gap-2">
+                <button type="button" className="fwpt-btn-ghost text-xs"
+                  onClick={() => openInDrawio(scopes.drawio_url!, res.filename, res.xml)}>
+                  <ExternalLink size={13} /> {de.diagram.openDrawio}
+                </button>
+                <span className="text-slate-600">{de.diagram.openDrawioHint}</span>
+              </p>
+            ) : <p className="text-amber-500">{de.diagram.tooBigForLink}</p>
+          )}
           <p className="text-slate-500">
             {res.stats.vdoms} {de.diagram.statVdoms} · {res.stats.networks} {de.diagram.statNets} · {res.stats.hosts_shown}/{res.stats.hosts_found} {de.diagram.statHosts}
             {' '}({de.diagram.modeShown[res.hosts_mode]}) · {res.stats.neighbors} {de.diagram.statNeighbors} · {res.stats.switches} {de.diagram.statSwitches}

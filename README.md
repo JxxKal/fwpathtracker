@@ -247,6 +247,30 @@ setzen), dann Portainer → *Stacks → Add stack → Web editor*, Inhalt von
 `docker-compose.portainer-webeditor.yml` einfügen und unter *Environment
 variables* die Secrets (+ ggf. Proxy-Vars, s.u.) setzen.
 
+### draw.io selbst hosten (für den Netzplan)
+
+Die `.drawio`-Dateien des Netzplans gehören nicht auf app.diagrams.net. Eine
+eigene Instanz im OT ist ein Container ohne Build — es zählt nur der
+**Daemon-Proxy** für den Image-Pull (siehe unten), zur Laufzeit ruft draw.io
+nichts nach außen:
+
+```yaml
+services:
+  drawio:
+    image: jgraph/drawio:latest        # nach dem ersten Lauf Version festnageln
+    container_name: a38-drawio
+    restart: unless-stopped
+    ports: ["8780:8080"]
+    environment:
+      DRAWIO_BASE_URL: "http://svo3041-ot:8780"
+```
+
+Danach in A38 unter *Einstellungen → draw.io* die Basis-URL eintragen; der
+Netzplan zeigt dann **„In draw.io öffnen"** (das Diagramm geht per URL-Hash in
+den Browser, kein Upload). PDF, PNG und SVG exportiert draw.io dort selbst über
+*Datei → Exportieren als* — der frühere separate Export-Server ist abgekündigt
+und wird nicht mehr gebraucht.
+
 ---
 
 ## Proxy-Umgebungen

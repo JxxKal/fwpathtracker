@@ -156,6 +156,9 @@ export const de = {
     noDevices: 'Keine Geräte im Inventar — FMG-Sync zuerst laufen lassen.',
     done: 'Datei erzeugt',
     again: 'erneut herunterladen',
+    openDrawio: 'In draw.io öffnen',
+    openDrawioHint: 'Öffnet das Diagramm in der selbst gehosteten draw.io-Instanz — nichts verlässt das Netz. PDF, PNG und SVG dort über Datei → Exportieren als.',
+    tooBigForLink: 'Diagramm zu groß für den Link — Datei herunterladen und in draw.io öffnen.',
     statVdoms: 'VDOMs', statNets: 'Netze', statHosts: 'Hosts', statNeighbors: 'Nachbarn', statSwitches: 'Switches',
     modeShown: { all: 'alle Hosts', netdev: 'nur Netzwerkgeräte', none: 'nur Netze', auto: 'automatisch' },
     open: 'Die .drawio-Datei in draw.io öffnen (Datei → Öffnen). Netz-Kästen mit vielen Hosts starten eingeklappt; Tooltips zeigen die Quellen je Knoten.',
@@ -288,7 +291,7 @@ export const de = {
     },
     provenance: {
       fortigate: 'FortiGate (live)',
-      librenms: 'LibreNMS (gepollt)',
+    librenms: 'LibreNMS (gepollt)',
     },
   },
   suggestion: {
@@ -386,6 +389,8 @@ export const de = {
   settings: {
     fmg: 'FortiManager',
     itop: 'iTop CMDB',
+    drawio: 'draw.io (selbst gehostet)',
+    drawioHint: 'Basis-URL der draw.io-Instanz im eigenen Netz, z. B. http://svo3041-ot:8780. Damit bekommt der Netzplan den Button „In draw.io öffnen". Der Browser der Nutzer muss die URL erreichen.',
     librenms: 'LibreNMS (Switchport-Suche)',
     arpCache: 'IP↔MAC-Historie',
     arpCacheHint: 'Zeichnet die ARP-Tabellen der FortiGates auf, damit die Switchport-Suche auch einen Host findet, der gerade aus ist. ARP altert binnen Minuten — was hier nicht mitgeschrieben wurde, während der Host lief, ist später nicht mehr zu bekommen.',

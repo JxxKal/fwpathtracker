@@ -320,7 +320,7 @@ export async function freeIps(cidr: string, want: number, start?: string, end?: 
 
 // ── Netzplan (draw.io) ────────────────────────────────────────────────────────
 
-export interface DiagramScopes { devices: { device: string; adom: string; vdoms: string[] }[]; max_hosts: number }
+export interface DiagramScopes { devices: { device: string; adom: string; vdoms: string[] }[]; max_hosts: number; drawio_url: string | null }
 export type DiagramHosts = 'auto' | 'all' | 'netdev' | 'none';
 export interface DiagramResult {
   filename: string; xml: string; hosts_mode: DiagramHosts; warnings: string[];
@@ -329,12 +329,16 @@ export interface DiagramResult {
 }
 export async function diagramScopes(): Promise<DiagramScopes> {
   if (isDemoMode()) {
-    return { max_hosts: 1500, devices: [
+    return { max_hosts: 1500, drawio_url: 'http://drawio.example.net:8780', devices: [
       { device: 'fw-a', adom: 'corp', vdoms: ['root', 'dmz'] },
       { device: 'fw-b', adom: 'corp', vdoms: ['root', 'prot'] },
     ] };
   }
   return request('/api/diagram/scopes');
+}
+export async function drawioTest(): Promise<{ ok: boolean; status: number; looks_like_drawio: boolean }> {
+  if (isDemoMode()) return { ok: true, status: 200, looks_like_drawio: true };
+  return request('/api/diagram/drawio/test', { method: 'POST' });
 }
 export async function buildDiagram(scope: 'vdom' | 'firewall', device: string, vdom: string | null,
   hosts: DiagramHosts): Promise<DiagramResult> {
