@@ -171,3 +171,45 @@ async def test_many_hosts_collapse_the_network_box(inventory, prefixes):
     collapsed = [c for c in root.findall(".//mxCell") if c.get("collapsed") == "1"]
     assert len(collapsed) == 1
     assert "+20 weitere" in " ".join(o.get("label", "") for o in root.findall(".//object"))
+
+
+def _geo(cell):
+    g = cell.find("mxGeometry")
+    return tuple(float(g.get(k, 0)) for k in ("x", "y", "width", "height"))
+
+
+async def test_containers_carry_the_stack_layout_that_reflows_on_expand(inventory, prefixes):
+    """Ohne childLayout=stackLayout überdeckt ein aufgeklapptes Netz alles, was
+    darunter liegt — die Positionen sind sonst fest. resizeParentMax=0 sorgt
+    dafür, dass der Container beim Zuklappen wieder schrumpft."""
+    m = await _build(inventory, prefixes)
+    root = ET.fromstring(drawio.render(m))
+    cells = root.findall(".//mxCell")
+    fw = [c for c in cells if "fillColor=#dae8fc" in (c.get("style") or "")]
+    vd = [c for c in cells if "fillColor=#f5f5f5" in (c.get("style") or "")]
+    assert fw and vd
+    for c in fw + vd:
+        style = c.get("style")
+        assert "childLayout=stackLayout" in style
+        assert "resizeParent=1" in style and "resizeParentMax=0" in style
+    assert "horizontalStack=1" in fw[0].get("style")    # VDOMs nebeneinander
+    assert "horizontalStack=0" in vd[0].get("style")    # Netze untereinander
+
+
+async def test_networks_are_one_column_and_do_not_overlap(inventory, prefixes):
+    """Die vorberechnete Geometrie muss der entsprechen, die das Stack-Layout
+    selbst erzeugen würde — sonst springt die Zeichnung beim ersten Klick."""
+    hosts = [{"name": f"h{i}", "ip": f"10.1.1.{i}", "description": "", "kind": "Server"}
+             for i in range(10, 40)]
+    m = await _build(inventory, prefixes, itop_hosts=hosts, itop_addresses={})
+    root = ET.fromstring(drawio.render(m))
+    nets = [c for c in root.findall(".//mxCell") if "fillColor=#d5e8d4" in (c.get("style") or "")]
+    assert len(nets) >= 3
+    by_parent: dict[str, list] = {}
+    for c in nets:
+        by_parent.setdefault(c.get("parent"), []).append(_geo(c))
+    for boxes in by_parent.values():
+        boxes.sort(key=lambda g: g[1])
+        assert len({g[0] for g in boxes}) == 1          # eine Spalte
+        for a, b in zip(boxes, boxes[1:]):
+            assert b[1] >= a[1] + a[3]                  # kein Überlappen

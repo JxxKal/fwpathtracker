@@ -138,6 +138,12 @@ FMG/iTop/DNS aufgelöst.
   Der **Gesamtplan** zeichnet Firewalls nach Standort gruppiert und ihre
   Kopplungen — ohne Netze und Hosts, weil bei Dutzenden Geräten nur die Frage
   „wer redet mit wem" lesbar bleibt.
+  Firewall- und VDOM-Container tragen draw.ios **Stack-Layout**
+  (`childLayout=stackLayout`): ein aufgeklapptes Netz schiebt die darunter
+  liegenden nach unten und zieht Container mit, statt sie zu überdecken; beim
+  Zuklappen schrumpft alles wieder (`resizeParentMax=0`). Netze stehen deshalb
+  in einer Spalte je VDOM, VDOMs nebeneinander, Switches rechts neben der
+  Firewall (dort stört das Wachstum nach unten nicht).
 - **Martin Lehmann, wo hängt das Gerät?** — IP oder Name → **Switch und Port**, an dem das Gerät
   physisch steckt. IP→MAC live von der FortiGate (die ist an fast allen
   Standorten der L3-Router), MAC→Port aus der **LibreNMS**-FDB. Zeigt alle

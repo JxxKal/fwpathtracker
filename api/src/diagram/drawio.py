@@ -27,19 +27,31 @@ HOST_H, HOST_W = 30, 216
 ICON = 24                   # Host-Symbol (Label steht rechts daneben)
 HOST_COLLAPSE = 12          # ab so vielen Hosts zugeklappt starten
 HOST_MAX_ROWS = 60          # mehr Zeilen zeichnet niemand mehr — Rest als "+N"
-NETS_PER_ROW = 4
-VDOMS_PER_ROW = 3
 FWS_PER_ROW = 3
 SITES_PER_ROW = 2
 GAP = 24
 VDOM_HEAD, FW_HEAD, SITE_HEAD = 30, 34, 36
 VDOM_MIN_W = 200
+NET_M, NET_SPACING = 12, 12      # Rand/Abstand der Netz-Kästen im VDOM
+VDOM_M, VDOM_SPACING = 24, 24    # Rand/Abstand der VDOMs in der Firewall
+DEV_ICON_H = 34                  # Firewall-Symbol über dem Container
 SWITCH_W, SWITCH_H, SWITCH_ROW = 72, 40, 76
 NEIGHBOR_W, NEIGHBOR_H = 200, 60
 
-STYLE = {
-    "fw": "swimlane;html=1;startSize=34;fontStyle=1;fontSize=14;fillColor=#dae8fc;strokeColor=#6c8ebf;",
-    "vdom": "swimlane;html=1;startSize=30;fontStyle=1;fontSize=12;fillColor=#f5f5f5;strokeColor=#666666;",
+STYLE: dict[str, str] = {
+    # childLayout=stackLayout: draw.io ordnet die Kinder selbst an und zieht den
+    # Container mit. Deshalb schiebt ein aufgeklapptes Netz seine Nachbarn nach
+    # unten, statt sie zu überdecken — und beim Zuklappen schrumpft alles wieder
+    # (resizeParentMax=0). Genau dafür ist das Layout da; ohne es sind die
+    # Positionen fest und jedes Aufklappen überschreibt, was darunter liegt.
+    "fw": "swimlane;html=1;startSize=34;fontStyle=1;fontSize=14;fillColor=#dae8fc;"
+          "strokeColor=#6c8ebf;childLayout=stackLayout;horizontalStack=1;resizeParent=1;"
+          f"resizeParentMax=0;marginLeft={VDOM_M};marginRight={VDOM_M};marginTop={VDOM_M};"
+          f"marginBottom={VDOM_M};stackSpacing={VDOM_SPACING};",
+    "vdom": "swimlane;html=1;startSize=30;fontStyle=1;fontSize=12;fillColor=#f5f5f5;"
+            "strokeColor=#666666;childLayout=stackLayout;horizontalStack=0;resizeParent=1;"
+            f"resizeParentMax=0;marginLeft={NET_M};marginRight={NET_M};marginTop={NET_M};"
+            f"marginBottom={NET_M};stackSpacing={NET_SPACING};",
     "site": "swimlane;html=1;startSize=36;fontStyle=1;fontSize=16;fillColor=#f0f0f0;"
             "strokeColor=#333333;dashed=1;",
     "net": "swimlane;html=1;startSize=48;fontSize=10;align=left;spacingLeft=6;"
@@ -213,48 +225,63 @@ def _pack(sizes: list[tuple[float, float]], cols: int,
     return pos, total_w, y - gap
 
 
+# ── Maße ──────────────────────────────────────────────────────────────────────
+# Gerechnet wird exakt so, wie draw.ios Stack-Layout es danach selbst tut: eine
+# Spalte Netze je VDOM, eine Reihe VDOMs je Firewall. Damit sitzt die Zeichnung
+# schon beim Öffnen dort, wo das Layout sie hinlegen würde — und das erste
+# Auf- oder Zuklappen verrückt nicht plötzlich alles.
+
 def _measure_vdom(vd: dict, with_networks: bool) -> tuple[tuple[float, float], list]:
-    """Größe eines VDOM-Containers + Platzierung seiner Netz-Kästen."""
+    """Größe eines VDOM-Containers + Platzierung seiner Netz-Kästen (eine Spalte)."""
     nets = vd["networks"] if with_networks else []
     if not nets:
-        return (VDOM_MIN_W, VDOM_HEAD + GAP), []
-    sizes = []
+        return (VDOM_MIN_W, VDOM_HEAD + 2 * NET_M), []
     placed = []
+    y = VDOM_HEAD + NET_M
     for net in nets:
         full, short = _net_height(net)
         collapsed = len(net["hosts"]) > HOST_COLLAPSE
-        sizes.append((NET_W, short if collapsed else full))
-        placed.append((net, collapsed, full, short))
-    pos, w, h = _pack(sizes, NETS_PER_ROW)
-    out = [(net, GAP + px, VDOM_HEAD + GAP + py, short if collapsed else full, collapsed, full, short)
-           for (net, collapsed, full, short), (px, py) in zip(placed, pos)]
-    return (max(w + 2 * GAP, VDOM_MIN_W), VDOM_HEAD + GAP + h + GAP), out
+        h = short if collapsed else full
+        placed.append((net, NET_M, y, h, collapsed, full, short))
+        y += h + NET_SPACING
+    return (NET_W + 2 * NET_M, y - NET_SPACING + NET_M), placed
 
 
-def _measure_device(dev: dict, with_networks: bool) -> tuple[tuple[float, float], list]:
+def _measure_device(dev: dict, with_networks: bool) -> tuple[tuple[float, float],
+                                                             tuple[float, float], list]:
+    """(Platzbedarf inkl. Symbol und Switch-Spalte, Container-Maß, VDOM-Kinder)."""
     measured = [_measure_vdom(vd, with_networks) for vd in dev["vdoms"]]
-    pos, w, h = _pack([m[0] for m in measured], VDOMS_PER_ROW)
-    kids = [(vd, GAP + px, FW_HEAD + GAP + py, size, nets)
-            for vd, (px, py), ((size), nets) in zip(dev["vdoms"], pos, measured)]
-    sw_rows = -(-len(dev["switches"]) // max(1, int((w or VDOM_MIN_W) // (SWITCH_W + GAP)) or 1))
-    sw_h = sw_rows * SWITCH_ROW + GAP if dev["switches"] else 0
-    return (max(w + 2 * GAP, VDOM_MIN_W + 2 * GAP),
-            FW_HEAD + GAP + h + GAP + sw_h), kids
+    inner_h = max((m[0][1] for m in measured), default=VDOM_HEAD + 2 * NET_M)
+    x = VDOM_M
+    kids = []
+    for vd, ((w, _h), nets) in zip(dev["vdoms"], measured):
+        kids.append((vd, x, FW_HEAD + VDOM_M, (w, inner_h), nets))
+        x += w + VDOM_SPACING
+    box = (max(x - VDOM_SPACING + VDOM_M, VDOM_MIN_W + 2 * VDOM_M),
+           FW_HEAD + VDOM_M + inner_h + VDOM_M)
+    # Switches stehen RECHTS neben der Firewall, nicht darunter: der Container
+    # wächst beim Aufklappen nach unten und würde sie sonst überdecken.
+    switch_col = SWITCH_W + GAP if dev["switches"] else 0
+    return (box[0] + switch_col, DEV_ICON_H + box[1]), box, kids
 
 
 def _measure_site(group: dict, with_networks: bool) -> tuple[tuple[float, float], list]:
     measured = [_measure_device(d, with_networks) for d in group["devices"]]
     pos, w, h = _pack([m[0] for m in measured], FWS_PER_ROW)
     head = SITE_HEAD + GAP if group["name"] else 0
-    kids = [(dev, (GAP if group["name"] else 0) + px, head + py, size, vdoms)
-            for dev, (px, py), (size, vdoms) in zip(group["devices"], pos, measured)]
+    off = GAP if group["name"] else 0
+    kids = [(dev, off + px, head + py, box, vdoms)
+            for dev, (px, py), (_fp, box, vdoms) in zip(group["devices"], pos, measured)]
     if not group["name"]:
         return (w, h), kids
     return (w + 2 * GAP, head + h + GAP), kids
 
 
+# ── Zeichnen ──────────────────────────────────────────────────────────────────
+
 def _draw_vdom(doc: _Doc, vd: dict, parent: str, x: float, y: float,
-               size: tuple[float, float], nets: list, cell_of: dict, with_networks: bool) -> None:
+               size: tuple[float, float], nets: list, cell_of: dict,
+               with_networks: bool) -> None:
     label = _esc(vd["vdom"]) if with_networks else \
         f"{_esc(vd['vdom'])} <span style='color:#888'>· {vd['network_count']} Netze</span>"
     vd_id = doc.vertex(label, STYLE["vdom"], x, y, size[0], size[1], parent=parent,
@@ -276,34 +303,32 @@ def _draw_vdom(doc: _Doc, vd: dict, parent: str, x: float, y: float,
 
 
 def _draw_device(doc: _Doc, dev: dict, parent: str, x: float, y: float,
-                 size: tuple[float, float], vdoms: list, cell_of: dict,
+                 box: tuple[float, float], vdoms: list, cell_of: dict,
                  with_networks: bool) -> None:
+    """Symbol über dem Container, VDOMs darin, Switches rechts daneben. Der
+    Container enthält NUR VDOMs — alles andere würde das Stack-Layout mit
+    einreihen."""
     tip = " · ".join(p for p in (f"FortiGate {dev['device']}",
                                  f"ADOM {dev['adom']}" if dev.get("adom") else None,
                                  dev.get("site")) if p)
-    fw_id = doc.vertex(_esc(dev["device"]), STYLE["fw"], x, y, size[0], size[1],
+    doc.vertex("", icon_style("firewall").replace(
+        "verticalLabelPosition=bottom;verticalAlign=top;", ""), x, y, 44, 28,
+        parent=parent, tooltip=tip)
+    fw_id = doc.vertex(_esc(dev["device"]), STYLE["fw"], x, y + DEV_ICON_H, box[0], box[1],
                        parent=parent, tooltip=tip)
     cell_of[f"device:{dev['device']}"] = fw_id
-    doc.vertex("", icon_style("firewall").replace(
-        "verticalLabelPosition=bottom;verticalAlign=top;", ""), size[0] - 52, 3, 44, 28,
-        parent=fw_id, tooltip=tip)
     for vd, vx, vy, vsize, nets in vdoms:
         _draw_vdom(doc, vd, fw_id, vx, vy, vsize, nets, cell_of, with_networks)
-    # Switches unter die Firewall, an deren Container geklebt.
-    if dev["switches"]:
-        per_row = max(1, int((size[0] - 2 * GAP) // (SWITCH_W + GAP)))
-        sy = size[1] - (-(-len(dev["switches"]) // per_row)) * SWITCH_ROW
-        for i, sw in enumerate(dev["switches"]):
-            col, row = i % per_row, i // per_row
-            ports = ", ".join(sorted({p["fw_port"] for p in sw["ports"]}))
-            stip = "\n".join(f"{k}: {v}" for k, v in (
-                ("Switch", sw["name"]), ("IP", sw.get("ip")), ("Hardware", sw.get("hardware")),
-                ("An Firewall-Port", ports)) if v)
-            cell_of[sw["id"]] = doc.vertex(
-                f"<b>{_esc(sw['name'])}</b><br>{_esc(sw.get('ip') or '')}", icon_style("switch"),
-                GAP + col * (SWITCH_W + GAP), sy + row * SWITCH_ROW, SWITCH_W, SWITCH_H,
-                parent=fw_id, tooltip=stip)
-            doc.edge(cell_of[sw["id"]], fw_id, _esc(ports), "switch")
+    for i, sw in enumerate(dev["switches"]):
+        ports = ", ".join(sorted({p["fw_port"] for p in sw["ports"]}))
+        stip = "\n".join(f"{k}: {v}" for k, v in (
+            ("Switch", sw["name"]), ("IP", sw.get("ip")), ("Hardware", sw.get("hardware")),
+            ("An Firewall-Port", ports)) if v)
+        cell_of[sw["id"]] = doc.vertex(
+            f"<b>{_esc(sw['name'])}</b><br>{_esc(sw.get('ip') or '')}", icon_style("switch"),
+            x + box[0] + GAP, y + DEV_ICON_H + i * SWITCH_ROW, SWITCH_W, SWITCH_H,
+            parent=parent, tooltip=stip)
+        doc.edge(cell_of[sw["id"]], fw_id, _esc(ports), "switch")
 
 
 def render(model: dict) -> str:
@@ -312,19 +337,20 @@ def render(model: dict) -> str:
     with_networks = model.get("with_networks", True)
 
     measured = [_measure_site(g, with_networks) for g in model["sites"]]
-    pos, total_w, total_h = _pack([m[0] for m in measured], SITES_PER_ROW)
+    pos, total_w, _total_h = _pack([m[0] for m in measured], SITES_PER_ROW)
     x0, y0 = 40, 40
     for group, (px, py), (size, devs) in zip(model["sites"], pos, measured):
         gx, gy = x0 + px, y0 + py
         if group["name"]:
             parent = doc.vertex(_esc(group["name"]), STYLE["site"], gx, gy, size[0], size[1],
-                                tooltip=f"Standort {group['name']} · {len(group['devices'])} Firewalls")
+                                tooltip=f"Standort {group['name']} · "
+                                        f"{len(group['devices'])} Firewalls")
             cell_of[f"site:{group['name']}"] = parent
             ox, oy = 0.0, 0.0
         else:
             parent, ox, oy = "1", gx, gy
-        for dev, dx, dy, dsize, vdoms in devs:
-            _draw_device(doc, dev, parent, ox + dx, oy + dy, dsize, vdoms, cell_of, with_networks)
+        for dev, dx, dy, box, vdoms in devs:
+            _draw_device(doc, dev, parent, ox + dx, oy + dy, box, vdoms, cell_of, with_networks)
 
     # ── Nachbarn (WAN-Seite) rechts ────────────────────────────────────────
     nx, ny = x0 + total_w + 2 * GAP, y0
