@@ -75,6 +75,8 @@ export const de = {
     candidatesHint: 'Regeln für dieses Interface-Paar in Reihenfolge der Policy-Tabelle — hervorgehoben ist die live getroffene Regel (die erste, die auch Quelle/Ziel/Dienst matcht). Die übrigen greifen nicht.',
     suggestion: 'Regelvorschlag',
     degraded: 'Gerät offline — Daten aus Cache',
+    zoneTitle: 'Zone / normalisiertes Interface (so heißt es in der Policy)',
+    intfTitle: 'Physisches Interface',
     downstream: 'nachgelagert',
     globalPolicy: (scope: string) => scope === 'footer' ? 'Global-Footer' : 'Global-Header',
     globalPolicyTitle: (scope: string, pkg: string) =>

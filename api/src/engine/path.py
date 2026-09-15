@@ -665,11 +665,35 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
                                  "server_filtered", "policy_ids")},
                 }
 
+        if hop.matched_policy is not None:
+            # Die Zone, die der Admin im FortiManager tatsächlich sucht, ist die,
+            # die in der greifenden Regel steht — nicht irgendein Alias.
+            hop.src_zone = policy_zone(inv, device, vdom, srcintf, hop.src_zone,
+                                       hop.matched_policy.srcintf)
+            if hop.egress:
+                hop.egress_zone = policy_zone(inv, device, vdom, hop.egress, hop.egress_zone,
+                                              hop.matched_policy.dstintf)
         if hop.verdict == "DENY":
             deny_seen = True
         hops.append(hop)
 
     return hops
+
+
+def policy_zone(inv: Inventory, device: str, vdom: str, intf: str,
+                default: str | None, policy_intfs: list) -> str | None:
+    """Zone/normalisiertes Interface, das die Regel für dieses lokale Interface
+    referenziert. Ein lokales Interface kann mehreren Aliasen angehören;
+    `zone_of` nennt nur den ersten. Steht in der Regel ein anderer, ist DER
+    der Name, unter dem man die Zone im FortiManager findet."""
+    names = [str(n) for n in (policy_intfs or []) if str(n).lower() != "any"]
+    if not names:
+        return default
+    aliases = inv.zones_of(device, vdom, intf)
+    for n in names:
+        if n in aliases:
+            return n
+    return default
 
 
 async def run_port_trace(*, src_ip: str, dst_ip: str,
@@ -693,7 +717,8 @@ async def run_port_trace(*, src_ip: str, dst_ip: str,
     for step in steps:
         label = f"{step.device}/{step.vdom}"
         ph = {"index": step.index, "device": step.device, "vdom": step.vdom,
-              "label": label, "srcintf": step.srcintf, "egress": step.egress,
+              "label": label, "srcintf": step.srcintf, "src_zone": step.src_zone,
+              "egress": step.egress, "egress_zone": step.egress_zone,
               "egress_class": step.egress_class, "tcp": [], "udp": [],
               "warnings": list(step.warnings), "reachable": True,
               "debug": dict(step.debug)}

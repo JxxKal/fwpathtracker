@@ -1,5 +1,6 @@
 import { AlertTriangle, ArrowRight, Ban, CheckCircle2, XCircle } from 'lucide-react';
 import { de } from '../i18n/de';
+import { IntfLabel } from './IntfLabel';
 import type { PortHop, PortLimit, PortRange, PortTraceResult } from '../types';
 
 /** Range-Liste → kompakter Text: "443, 3389, 8000–8100" / "alle (1–65535)" / "keine". */
@@ -67,7 +68,7 @@ function HopRow({ hop }: { hop: PortHop }) {
     return (
       <tr className="border-t border-slate-800">
         <td className="py-2 pr-3 font-medium text-slate-300">{hop.label}</td>
-        <td className="py-2 pr-3 text-slate-500">{hop.egress ?? '—'}</td>
+        <td className="py-2 pr-3 text-slate-500">{hop.egress ? <IntfLabel intf={hop.egress} zone={hop.egress_zone} /> : '—'}</td>
         <td className="py-2 text-amber-400" colSpan={2}>{de.ports.unreachable}</td>
       </tr>
     );
@@ -75,7 +76,7 @@ function HopRow({ hop }: { hop: PortHop }) {
   return (
     <tr className="border-t border-slate-800 align-top">
       <td className="py-2 pr-3 font-medium text-slate-300">{hop.label}</td>
-      <td className="py-2 pr-3 text-slate-500">{hop.egress ?? '—'}</td>
+      <td className="py-2 pr-3 text-slate-500">{hop.egress ? <IntfLabel intf={hop.egress} zone={hop.egress_zone} /> : '—'}</td>
       <td className="py-2 pr-3">
         <span className="font-mono uppercase text-slate-500">tcp</span>{' '}
         <span className={hop.tcp.length ? 'text-emerald-300' : 'text-slate-500'}>{fmtRanges(hop.tcp)}</span>

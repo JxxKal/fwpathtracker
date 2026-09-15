@@ -1,6 +1,7 @@
 import { Activity, X } from 'lucide-react';
 import { de } from '../i18n/de';
 import type { Hop, SessionProbe } from '../types';
+import { IntfPair } from './IntfLabel';
 import PolicyCard from './PolicyCard';
 import SuggestionCard from './SuggestionCard';
 
@@ -20,7 +21,7 @@ export default function HopDetailPanel({ hop, onClose }: { hop: Hop; onClose: ()
           <h3 className="text-sm font-medium">
             <span className="text-cyan-400">{hop.device}/{hop.vdom}</span>
             <span className="ml-2 text-xs font-normal text-slate-500">
-              {hop.srcintf} → {hop.egress ?? '?'}
+              <IntfPair srcintf={hop.srcintf} srcZone={hop.src_zone} egress={hop.egress} egressZone={hop.egress_zone} />
             </span>
           </h3>
           <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${

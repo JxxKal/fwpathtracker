@@ -1,6 +1,7 @@
 import { Handle, Position } from '@xyflow/react';
 import { CloudOff, Shield, TriangleAlert } from 'lucide-react';
 import { de } from '../../i18n/de';
+import { IntfPair } from '../IntfLabel';
 import type { Hop } from '../../types';
 
 export interface FirewallNodeData {
@@ -34,8 +35,8 @@ export default function FirewallNode({ data }: { data: FirewallNodeData }) {
         <Shield size={18} className={hop.verdict === 'DENY' ? 'text-red-400' : 'text-cyan-400'} />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-slate-100">{hop.device}</p>
-          <p className="text-xs text-slate-500">
-            {hop.srcintf} → {hop.egress ?? '?'}
+          <p className="truncate text-xs text-slate-500">
+            <IntfPair srcintf={hop.srcintf} srcZone={hop.src_zone} egress={hop.egress} egressZone={hop.egress_zone} />
           </p>
         </div>
         {hop.after_deny && (

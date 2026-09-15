@@ -146,7 +146,9 @@ export interface PortHop {
   vdom: string;
   label: string;
   srcintf: string;
+  src_zone?: string | null;
   egress: string | null;
+  egress_zone?: string | null;
   egress_class: EgressClass | string;
   tcp: PortRange[];
   udp: PortRange[];

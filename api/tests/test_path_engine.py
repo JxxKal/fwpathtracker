@@ -390,3 +390,20 @@ async def test_candidates_ordered_with_hit(inventory, prefixes):
     # Reihenfolge wie im Package; Treffer markiert
     assert [c.policyid for c in cand] == [100, 110]
     assert [c.hit for c in cand] == [True, False]
+
+
+def test_policy_zone_prefers_the_alias_the_rule_references(inventory):
+    """Ein lokales Interface kann mehreren Zonen/normalisierten Interfaces
+    angehören. Angezeigt werden soll der Name, der in der greifenden Regel
+    steht — den sucht man im FortiManager. Kein passender Alias oder 'any'
+    → beim zone_of-Default bleiben."""
+    from engine.path import policy_zone
+    # lan1 auf fw-a/root gehört zu 'inside-a' (Zone) UND zum normalisierten
+    # Interface 'Transfer' (Default-Mapping) — Feld-Fall #816.
+    inventory.dyn_default["Transfer"] = ["lan1"]
+    assert inventory.zone_of("fw-a", "root", "lan1") == "inside-a"
+    assert policy_zone(inventory, "fw-a", "root", "lan1", "inside-a", ["Transfer"]) == "Transfer"
+    assert policy_zone(inventory, "fw-a", "root", "lan1", "inside-a", ["inside-a"]) == "inside-a"
+    assert policy_zone(inventory, "fw-a", "root", "lan1", "inside-a", ["any"]) == "inside-a"
+    assert policy_zone(inventory, "fw-a", "root", "lan1", "inside-a", ["wan"]) == "inside-a"
+    assert policy_zone(inventory, "fw-a", "root", "lan1", "inside-a", []) == "inside-a"

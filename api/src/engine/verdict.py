@@ -97,7 +97,9 @@ class PortHop(BaseModel):
     vdom: str
     label: str
     srcintf: str
+    src_zone: str | None = None
     egress: str | None = None
+    egress_zone: str | None = None
     egress_class: str = "UNKNOWN"
     tcp: list[list[int]] = Field(default_factory=list)
     udp: list[list[int]] = Field(default_factory=list)
