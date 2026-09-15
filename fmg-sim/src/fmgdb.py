@@ -151,6 +151,15 @@ def _static_routes(m: Model, device: str, vdom_name: str) -> list[dict]:
     return out
 
 
+def _device_zones(m: Model, device: str, vdom_name: str) -> list[dict]:
+    """config system zone eines VDOMs — wie FortiOS: name + interface-Liste."""
+    dev = m.devices.get(device)
+    if dev is None or vdom_name not in dev.vdoms:
+        raise NotFound(f"{device}/{vdom_name}")
+    return [{"name": z, "interface": [{"interface-name": i} for i in members]}
+            for z, members in dev.vdoms[vdom_name].zones.items()]
+
+
 def handle_get(m: Model, url: str):
     """GET-URL → data-Wert (Objekt oder Liste). Wirft NotFound bei Unbekanntem."""
     parts = url.strip("/").split("/")
@@ -198,5 +207,10 @@ def handle_get(m: Model, url: str):
     if (len(parts) == 8 and parts[:3] == ["pm", "config", "device"]
             and parts[4] == "vdom" and parts[6:] == ["router", "static"]):
         return _static_routes(m, parts[3], parts[5])
+
+    # /pm/config/device/{name}/vdom/{vdom}/system/zone
+    if (len(parts) == 8 and parts[:3] == ["pm", "config", "device"]
+            and parts[4] == "vdom" and parts[6:] == ["system", "zone"]):
+        return _device_zones(m, parts[3], parts[5])
 
     raise NotFound(url)

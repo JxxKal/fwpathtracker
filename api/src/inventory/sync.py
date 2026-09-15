@@ -1,7 +1,8 @@
 """FMG-Inventory-Sync (Background-Task, ids-itop-Muster: _state + Log-Ring).
 
 Zieht pro ADOM Geräte/VDOMs, Packages+Scope, Policies (Reihenfolge bleibt
-erhalten), Objekte, Zonen, Interfaces und statische Routen in fmg_snapshot
+erhalten), Objekte, Zonen (FMG-normalisiert + Geräte-Zonen), Interfaces und
+statische Routen in fmg_snapshot
 und baut danach die In-Memory-Read-Models (Inventory + PrefixTable) neu.
 """
 from __future__ import annotations
@@ -152,6 +153,7 @@ class SyncManager:
         # die Daten des vorigen Geräts wieder (nur das letzte überlebte).
         interface_items: list[tuple[str, Any]] = []
         route_items: list[tuple[str, Any]] = []
+        devzone_items: list[tuple[str, Any]] = []
         for dev in devices:
             name = dev.get("name")
             if not name:
@@ -174,8 +176,19 @@ class SyncManager:
                     route_items.append((f"{name}|{vdom}", routes))
                 except FmgError as exc:
                     self._log(f"  {name}/{vdom}: Routen fehlgeschlagen ({exc}) – übersprungen.")
+                # Geräte-Zonen (config system zone): Policies referenzieren die
+                # Zone, das Routing das physische Member-Interface. Ohne diese
+                # Tabelle bridged der Kandidatenfilter 'L3-WAN0' nicht zu 'Transfer'.
+                try:
+                    zones = await client.rpc(
+                        "get", f"/pm/config/device/{name}/vdom/{vdom}/system/zone"
+                    ) or []
+                    devzone_items.append((f"{name}|{vdom}", zones))
+                except FmgError as exc:
+                    self._log(f"  {name}/{vdom}: Zonen fehlgeschlagen ({exc}) – übersprungen.")
         await self._store(pool, adom, "interface", interface_items)
         await self._store(pool, adom, "route", route_items)
+        await self._store(pool, adom, "devzone", devzone_items)
 
     async def _store(self, pool: asyncpg.Pool, adom: str, kind: str,
                      items: list[tuple[str, Any]]) -> None:

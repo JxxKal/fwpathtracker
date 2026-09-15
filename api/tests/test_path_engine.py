@@ -407,3 +407,53 @@ def test_policy_zone_prefers_the_alias_the_rule_references(inventory):
     assert policy_zone(inventory, "fw-a", "root", "lan1", "inside-a", ["any"]) == "inside-a"
     assert policy_zone(inventory, "fw-a", "root", "lan1", "inside-a", ["wan"]) == "inside-a"
     assert policy_zone(inventory, "fw-a", "root", "lan1", "inside-a", []) == "inside-a"
+
+
+def test_device_zone_bridges_physical_interface_to_policy_zone(inventory):
+    """Feld-Fall xvo001-1/L3: Routing-Ingress ist 'L3-WAN0', die Regel steht auf
+    'Transfer'. 'Transfer' ist eine Zone AUF DEM GERÄT (config system zone), das
+    normalisierte FMG-Interface 'Transfer' mappt per Gerät auf genau diese Zone
+    — nicht auf L3-WAN0. Ohne Geräte-Zonen bridged nichts."""
+    from inventory.store import Inventory
+    from conftest import lab_snapshot_rows, _row
+    rows = lab_snapshot_rows() + [
+        _row("devzone", "fw-b|root", [
+            {"name": "Transfer", "interface": [{"interface-name": "xlink1"}]},
+        ]),
+        _row("zone", "Transfer", {"name": "Transfer", "dynamic_mapping": [
+            {"_scope": [{"name": "fw-b", "vdom": "root"}], "local-intf": ["Transfer"]},
+        ]}),
+        _row("zone", "WD_OT_AD", {"name": "WD_OT_AD", "dynamic_mapping": [
+            {"_scope": [{"name": "fw-b", "vdom": "root"}], "local-intf": ["lan1"]},
+        ]}),
+    ]
+    inv = Inventory.build(rows)
+    assert inv.zone_of("fw-b", "root", "xlink1") == "Transfer"
+    assert inv.zones_of("fw-b", "root", "xlink1") >= {"xlink1", "Transfer"}
+    inv.policies[("fw-b", "root")].insert(0, {
+        "policyid": 7, "name": "Transfer-to-AD", "action": "accept", "status": "enable",
+        "srcintf": ["Transfer"], "dstintf": ["WD_OT_AD"], "srcaddr": ["all"],
+        "dstaddr": ["all"], "service": ["ALL"], "comments": ""})
+    pids = [p["policyid"] for p in inv.candidate_policies("fw-b", "root", "xlink1", "lan1")]
+    assert pids[0] == 7
+    # Ohne Geräte-Zone (nur FMG-Mapping Transfer→Transfer) fiele die Regel durch.
+    inv.device_zones.clear()
+    assert 7 not in [p["policyid"] for p in inv.candidate_policies("fw-b", "root", "xlink1", "lan1")]
+
+
+async def test_policy_zero_names_the_rule_the_cache_would_hit(inventory, prefixes):
+    """FortiGate sagt Policy 0, der FortiManager-Cache hat aber eine passende
+    Accept-Regel — dann ist die Diskrepanz die Nachricht (Package nicht
+    installiert?), nicht bloß 'implizites Deny'."""
+    client, t = make_client()
+    add_route(t, "fw-a", "root", "10.2.1.30", "vpn-to-b")
+    add_policy_lookup(t, "fw-a", "root",
+                      tcp_params("lan1", "10.1.1.10", "10.2.1.30", 443), 100)
+    add_route(t, "fw-b", "root", "10.2.1.30", "lan1")
+    add_policy_lookup(t, "fw-b", "root",
+                      tcp_params("vpn-to-a", "10.1.1.10", "10.2.1.30", 443), 0)
+
+    hops = await _trace(inventory, prefixes, client, "10.1.1.10", "10.2.1.30")
+    assert hops[1].verdict == "DENY" and hops[1].matched_policy is None
+    warn = " ".join(hops[1].warnings)
+    assert "Regel #200" in warn and "allow-from-a" in warn and "Policy 0" in warn

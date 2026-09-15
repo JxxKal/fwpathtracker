@@ -165,6 +165,10 @@ class Inventory:
         self.policies: dict[tuple[str, str], list[dict]] = {}
         # (device, vdom) → {zone_name: [member-intfs]}   (per-Gerät dynamic_mapping)
         self.zones: dict[tuple[str, str], dict[str, list[str]]] = {}
+        # (device, vdom) → {zone_name: [member-intfs]}   (config system zone auf
+        # dem Gerät). Das normalisierte FMG-Interface 'Transfer' mappt per Gerät
+        # oft auf die GLEICHNAMIGE Geräte-Zone, und erst die kennt 'L3-WAN0'.
+        self.device_zones: dict[tuple[str, str], dict[str, list[str]]] = {}
         # normalisiertes Interface → [defmap-intf]  (geräteübergreifendes
         # Default-Mapping aus obj/dynamic/interface, wenn kein per-Gerät-Mapping)
         self.dyn_default: dict[str, list[str]] = {}
@@ -251,6 +255,22 @@ class Inventory:
             default_on = str(data.get("default-mapping", "enable")).lower() not in ("disable", "0")
             if defmap and default_on:
                 inv.dyn_default[zname] = defmap
+
+        # Geräte-Zonen: /pm/config/device/<dev>/vdom/<vdom>/system/zone
+        for r in by_kind.get("devzone", []):
+            dev, _, vdom = str(r["key"]).partition("|")
+            table: dict[str, list[str]] = {}
+            for z in _as_list(r["data"]):
+                if not isinstance(z, dict) or not z.get("name"):
+                    continue
+                members = []
+                for m in _as_list(z.get("interface")):
+                    name = m.get("interface-name") or m.get("name") if isinstance(m, dict) else m
+                    if name:
+                        members.append(str(name))
+                table[str(z["name"])] = members
+            if table:
+                inv.device_zones[(dev, vdom or "root")] = table
 
         # Packages → Scope, Policies → (device, vdom)
         pkg_scope: dict[tuple[str, str], list[tuple[str, str]]] = {}
@@ -441,7 +461,15 @@ class Inventory:
         return out
 
     def zone_of(self, device: str, vdom: str, intf: str) -> str:
-        """Zone, die das Interface enthält — sonst das Interface selbst."""
+        """Zone, die das Interface enthält — sonst das Interface selbst.
+
+        Reihenfolge: Geräte-Zone (so heißt es auf der FortiGate und in der
+        Policy), dann normalisiertes FMG-Interface, das die Geräte-Zone oder das
+        Interface direkt mappt."""
+        dz = self.device_zones.get((device, vdom)) or {}
+        for zname, members in dz.items():
+            if intf in members:
+                return zname
         for zname, members in (self.zones.get((device, vdom)) or {}).items():
             if intf in members:
                 return zname
@@ -620,15 +648,25 @@ class Inventory:
         eine Regel verworfen, die einen anderen Alias nutzt (Feld-Fall #816)."""
         aliases = {intf}
         local = self.zones.get((device, vdom)) or {}
-        for zname, members in local.items():
-            if intf in members:
-                aliases.add(zname)
-        # Default-Mapping (geräteübergreifend) — nur wo kein per-Gerät-Mapping die
-        # Zone auf diesem VDOM überschreibt.
-        for zname, defintfs in self.dyn_default.items():
-            if zname not in local and intf in defintfs:
-                aliases.add(zname)
-        return aliases
+        dz = self.device_zones.get((device, vdom)) or {}
+        # Transitiv bis zum Fixpunkt: Interface → Geräte-Zone → normalisiertes
+        # Interface, dessen local-intf die Geräte-Zone ist (Feld-Fall: 'L3-WAN0'
+        # ∈ Zone 'Transfer', FMG-Interface 'Transfer' mappt auf 'Transfer').
+        while True:
+            before = len(aliases)
+            for zname, members in dz.items():
+                if aliases & set(members):
+                    aliases.add(zname)
+            for zname, members in local.items():
+                if aliases & set(members):
+                    aliases.add(zname)
+            # Default-Mapping (geräteübergreifend) — nur wo kein per-Gerät-Mapping
+            # die Zone auf diesem VDOM überschreibt.
+            for zname, defintfs in self.dyn_default.items():
+                if zname not in local and aliases & set(defintfs):
+                    aliases.add(zname)
+            if len(aliases) == before:
+                return aliases
 
     def candidate_policies(self, device: str, vdom: str, srcintf: str, dstintf: str) -> list[dict]:
         """Geordnete Policies, deren srcintf/dstintf zum Hop passen — gematcht gegen
@@ -720,6 +758,7 @@ class Inventory:
                 "services": sum(len(v) for v in self.services.values()),
                 "vips": sum(len(v) for v in self.vips.values()),
                 "zones": sum(len(v) for v in self.zones.values()),
+                "device_zones": sum(len(v) for v in self.device_zones.values()),
                 "global_policies": len(self.global_policies),
             },
         }

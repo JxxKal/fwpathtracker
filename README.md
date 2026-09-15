@@ -372,6 +372,15 @@ Aus der Feldpraxis in den Engine-Code eingeflossen:
   eine Policy jeden Alias des Egress-/Ingress-Interfaces referenzieren darf.
   Zusätzliches Sicherheitsnetz im Deep-Tracker: adressverankerte Auswahl, falls
   das Interface-Naming zwischen Routing-Egress und Policy-Interface abweicht.
+- **Geräte-Zonen** (`config system zone`, je VDOM aus der Geräte-DB des FMG):
+  das normalisierte Interface `Transfer` mappt per Gerät oft auf die
+  **gleichnamige Zone auf der FortiGate**, und erst die kennt das physische
+  Member `L3-WAN0`. Ohne diese Tabelle bridged der Kandidatenfilter nicht von
+  Routing-Interface zu Policy-Zone, und der Tracker zeigt `L3-WAN0` statt
+  `Transfer`. Aliase werden transitiv aufgelöst (Interface → Geräte-Zone →
+  normalisiertes Interface). Meldet die FortiGate live *Policy 0*, obwohl der
+  Cache eine passende Accept-Regel kennt, wird genau diese Regel genannt —
+  typisch für ein nicht (vollständig) installiertes Package.
 - **iTop** hat keine Subnetz→Firewall-Zuordnung (nur einen Subnetz-Baum) — die
   Owner-Bestimmung läuft daher über Routing/PrefixTable, nicht über iTop.
 

@@ -99,10 +99,12 @@ async def test_sync_persists_all_devices_and_packages():
     store = pool.store
     interfaces = {k[2] for k in store if k[1] == "interface"}
     routes = {k[2] for k in store if k[1] == "route"}
+    devzones = {k[2] for k in store if k[1] == "devzone"}
     policies = {k[2] for k in store if k[1] == "policy"}
 
     # Beide Geräte, beide VDOM-Routen, beide Packages müssen überleben —
     # nicht nur das jeweils letzte.
     assert interfaces == {"fw-a", "fw-b"}
     assert routes == {"fw-a|root", "fw-b|root"}
+    assert devzones == {"fw-a|root", "fw-b|root"}
     assert policies == {"pkg-a", "pkg-b"}

@@ -548,12 +548,25 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
             # policy_id 0 (bzw. success=false).
             hop.verdict = "DENY"
             if lookup["success"] and pid in (0, "0"):
-                hop.warnings.append(
-                    "Implizites Deny (Policy 0): keine Regel greift auf dem Gerät. "
-                    "Falls A38 gerade gesynct wurde, ist das Policy-Package im "
-                    "FortiManager evtl. nicht auf das Gerät installiert — "
-                    "Policy-Install/-Sync im FortiManager prüfen."
-                )
+                static = static_hit(inv, adom, candidates, src_ip, dst_ip, protocol, dst_port)
+                if static is not None:
+                    static.hit = False
+                    hop.warnings.append(
+                        f"Implizites Deny (Policy 0) laut FortiGate — laut FortiManager-"
+                        f"Cache würde aber Regel #{static.policyid} „{static.name or '—'}“ "
+                        f"({' / '.join(static.srcintf) or 'any'} → "
+                        f"{' / '.join(static.dstintf) or 'any'}) greifen. Das Package ist "
+                        "vermutlich nicht (vollständig) auf das Gerät installiert, oder "
+                        "Objekt-/Zonen-Inhalte weichen auf dem Gerät ab — Policy-Install "
+                        "und Install-Preview im FortiManager prüfen."
+                    )
+                else:
+                    hop.warnings.append(
+                        "Implizites Deny (Policy 0): keine Regel greift auf dem Gerät. "
+                        "Falls A38 gerade gesynct wurde, ist das Policy-Package im "
+                        "FortiManager evtl. nicht auf das Gerät installiert — "
+                        "Policy-Install/-Sync im FortiManager prüfen."
+                    )
         else:
             match = next((c for c in candidates if c.policyid == pid), None)
             if match is None:
@@ -678,6 +691,30 @@ async def run_trace(*, src_ip: str, dst_ip: str, protocol: str,
         hops.append(hop)
 
     return hops
+
+
+def static_hit(inv: Inventory, adom: str, candidates: list, src_ip: str, dst_ip: str,
+               protocol: str, dst_port: int | None):
+    """Erste aktive Kandidaten-Regel, die laut Cache auf Quelle, Ziel und Dienst
+    passt — die Regel, die der Admin im FortiManager sieht und deshalb ein
+    'Erlaubt' erwartet. Liefert die FortiGate trotzdem Policy 0, ist genau
+    diese Diskrepanz die Information, nicht das nackte Deny."""
+    proto = (protocol or "").lower()
+    for c in candidates:
+        if not inv.addr_matches(adom, c.srcaddr, src_ip):
+            continue
+        if not inv.addr_matches(adom, c.dstaddr, dst_ip):
+            continue
+        if proto in ("tcp", "udp") and dst_port is not None:
+            ranges = inv.service_intervals(adom, c.service).get(proto, [])
+            if not any(lo <= dst_port <= hi for lo, hi in ranges):
+                continue
+        elif any(str(n).upper() == "ALL" for n in c.service) or not c.service:
+            pass
+        else:
+            continue
+        return c
+    return None
 
 
 def policy_zone(inv: Inventory, device: str, vdom: str, intf: str,
