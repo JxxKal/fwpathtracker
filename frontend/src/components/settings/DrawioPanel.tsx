@@ -1,4 +1,4 @@
-import { CheckCircle2, XCircle } from 'lucide-react';
+import { CheckCircle2, ExternalLink, TriangleAlert, XCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { drawioTest, getConfig, patchConfig } from '../../api';
 import { de } from '../../i18n/de';
@@ -8,7 +8,7 @@ import { de } from '../../i18n/de';
 export default function DrawioPanel() {
   const [cfg, setCfg] = useState<Record<string, unknown>>({});
   const [status, setStatus] = useState<string | null>(null);
-  const [test, setTest] = useState<{ ok: boolean; text: string } | null>(null);
+  const [test, setTest] = useState<{ ok: boolean; soft?: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => { getConfig('drawio').then(setCfg); }, []);
@@ -27,7 +27,8 @@ export default function DrawioPanel() {
     setBusy(true); setTest(null);
     try {
       const r = await drawioTest();
-      setTest({ ok: true, text: r.looks_like_drawio ? `OK — HTTP ${r.status}, draw.io erkannt` : `HTTP ${r.status}, sieht aber nicht nach draw.io aus` });
+      if (r.hint) setTest({ ok: false, soft: true, text: r.hint });
+      else setTest({ ok: r.ok, text: r.looks_like_drawio ? `OK — HTTP ${r.status}, draw.io erkannt` : `HTTP ${r.status}, sieht aber nicht nach draw.io aus` });
     } catch (e) {
       setTest({ ok: false, text: e instanceof Error ? e.message : String(e) });
     } finally { setBusy(false); }
@@ -46,14 +47,21 @@ export default function DrawioPanel() {
           onChange={(e) => setCfg((c) => ({ ...c, base_url: e.target.value }))} />
       </div>
       {test && (
-        <div className={`flex items-start gap-2 text-sm ${test.ok ? 'text-emerald-400' : 'text-red-400'}`}>
-          {test.ok ? <CheckCircle2 size={16} className="mt-0.5" /> : <XCircle size={16} className="mt-0.5" />}
+        <div className={`flex items-start gap-2 text-sm ${test.ok ? 'text-emerald-400' : test.soft ? 'text-amber-400' : 'text-red-400'}`}>
+          {test.ok ? <CheckCircle2 size={16} className="mt-0.5 shrink-0" />
+            : test.soft ? <TriangleAlert size={16} className="mt-0.5 shrink-0" />
+              : <XCircle size={16} className="mt-0.5 shrink-0" />}
           <span>{test.text}</span>
         </div>
       )}
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <button type="button" className="fwpt-btn" onClick={save} disabled={busy}>{de.settings.save}</button>
         <button type="button" className="fwpt-btn-ghost" onClick={runTest} disabled={busy}>{de.settings.test}</button>
+        {typeof cfg.base_url === 'string' && cfg.base_url.trim() && (
+          <a className="fwpt-btn-ghost" href={cfg.base_url.trim()} target="_blank" rel="noopener noreferrer">
+            <ExternalLink size={14} /> Im Browser öffnen
+          </a>
+        )}
         {status && <span className="text-sm text-slate-400">{status}</span>}
       </div>
     </div>

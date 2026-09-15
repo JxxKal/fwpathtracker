@@ -336,8 +336,9 @@ export async function diagramScopes(): Promise<DiagramScopes> {
   }
   return request('/api/diagram/scopes');
 }
-export async function drawioTest(): Promise<{ ok: boolean; status: number; looks_like_drawio: boolean }> {
-  if (isDemoMode()) return { ok: true, status: 200, looks_like_drawio: true };
+export interface DrawioTest { ok: boolean; checked: boolean; status: number | null; looks_like_drawio: boolean; hint: string | null }
+export async function drawioTest(): Promise<DrawioTest> {
+  if (isDemoMode()) return { ok: true, checked: true, status: 200, looks_like_drawio: true, hint: null };
   return request('/api/diagram/drawio/test', { method: 'POST' });
 }
 export async function buildDiagram(scope: 'vdom' | 'firewall', device: string, vdom: string | null,

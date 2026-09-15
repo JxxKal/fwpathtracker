@@ -53,16 +53,27 @@ async def drawio_test(_admin: dict = Depends(require_admin)) -> dict:
     url = await drawio_url()
     if not url:
         raise HTTPException(400, "draw.io-URL nicht konfiguriert – bitte zuerst speichern.")
-    guard_egress_url(url, "draw.io-URL")
+    # Die URL ist für die BROWSER der Nutzer gedacht, nicht für den Server. Ein
+    # Kurzname wie 'svo3041-ot' löst im Container auf 127.0.1.1 auf (Debian
+    # legt den eigenen Hostnamen darauf) — das darf der SSRF-Schutz nicht
+    # durchlassen, macht die URL für den Browser aber nicht falsch. Also:
+    # nicht prüfbar ≠ kaputt.
+    try:
+        guard_egress_url(url, "draw.io-URL")
+    except HTTPException as exc:
+        return {"ok": False, "checked": False, "status": None, "looks_like_drawio": False,
+                "hint": f"Vom Server aus nicht prüfbar ({exc.detail}). Für den Browser kann "
+                        "die URL trotzdem stimmen — mit „Im Browser öffnen" testen oder "
+                        "LAN-IP/FQDN statt Kurzname eintragen."}
     try:
         async with httpx.AsyncClient(timeout=10, verify=False, follow_redirects=True) as client:
             r = await client.get(url + "/")
     except Exception as exc:
-        raise HTTPException(502, f"draw.io nicht erreichbar: {exc}") from exc
-    if r.status_code >= 400:
-        raise HTTPException(502, f"draw.io antwortet mit HTTP {r.status_code}.")
+        return {"ok": False, "checked": True, "status": None, "looks_like_drawio": False,
+                "hint": f"Vom Server aus nicht erreichbar: {exc}. Im Browser prüfen."}
     looks = "draw.io" in r.text or "diagrams.net" in r.text or "mxgraph" in r.text.lower()
-    return {"ok": True, "status": r.status_code, "looks_like_drawio": looks}
+    return {"ok": r.status_code < 400, "checked": True, "status": r.status_code,
+            "looks_like_drawio": looks, "hint": None}
 
 
 @router.post("")

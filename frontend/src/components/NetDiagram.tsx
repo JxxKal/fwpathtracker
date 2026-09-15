@@ -1,4 +1,4 @@
-import { Download, ExternalLink, Map } from 'lucide-react';
+import { Download, ExternalLink, Map, Play } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { buildDiagram, diagramScopes, type DiagramHosts, type DiagramResult, type DiagramScopes } from '../api';
 import { de } from '../i18n/de';
@@ -46,9 +46,7 @@ export default function NetDiagram() {
   async function build() {
     setBusy(true); setErr(null); setRes(null);
     try {
-      const r = await buildDiagram(scope, device, scope === 'vdom' ? vdom : null, hosts);
-      setRes(r);
-      download(r.filename, r.xml);
+      setRes(await buildDiagram(scope, device, scope === 'vdom' ? vdom : null, hosts));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally { setBusy(false); }
@@ -97,7 +95,7 @@ export default function NetDiagram() {
           </select>
         </label>
         <button type="button" className="fwpt-btn" onClick={build} disabled={busy || !device}>
-          <Download size={14} /> {busy ? de.diagram.building : de.diagram.build}
+          <Play size={14} /> {busy ? de.diagram.building : de.diagram.build}
         </button>
       </div>
       <p className="text-[11px] text-slate-600">
@@ -112,20 +110,22 @@ export default function NetDiagram() {
           <p className="text-slate-400">
             <span className="text-emerald-300">{de.diagram.done}</span>
             <span className="ml-2 font-mono text-slate-300">{res.filename}</span>
-            <button type="button" className="ml-2 text-cyan-400 hover:underline" onClick={() => download(res.filename, res.xml)}>
-              {de.diagram.again}
-            </button>
           </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" className="fwpt-btn" onClick={() => download(res.filename, res.xml)}>
+              <Download size={14} /> {de.diagram.download}
+            </button>
+            {scopes?.drawio_url && res.xml.length <= MAX_LINK_BYTES && (
+              <button type="button" className="fwpt-btn"
+                onClick={() => openInDrawio(scopes.drawio_url!, res.filename, res.xml)}>
+                <ExternalLink size={14} /> {de.diagram.openDrawio}
+              </button>
+            )}
+          </div>
           {scopes?.drawio_url && (
-            res.xml.length <= MAX_LINK_BYTES ? (
-              <p className="flex flex-wrap items-center gap-2">
-                <button type="button" className="fwpt-btn-ghost text-xs"
-                  onClick={() => openInDrawio(scopes.drawio_url!, res.filename, res.xml)}>
-                  <ExternalLink size={13} /> {de.diagram.openDrawio}
-                </button>
-                <span className="text-slate-600">{de.diagram.openDrawioHint}</span>
-              </p>
-            ) : <p className="text-amber-500">{de.diagram.tooBigForLink}</p>
+            res.xml.length <= MAX_LINK_BYTES
+              ? <p className="text-slate-600">{de.diagram.openDrawioHint}</p>
+              : <p className="text-amber-500">{de.diagram.tooBigForLink}</p>
           )}
           <p className="text-slate-500">
             {res.stats.vdoms} {de.diagram.statVdoms} · {res.stats.networks} {de.diagram.statNets} · {res.stats.hosts_shown}/{res.stats.hosts_found} {de.diagram.statHosts}
