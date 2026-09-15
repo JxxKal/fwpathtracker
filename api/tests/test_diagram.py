@@ -98,7 +98,7 @@ async def test_drawio_xml_is_well_formed_and_complete(inventory, prefixes):
     assert len(edges) >= 3
     # Symbole aus der draw.io-Network-Bibliothek: Server, Switch, Firewall, Wolke.
     styles = " ".join(c.get("style", "") for c in cells)
-    for shape in ("mxgraph.networks.server", "mxgraph.networks.switch",
+    for shape in ("mxgraph.networks.server", "mxgraph.cisco.switches.workgroup_switch",
                   "mxgraph.networks.firewall", "mxgraph.networks.cloud"):
         assert shape in styles, shape
     # Jede Kante zeigt auf existierende Zellen.

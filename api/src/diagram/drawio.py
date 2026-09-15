@@ -35,15 +35,13 @@ STYLE = {
     # Symbole aus der draw.io-Bibliothek „Network" (mxgraph.networks.*) — sie
     # sind Teil der Web-App, funktionieren also auch in der Offline-Instanz.
     # Host-Zeile: kleines Symbol, Label rechts daneben.
-    "host-base": "shape=mxgraph.networks.{shape};html=1;strokeColor=none;aspect=fixed;"
+    "host-base": "shape={stencil};html=1;aspect=fixed;{paint}"
                  "labelPosition=right;verticalLabelPosition=middle;align=left;"
-                 "verticalAlign=middle;spacingLeft=4;fontSize=9;whiteSpace=nowrap;"
-                 "fillColor={color};",
+                 "verticalAlign=middle;spacingLeft=4;fontSize=9;whiteSpace=nowrap;",
     "more": "text;html=1;fontSize=9;fontStyle=2;align=left;spacingLeft=4;",
     # Freistehende Symbole mit Label darunter (Nachbarn, Switches, Internet).
-    "icon-base": "shape=mxgraph.networks.{shape};html=1;strokeColor=none;aspect=fixed;"
-                 "verticalLabelPosition=bottom;verticalAlign=top;fontSize=11;"
-                 "whiteSpace=wrap;fillColor={color};",
+    "icon-base": "shape={stencil};html=1;aspect=fixed;{paint}"
+                 "verticalLabelPosition=bottom;verticalAlign=top;fontSize=11;whiteSpace=wrap;",
     "edge": "edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=none;fontSize=9;"
             "labelBackgroundColor=#ffffff;",
     "edge-vdom-link": "strokeColor=#666666;dashed=1;",
@@ -58,8 +56,16 @@ def _esc(s) -> str:
     return html.escape(str(s if s is not None else ""), quote=False)
 
 
-COLOR = {"firewall": "#b85450", "switch": "#9673a6", "server": "#29AAE1",
-         "pc": "#6c8ebf", "cloud": "#b85450"}
+# Symbol → (Stencil, Malstil). Die Network-Bibliothek ist flächig (nur Füllung);
+# der Cisco-Switch ist ein Linien-Piktogramm und braucht Füllung + weiße Linien.
+SHAPES = {
+    "firewall": ("mxgraph.networks.firewall", "fillColor=#b85450;strokeColor=none;"),
+    "switch": ("mxgraph.cisco.switches.workgroup_switch",
+               "fillColor=#9673a6;strokeColor=#ffffff;strokeWidth=1;"),
+    "server": ("mxgraph.networks.server", "fillColor=#29AAE1;strokeColor=none;"),
+    "pc": ("mxgraph.networks.pc", "fillColor=#6c8ebf;strokeColor=none;"),
+    "cloud": ("mxgraph.networks.cloud", "fillColor=#b85450;strokeColor=none;"),
+}
 
 
 def host_shape(h: dict) -> str:
@@ -78,12 +84,13 @@ def host_shape(h: dict) -> str:
 
 
 def host_style(h: dict) -> str:
-    shape = host_shape(h)
-    return STYLE["host-base"].format(shape=shape, color=COLOR[shape])
+    stencil, paint = SHAPES[host_shape(h)]
+    return STYLE["host-base"].format(stencil=stencil, paint=paint)
 
 
 def icon_style(shape: str) -> str:
-    return STYLE["icon-base"].format(shape=shape, color=COLOR[shape])
+    stencil, paint = SHAPES[shape]
+    return STYLE["icon-base"].format(stencil=stencil, paint=paint)
 
 
 class _Doc:
@@ -255,7 +262,7 @@ def render(model: dict) -> str:
         tip = "\n".join(f"{k}: {v}" for k, v in (("Switch", sw["name"]), ("IP", sw.get("ip")),
                                                     ("Hardware", sw.get("hardware")),
                                                     ("An Firewall-Port", ports)) if v)
-        cell_of[sw["id"]] = doc.vertex(label, icon_style("switch"), sx, sy, 72, 36, tooltip=tip)
+        cell_of[sw["id"]] = doc.vertex(label, icon_style("switch"), sx, sy, 64, 40, tooltip=tip)
         doc.edge(cell_of[sw["id"]], fw_id, _esc(ports), "switch")
         sx += NEIGHBOR_W + GAP
 
