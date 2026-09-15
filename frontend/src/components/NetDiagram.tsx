@@ -1,6 +1,6 @@
 import { Download, ExternalLink, Map, Play } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { buildDiagram, diagramScopes, type DiagramHosts, type DiagramResult, type DiagramScopes } from '../api';
+import { buildDiagram, diagramScopes, type DiagramHosts, type DiagramResult, type DiagramScope, type DiagramScopes } from '../api';
 import { de } from '../i18n/de';
 
 // Netzplan als draw.io: Scope wählen, Datei bauen lassen, herunterladen.
@@ -25,9 +25,10 @@ function download(filename: string, xml: string) {
 
 export default function NetDiagram() {
   const [scopes, setScopes] = useState<DiagramScopes | null>(null);
-  const [scope, setScope] = useState<'vdom' | 'firewall'>('vdom');
+  const [scope, setScope] = useState<DiagramScope>('vdom');
   const [device, setDevice] = useState('');
   const [vdom, setVdom] = useState('');
+  const [site, setSite] = useState('');
   const [hosts, setHosts] = useState<DiagramHosts>('auto');
   const [res, setRes] = useState<DiagramResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -37,6 +38,7 @@ export default function NetDiagram() {
     diagramScopes().then((s) => {
       setScopes(s);
       if (s.devices.length > 0) { setDevice(s.devices[0].device); setVdom(s.devices[0].vdoms[0] ?? 'root'); }
+      if (s.sites.length > 0) setSite(s.sites[0].name);
     }).catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   }, []);
 
@@ -46,7 +48,9 @@ export default function NetDiagram() {
   async function build() {
     setBusy(true); setErr(null); setRes(null);
     try {
-      setRes(await buildDiagram(scope, device, scope === 'vdom' ? vdom : null, hosts));
+      setRes(await buildDiagram(
+        scope, scope === 'vdom' || scope === 'firewall' ? device : null,
+        scope === 'vdom' ? vdom : null, scope === 'site' ? site : null, hosts));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally { setBusy(false); }
@@ -66,17 +70,23 @@ export default function NetDiagram() {
       <div className="flex flex-wrap items-end gap-2">
         <label className="flex flex-col gap-1">
           <span className="text-[11px] text-slate-500">{de.diagram.scope}</span>
-          <select className="fwpt-input w-40" value={scope} onChange={(e) => setScope(e.target.value as 'vdom' | 'firewall')}>
+          <select className="fwpt-input w-52" value={scope} onChange={(e) => setScope(e.target.value as DiagramScope)}>
             <option value="vdom">{de.diagram.scopeVdom}</option>
             <option value="firewall">{de.diagram.scopeFirewall}</option>
+            <option value="site">{de.diagram.scopeSite}</option>
+            <option value="global">{de.diagram.scopeGlobal}</option>
           </select>
         </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-[11px] text-slate-500">{de.diagram.device}</span>
-          <select className="fwpt-input w-44 font-mono" value={device} onChange={(e) => setDevice(e.target.value)}>
-            {(scopes?.devices ?? []).map((d) => <option key={d.device} value={d.device}>{d.device}</option>)}
-          </select>
-        </label>
+        {(scope === 'vdom' || scope === 'firewall') && (
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-slate-500">{de.diagram.device}</span>
+            <select className="fwpt-input w-44 font-mono" value={device} onChange={(e) => setDevice(e.target.value)}>
+              {(scopes?.devices ?? []).map((d) => (
+                <option key={d.device} value={d.device}>{d.device}{d.site ? ` — ${d.site}` : ''}</option>
+              ))}
+            </select>
+          </label>
+        )}
         {scope === 'vdom' && (
           <label className="flex flex-col gap-1">
             <span className="text-[11px] text-slate-500">{de.diagram.vdom}</span>
@@ -85,7 +95,17 @@ export default function NetDiagram() {
             </select>
           </label>
         )}
-        <label className="flex flex-col gap-1">
+        {scope === 'site' && (
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-slate-500">{de.diagram.site}</span>
+            <select className="fwpt-input w-52" value={site} onChange={(e) => setSite(e.target.value)}>
+              {(scopes?.sites ?? []).map((s) => (
+                <option key={s.name} value={s.name}>{s.name} ({s.devices.length})</option>
+              ))}
+            </select>
+          </label>
+        )}
+        <label className={`flex flex-col gap-1 ${scope === 'global' ? 'hidden' : ''}`}>
           <span className="text-[11px] text-slate-500">{de.diagram.hosts}</span>
           <select className="fwpt-input w-44" value={hosts} onChange={(e) => setHosts(e.target.value as DiagramHosts)}>
             <option value="auto">{de.diagram.hostsAuto}</option>
@@ -94,13 +114,18 @@ export default function NetDiagram() {
             <option value="none">{de.diagram.hostsNone}</option>
           </select>
         </label>
-        <button type="button" className="fwpt-btn" onClick={build} disabled={busy || !device}>
+        <button type="button" className="fwpt-btn" onClick={build}
+          disabled={busy || (scope === 'site' ? !site : scope !== 'global' && !device)}>
           <Play size={14} /> {busy ? de.diagram.building : de.diagram.build}
         </button>
       </div>
       <p className="text-[11px] text-slate-600">
-        {de.diagram.hostsHint.replace('{n}', String(scopes?.max_hosts ?? 1500))}
+        {scope === 'global' ? de.diagram.globalHint
+          : de.diagram.hostsHint.replace('{n}', String(scopes?.max_hosts ?? 1500))}
       </p>
+      {scope === 'site' && scopes?.sites.length === 0 && (
+        <p className="text-sm text-amber-400">{de.diagram.noSites}</p>
+      )}
 
       {err && <p className="text-sm text-red-400">{err}</p>}
 
@@ -128,8 +153,10 @@ export default function NetDiagram() {
               : <p className="text-amber-500">{de.diagram.tooBigForLink}</p>
           )}
           <p className="text-slate-500">
-            {res.stats.vdoms} {de.diagram.statVdoms} · {res.stats.networks} {de.diagram.statNets} · {res.stats.hosts_shown}/{res.stats.hosts_found} {de.diagram.statHosts}
-            {' '}({de.diagram.modeShown[res.hosts_mode]}) · {res.stats.neighbors} {de.diagram.statNeighbors} · {res.stats.switches} {de.diagram.statSwitches}
+            {res.stats.sites > 0 && `${res.stats.sites} ${de.diagram.statSites} · `}
+            {res.stats.devices} {de.diagram.statDevices} · {res.stats.vdoms} {de.diagram.statVdoms} · {res.stats.networks} {de.diagram.statNets}
+            {res.hosts_mode !== 'none' && ` · ${res.stats.hosts_shown}/${res.stats.hosts_found} ${de.diagram.statHosts} (${de.diagram.modeShown[res.hosts_mode]})`}
+            {' · '}{res.stats.neighbors} {de.diagram.statNeighbors} · {res.stats.switches} {de.diagram.statSwitches}
           </p>
           <p className="text-slate-600">{de.diagram.open}</p>
         </div>

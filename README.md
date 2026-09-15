@@ -119,7 +119,8 @@ FMG/iTop/DNS aufgelöst.
   *zweifelhaft* (DNS oder ARP kennen sie), *belegt* (antwortet), *nicht
   prüfbar* (kein Ping im Container). Geprüft wird in Wellen, bis die gewünschte
   Anzahl freier Adressen beisammen ist.
-- **Netzplan (draw.io)** — VDOM oder Firewall als `.drawio`-Datei: Netze je
+- **Netzplan (draw.io)** — VDOM, Firewall, **Standort** oder **alle Standorte**
+  als `.drawio`-Datei: Netze je
   Interface (VLAN, CIDR, Zone, iTop-Name), VDOM-Links, Routen zu fremden VDOMs
   als Nachbarn (Overlay/Transit — die WAN-Seite), Default-Route, Switches per
   LLDP (LibreNMS). Detailstufe wählbar: *nur Netze* (Netzverbindungsplan),
@@ -129,8 +130,14 @@ FMG/iTop/DNS aufgelöst.
   (Server, Switch, PC, Firewall, Wolke — offline verfügbar, Zuordnung über
   iTop-Klasse und Beschreibung). Netz-Kästen mit vielen Hosts starten
   eingeklappt, jeder Knoten trägt einen Tooltip mit den Quellen — die Zeichnung ist damit
-  gleichzeitig der Abgleich von FMG, iTop und LibreNMS. Die Datei in draw.io
-  öffnen; Standort- und Global-Scope sind die nächste Stufe.
+  gleichzeitig der Abgleich von FMG, iTop und LibreNMS. Herunterladen oder
+  direkt in der eigenen draw.io-Instanz öffnen (s.u.).
+  Der **Standort** ergibt sich aus den Standort-Supernetzen (Einstellungen,
+  dieselbe Quelle wie der Free-Subnet-Finder): ein VDOM gehört dorthin, wenn
+  eines seiner connected Netze im Supernetz liegt; ein Site-Override schlägt das.
+  Der **Gesamtplan** zeichnet Firewalls nach Standort gruppiert und ihre
+  Kopplungen — ohne Netze und Hosts, weil bei Dutzenden Geräten nur die Frage
+  „wer redet mit wem" lesbar bleibt.
 - **Martin Lehmann, wo hängt das Gerät?** — IP oder Name → **Switch und Port**, an dem das Gerät
   physisch steckt. IP→MAC live von der FortiGate (die ist an fast allen
   Standorten der L3-Router), MAC→Port aus der **LibreNMS**-FDB. Zeigt alle

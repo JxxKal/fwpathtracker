@@ -320,19 +320,32 @@ export async function freeIps(cidr: string, want: number, start?: string, end?: 
 
 // ── Netzplan (draw.io) ────────────────────────────────────────────────────────
 
-export interface DiagramScopes { devices: { device: string; adom: string; vdoms: string[] }[]; max_hosts: number; drawio_url: string | null }
+export interface DiagramScopes {
+  devices: { device: string; adom: string; vdoms: string[]; site: string | null }[];
+  sites: { name: string; cidr: string; devices: string[] }[];
+  max_hosts: number; drawio_url: string | null;
+}
 export type DiagramHosts = 'auto' | 'all' | 'netdev' | 'none';
+export type DiagramScope = 'vdom' | 'firewall' | 'site' | 'global';
 export interface DiagramResult {
   filename: string; xml: string; hosts_mode: DiagramHosts; warnings: string[];
-  stats: { vdoms: number; networks: number; hosts_found: number; hosts_shown: number;
-    neighbors: number; switches: number; hosts_reduced: boolean };
+  stats: { devices: number; vdoms: number; networks: number; hosts_found: number;
+    hosts_shown: number; neighbors: number; switches: number; sites: number;
+    hosts_reduced: boolean };
 }
 export async function diagramScopes(): Promise<DiagramScopes> {
   if (isDemoMode()) {
-    return { max_hosts: 1500, drawio_url: 'http://drawio.example.net:8780', devices: [
-      { device: 'fw-a', adom: 'corp', vdoms: ['root', 'dmz'] },
-      { device: 'fw-b', adom: 'corp', vdoms: ['root', 'prot'] },
-    ] };
+    return {
+      max_hosts: 1500, drawio_url: 'http://drawio.example.net:8780',
+      devices: [
+        { device: 'fw-a', adom: 'corp', vdoms: ['root', 'dmz'], site: 'Holstein' },
+        { device: 'fw-b', adom: 'corp', vdoms: ['root', 'prot'], site: 'Hamburg' },
+      ],
+      sites: [
+        { name: 'Holstein', cidr: '10.180.0.0/20', devices: ['fw-a'] },
+        { name: 'Hamburg', cidr: '10.180.32.0/20', devices: ['fw-b'] },
+      ],
+    };
   }
   return request('/api/diagram/scopes');
 }
@@ -341,19 +354,25 @@ export async function drawioTest(): Promise<DrawioTest> {
   if (isDemoMode()) return { ok: true, checked: true, status: 200, looks_like_drawio: true, hint: null };
   return request('/api/diagram/drawio/test', { method: 'POST' });
 }
-export async function buildDiagram(scope: 'vdom' | 'firewall', device: string, vdom: string | null,
-  hosts: DiagramHosts): Promise<DiagramResult> {
+export async function buildDiagram(scope: DiagramScope, device: string | null, vdom: string | null,
+  site: string | null, hosts: DiagramHosts): Promise<DiagramResult> {
   if (isDemoMode()) {
     const xml = '<?xml version="1.0" encoding="UTF-8"?>\n<mxfile host="A38"><diagram name="Demo" id="demo"><mxGraphModel><root>'
       + '<mxCell id="0"/><mxCell id="1" parent="0"/>'
       + '<object id="c2" label="fw-a"><mxCell style="swimlane" vertex="1" parent="1"><mxGeometry x="40" y="40" width="300" height="200" as="geometry"/></mxCell></object>'
       + '</root></mxGraphModel></diagram></mxfile>';
+    const stem = scope === 'global' ? 'gesamt' : scope === 'site' ? site
+      : scope === 'firewall' ? device : `${device}_${vdom}`;
+    const mode: DiagramHosts = scope === 'global' ? 'none' : hosts === 'auto' ? 'all' : hosts;
     return {
-      filename: `A38_Netzplan_${device}${vdom ? `_${vdom}` : ''}.drawio`, xml, hosts_mode: hosts === 'auto' ? 'all' : hosts,
-      warnings: [], stats: { vdoms: scope === 'vdom' ? 1 : 2, networks: 5, hosts_found: 42, hosts_shown: hosts === 'none' ? 0 : 42, neighbors: 3, switches: 2, hosts_reduced: false },
+      filename: `A38_Netzplan_${stem}.drawio`, xml, hosts_mode: mode,
+      warnings: scope === 'global' ? ['Gesamtplan: gezeichnet werden die Kopplungen der Firewalls, nicht ihre Netze und Hosts.'] : [],
+      stats: { devices: scope === 'vdom' || scope === 'firewall' ? 1 : 2, vdoms: scope === 'vdom' ? 1 : 3,
+        networks: 5, hosts_found: mode === 'none' ? 0 : 42, hosts_shown: mode === 'none' ? 0 : 42,
+        neighbors: 3, switches: 2, sites: scope === 'global' ? 2 : 1, hosts_reduced: false },
     };
   }
-  return request('/api/diagram', { method: 'POST', body: JSON.stringify({ scope, device, vdom, hosts }) });
+  return request('/api/diagram', { method: 'POST', body: JSON.stringify({ scope, device, vdom, site, hosts }) });
 }
 
 export async function inventoryOwns(q: string): Promise<OwnsResult> {

@@ -1,4 +1,5 @@
-"""Netzplan-Modell: was in einem Scope (VDOM, Firewall) an Netzen, Nachbarn und
+"""Netzplan-Modell: was in einem Scope (VDOM, Firewall, Standort, Global) an
+Netzen, Nachbarn und
 Hosts existiert — zusammengetragen aus FMG-Inventar, iTop, ARP-Historie und
 LibreNMS. Der Renderer (drawio.py) macht daraus Kästen; hier entsteht nur der
 Inhalt.
@@ -10,6 +11,13 @@ wertlos ist:
     netdev  dazu Netzwerkgeräte — Switches (LibreNMS), NetworkDevice-CIs (iTop)
     all     alle Hosts, die iTop, FMG-Objekte oder die ARP-Historie kennen
 `auto` wählt `all` und fällt oberhalb von MAX_HOSTS auf `netdev` zurück.
+
+Vier Scopes, von innen nach außen:
+    vdom      ein VDOM
+    firewall  alle VDOMs eines Geräts
+    site      alle VDOMs, die im Standort-Supernetz ein connected Netz halten
+    global    alle Geräte, nach Standort gruppiert — hier zählen nur noch die
+              Kopplungen (wer redet mit wem), deshalb ohne Netze und Hosts.
 """
 from __future__ import annotations
 
@@ -25,6 +33,8 @@ log = logging.getLogger("diagram.model")
 
 MAX_HOSTS = 1500
 HOST_MODES = ("auto", "all", "netdev", "none")
+SCOPES = ("vdom", "firewall", "site", "global")
+NO_SITE = "ohne Standort"
 
 ArpLookup = Callable[[str], Awaitable[list[dict]]]
 
@@ -33,19 +43,71 @@ def vdom_key(device: str, vdom: str) -> str:
     return f"{device}/{vdom}"
 
 
-def scope_vdoms(inv: Inventory, scope: str, device: str, vdom: str | None) -> list[tuple[str, str]]:
+def _supernets(sites: list[dict]) -> list[tuple[str, ipaddress.IPv4Network]]:
+    out = []
+    for s in sites or []:
+        try:
+            out.append((str(s.get("name") or s.get("cidr")),
+                        ipaddress.IPv4Network(str(s["cidr"]), strict=False)))
+        except (KeyError, ValueError):
+            continue
+    return out
+
+
+def site_of(inv: Inventory, prefixes: PrefixTable, device: str, vdom: str,
+            supernets: list[tuple[str, ipaddress.IPv4Network]]) -> str | None:
+    """Standort eines VDOMs: erst ein ausdrücklicher Site-Override aus den
+    Einstellungen, sonst das engste Standort-Supernetz, in dem eines seiner
+    connected Netze liegt. Ein VDOM ohne beides hat keinen Standort — das ist
+    eine Aussage, kein Fehler (Transit-/Lab-Geräte gibt es wirklich)."""
+    for e in prefixes.entries:
+        if e.device == device and e.vdom == vdom and e.site_name:
+            return e.site_name
+    best: tuple[str, ipaddress.IPv4Network] | None = None
+    nets = [n for n, _ in inv.connected_networks(device, vdom)]
+    for name, sup in supernets:
+        if any(n.subnet_of(sup) for n in nets) and (best is None or sup.prefixlen > best[1].prefixlen):
+            best = (name, sup)
+    return best[0] if best else None
+
+
+def all_vdoms(inv: Inventory) -> list[tuple[str, str]]:
+    return [(d, v) for d, info in sorted(inv.devices.items())
+            for v in (info["vdoms"] or ["root"])]
+
+
+def scope_vdoms(inv: Inventory, scope: str, device: str | None, vdom: str | None,
+                site: str | None = None, prefixes: PrefixTable | None = None,
+                sites: list[dict] | None = None) -> list[tuple[str, str]]:
+    if scope not in SCOPES:
+        raise ValueError(f"Unbekannter Scope '{scope}' ({' | '.join(SCOPES)}).")
+    if scope == "global":
+        return all_vdoms(inv)
+    if scope == "site":
+        if not site:
+            raise ValueError("Scope 'site' braucht einen Standortnamen.")
+        if prefixes is None:
+            raise ValueError("Scope 'site' braucht die PrefixTable.")
+        sup = _supernets(sites or [])
+        hits = [(d, v) for d, v in all_vdoms(inv)
+                if site_of(inv, prefixes, d, v, sup) == site]
+        if not hits:
+            raise ValueError(
+                f"Zum Standort '{site}' gehört kein VDOM mit connected Netz — "
+                "Standort-Supernetz in den Einstellungen prüfen.")
+        return hits
+    if not device:
+        raise ValueError(f"Scope '{scope}' braucht ein Gerät.")
     if device not in inv.devices:
         raise ValueError(f"Gerät '{device}' ist nicht im FMG-Inventar.")
     vdoms = inv.devices[device]["vdoms"] or ["root"]
     if scope == "firewall":
         return [(device, v) for v in vdoms]
-    if scope == "vdom":
-        if vdom is None:
-            raise ValueError("Scope 'vdom' braucht einen VDOM-Namen.")
-        if vdom not in vdoms:
-            raise ValueError(f"VDOM '{vdom}' gibt es auf '{device}' nicht.")
-        return [(device, vdom)]
-    raise ValueError(f"Unbekannter Scope '{scope}' (vdom | firewall).")
+    if vdom is None:
+        raise ValueError("Scope 'vdom' braucht einen VDOM-Namen.")
+    if vdom not in vdoms:
+        raise ValueError(f"VDOM '{vdom}' gibt es auf '{device}' nicht.")
+    return [(device, vdom)]
 
 
 def _networks(inv: Inventory, device: str, vdom: str, itop_subnets: list[dict]) -> list[dict]:
@@ -213,10 +275,10 @@ async def _collect_hosts(net: dict, inv: Inventory, itop_hosts: list[dict],
     return sorted(hosts.values(), key=lambda h: ipaddress.IPv4Address(h["ip"]))
 
 
-async def _switches(inv: Inventory, device: str, librenms, librenms_cfg: dict | None) -> list[dict]:
-    """Switches, die per LLDP an dieser Firewall hängen (LibreNMS-Links, bei
-    denen der Nachbar so heißt wie das FMG-Gerät)."""
-    if librenms is None or not librenms_cfg or not librenms_cfg.get("base_url"):
+async def _switches(devices: list[str], librenms, librenms_cfg: dict | None) -> list[dict]:
+    """Switches, die per LLDP an diesen Firewalls hängen (LibreNMS-Links, bei
+    denen der Nachbar so heißt wie ein FMG-Gerät im Scope)."""
+    if librenms is None or not librenms_cfg or not librenms_cfg.get("base_url") or not devices:
         return []
     try:
         links = await librenms.links(librenms_cfg)
@@ -225,25 +287,30 @@ async def _switches(inv: Inventory, device: str, librenms, librenms_cfg: dict | 
         log.info("LibreNMS-Links für den Netzplan nicht abrufbar: %s", exc)
         return []
     by_id = {str(d.get("device_id")): d for d in index.values()}
-    out: dict[str, dict] = {}
-    needle = device.lower()
+    by_needle = {d.lower(): d for d in devices}
+    out: dict[tuple[str, str], dict] = {}
     for link in links:
         remote = str(link.get("remote_hostname") or "").strip().lower()
-        if not remote or (remote != needle and remote.split(".")[0] != needle):
+        if not remote:
+            continue
+        fw = by_needle.get(remote) or by_needle.get(remote.split(".")[0])
+        if fw is None:
             continue
         sw = by_id.get(str(link.get("local_device_id")))
         if sw is None:
             continue
         name = sw.get("sysName") or sw.get("hostname") or str(link.get("local_device_id"))
-        slot = out.setdefault(name, {"id": f"switch:{name}", "name": name, "ip": sw.get("ip"),
-                                     "hardware": sw.get("hardware"), "ports": []})
+        slot = out.setdefault((fw, name), {"id": f"switch:{fw}:{name}", "name": name,
+                                           "device": fw, "ip": sw.get("ip"),
+                                           "hardware": sw.get("hardware"), "ports": []})
         slot["ports"].append({"fw_port": str(link.get("remote_port") or "?"),
                               "local_port_id": link.get("local_port_id")})
     return list(out.values())
 
 
-async def build(inv: Inventory, prefixes: PrefixTable, *, scope: str, device: str,
-                vdom: str | None, hosts: str = "auto",
+async def build(inv: Inventory, prefixes: PrefixTable, *, scope: str,
+                device: str | None = None, vdom: str | None = None, site: str | None = None,
+                hosts: str = "auto", sites: list[dict] | None = None,
                 itop_subnets: list[dict] | None = None, itop_hosts: list[dict] | None = None,
                 itop_addresses: dict[str, dict] | None = None, arp: ArpLookup | None = None,
                 librenms=None, librenms_cfg: dict | None = None,
@@ -251,17 +318,25 @@ async def build(inv: Inventory, prefixes: PrefixTable, *, scope: str, device: st
                 max_hosts: int = MAX_HOSTS) -> dict:
     if hosts not in HOST_MODES:
         raise ValueError(f"hosts muss eines von {HOST_MODES} sein.")
-    targets = scope_vdoms(inv, scope, device, vdom)
+    targets = scope_vdoms(inv, scope, device, vdom, site, prefixes, sites)
     in_scope = {vdom_key(d, v) for d, v in targets}
+    supernets = _supernets(sites or [])
+
+    # Global zeichnet die Kopplungen, nicht den Inhalt: bei 40 Geräten wären
+    # Netze und Hosts weder lesbar noch in vertretbarer Zeit einzusammeln.
+    with_networks = scope != "global"
+    mode = "none" if scope == "global" else hosts
+
     vdoms: list[dict] = []
     edges: list[dict] = []
     for d, v in targets:
-        nets = _networks(inv, d, v, itop_subnets or [])
-        vdoms.append({"id": vdom_key(d, v), "device": d, "vdom": v, "networks": nets})
+        nets = _networks(inv, d, v, itop_subnets or []) if with_networks else []
+        vdoms.append({"id": vdom_key(d, v), "device": d, "vdom": v, "networks": nets,
+                      "network_count": len(nets) if with_networks
+                      else len(inv.connected_networks(d, v))})
         edges.extend(_neighbors(inv, prefixes, d, v, in_scope))
 
     # Hosts einsammeln, dann je nach Modus (und Menge) ausdünnen.
-    mode = hosts
     total = 0
     if mode != "none":
         for vd in vdoms:
@@ -282,7 +357,30 @@ async def build(inv: Inventory, prefixes: PrefixTable, *, scope: str, device: st
             net["host_count"] = len(net["hosts"])
             shown += len(net["hosts"])
 
-    switches = await _switches(inv, device, librenms, librenms_cfg) if mode != "none" else []
+    scope_devices = sorted({d for d, _ in targets})
+    switches = await _switches(scope_devices, librenms, librenms_cfg) if mode != "none" else []
+    sw_by_device: dict[str, list[dict]] = {}
+    for sw in switches:
+        sw_by_device.setdefault(sw["device"], []).append(sw)
+
+    # Geräte → Standorte gruppieren. Die Gruppen sind das Gerüst der Zeichnung:
+    # Standort-Container > Firewall-Container > VDOM > Netz.
+    site_by_vdom = {vd["id"]: site_of(inv, prefixes, vd["device"], vd["vdom"], supernets)
+                    for vd in vdoms}
+    devices: list[dict] = []
+    for dev in scope_devices:
+        dev_vdoms = [vd for vd in vdoms if vd["device"] == dev]
+        names = [site_by_vdom[vd["id"]] for vd in dev_vdoms if site_by_vdom[vd["id"]]]
+        devices.append({"device": dev, "site": names[0] if names else None,
+                        "adom": inv.adom_of(dev), "vdoms": dev_vdoms,
+                        "switches": sw_by_device.get(dev, [])})
+    grouped: dict[str, list[dict]] = {}
+    for d in devices:
+        grouped.setdefault(d["site"] or NO_SITE, []).append(d)
+    site_groups = [{"name": name, "devices": devs} for name, devs in sorted(grouped.items())]
+    # Ein einzelner namenloser Standort ist keine Gruppe, sondern Rauschen.
+    if len(site_groups) == 1 and site_groups[0]["name"] == NO_SITE:
+        site_groups[0]["name"] = None
 
     # Nachbarn: alles, worauf Kanten zeigen und was nicht im Scope liegt.
     neighbor_ids = sorted({e["to"] for e in edges if e["to"] not in in_scope} |
@@ -293,19 +391,29 @@ async def build(inv: Inventory, prefixes: PrefixTable, *, scope: str, device: st
             neighbors.append({"id": nid, "kind": "default", "label": "Internet / Default-Route"})
         else:
             d, _, v = nid.partition("/")
-            site = None
-            for e in prefixes.entries:
-                if e.device == d and e.vdom == v and e.site_name:
-                    site = e.site_name
-                    break
-            neighbors.append({"id": nid, "kind": "vdom", "device": d, "vdom": v, "site": site,
-                              "label": nid + (f" ({site})" if site else "")})
+            nb_site = site_of(inv, prefixes, d, v, supernets) if d in inv.devices else None
+            neighbors.append({"id": nid, "kind": "vdom", "device": d, "vdom": v, "site": nb_site,
+                              "label": nid + (f" ({nb_site})" if nb_site else "")})
 
     return {
-        "scope": {"scope": scope, "device": device, "vdom": vdom},
-        "vdoms": vdoms, "edges": edges, "neighbors": neighbors, "switches": switches,
-        "hosts_mode": mode,
-        "stats": {"vdoms": len(vdoms), "networks": sum(len(v["networks"]) for v in vdoms),
+        "scope": {"scope": scope, "device": device, "vdom": vdom, "site": site,
+                  "title": _title(scope, device, vdom, site)},
+        "vdoms": vdoms, "devices": devices, "sites": site_groups,
+        "edges": edges, "neighbors": neighbors, "switches": switches,
+        "hosts_mode": mode, "with_networks": with_networks,
+        "stats": {"devices": len(devices), "vdoms": len(vdoms),
+                  "networks": sum(vd["network_count"] for vd in vdoms),
                   "hosts_found": total, "hosts_shown": shown, "neighbors": len(neighbors),
-                  "switches": len(switches), "hosts_reduced": hosts == "auto" and mode == "netdev"},
+                  "switches": len(switches), "sites": len([g for g in site_groups if g["name"]]),
+                  "hosts_reduced": hosts == "auto" and mode == "netdev"},
     }
+
+
+def _title(scope: str, device: str | None, vdom: str | None, site: str | None) -> str:
+    if scope == "global":
+        return "Netzplan gesamt"
+    if scope == "site":
+        return f"Netzplan Standort {site}"
+    if scope == "firewall":
+        return f"Netzplan {device}"
+    return f"Netzplan {device}/{vdom}"

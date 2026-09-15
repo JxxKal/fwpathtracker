@@ -35,6 +35,7 @@ async def _build(inventory, prefixes, **kw):
 async def test_vdom_scope_has_networks_neighbors_and_hosts(inventory, prefixes):
     m = await _build(inventory, prefixes)
     assert [v["id"] for v in m["vdoms"]] == ["fw-a/root"]
+    assert [d["device"] for d in m["devices"]] == ["fw-a"]
     nets = {n["cidr"]: n for n in m["vdoms"][0]["networks"]}
     assert {"10.1.1.0/24", "10.1.2.0/24", "203.0.113.0/30", "10.99.0.0/30"} <= set(nets)
     lan1 = nets["10.1.1.0/24"]
@@ -81,6 +82,61 @@ async def test_unknown_device_or_vdom_is_an_error(inventory, prefixes):
         await _build(inventory, prefixes, device="fw-x")
     with pytest.raises(ValueError):
         await _build(inventory, prefixes, vdom="nope")
+    with pytest.raises(ValueError):
+        await _build(inventory, prefixes, scope="nonsense")
+
+
+SITES = [{"name": "Standort A", "cidr": "10.1.0.0/20"},
+         {"name": "Standort B", "cidr": "10.2.0.0/20"}]
+
+
+async def test_site_scope_collects_every_vdom_of_that_site(inventory, prefixes):
+    m = await _build(inventory, prefixes, scope="site", site="Standort A", device=None,
+                     vdom=None, sites=SITES)
+    assert sorted(v["id"] for v in m["vdoms"]) == ["fw-a/dmz", "fw-a/root"]
+    assert [g["name"] for g in m["sites"]] == ["Standort A"]
+    assert m["scope"]["title"] == "Netzplan Standort Standort A"
+    # fw-b hält 10.2.x — es gehört zu Standort B und erscheint nur als Nachbar.
+    assert any(n["id"] == "fw-b/root" and n["site"] == "Standort B" for n in m["neighbors"])
+
+
+async def test_unknown_site_is_an_error(inventory, prefixes):
+    with pytest.raises(ValueError):
+        await _build(inventory, prefixes, scope="site", site="Mond", device=None,
+                     vdom=None, sites=SITES)
+    with pytest.raises(ValueError):       # Scope 'site' ohne Standortnamen
+        await _build(inventory, prefixes, scope="site", site=None, device=None,
+                     vdom=None, sites=SITES)
+
+
+async def test_global_scope_groups_by_site_and_drops_networks(inventory, prefixes):
+    m = await _build(inventory, prefixes, scope="global", device=None, vdom=None, sites=SITES)
+    assert m["hosts_mode"] == "none" and m["with_networks"] is False
+    assert {d["device"] for d in m["devices"]} == {"fw-a", "fw-b", "fw-c", "fw-d", "fw-e"}
+    groups = {g["name"] for g in m["sites"]}
+    assert {"Standort A", "Standort B"} <= groups
+    # Ohne Supernetz-Treffer landen Geräte in der Sammelgruppe — sichtbar, nicht still.
+    assert "ohne Standort" in groups
+    # Netze werden nicht gezeichnet, aber gezählt.
+    assert all(v["networks"] == [] for v in m["vdoms"])
+    assert m["stats"]["networks"] > 0 and m["stats"]["hosts_found"] == 0
+    # Alles ist im Scope → als Nachbar bleibt nur das Internet.
+    assert [n["kind"] for n in m["neighbors"]] == ["default"]
+    # Die Standortkopplung ist die eigentliche Aussage des Gesamtplans.
+    assert any(e["kind"] == "overlay" and e["from"] == "fw-a/root" and e["to"] == "fw-b/root"
+               for e in m["edges"])
+
+
+async def test_global_xml_has_site_containers(inventory, prefixes):
+    m = await _build(inventory, prefixes, scope="global", device=None, vdom=None, sites=SITES)
+    root = ET.fromstring(drawio.render(m))
+    labels = [o.get("label", "") for o in root.findall(".//object")]
+    assert "Standort A" in labels and "fw-a" in labels
+    # VDOM-Köpfe nennen im Gesamtplan die Netzanzahl statt der Netze selbst.
+    assert any("Netze" in lbl for lbl in labels)
+    site_cells = [c for c in root.findall(".//mxCell") if "swimlane" in (c.get("style") or "")
+                  and "dashed=1" in (c.get("style") or "")]
+    assert len(site_cells) >= 2
 
 
 async def test_drawio_xml_is_well_formed_and_complete(inventory, prefixes):

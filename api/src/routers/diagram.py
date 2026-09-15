@@ -21,10 +21,22 @@ router = APIRouter(prefix="/api/diagram", tags=["diagram"])
 
 
 class DiagramRequest(BaseModel):
-    scope: str = Field(pattern="^(vdom|firewall)$")
-    device: str = Field(min_length=1, max_length=128)
+    scope: str = Field(pattern="^(vdom|firewall|site|global)$")
+    device: str | None = Field(default=None, max_length=128)
     vdom: str | None = Field(default=None, max_length=64)
+    site: str | None = Field(default=None, max_length=128)
     hosts: str = Field(default="auto", pattern="^(auto|all|netdev|none)$")
+
+
+async def _sites() -> list[dict]:
+    """Standort-Supernetze aus den Einstellungen — dieselbe Quelle wie der
+    Free-Subnet-Finder, damit ein Standort überall dasselbe bedeutet."""
+    from routers.itop_admin import DEFAULT_SITE_SUPERNETS, _normalize_sites
+    cfg = await read_config("site_supernets")
+    sites = cfg.get("sites")
+    if isinstance(sites, list) and sites:
+        return _normalize_sites(sites)
+    return DEFAULT_SITE_SUPERNETS
 
 
 async def drawio_url() -> str | None:
@@ -39,10 +51,23 @@ async def drawio_url() -> str | None:
 async def scopes(request: Request, _user: dict = Depends(get_current_user)) -> dict:
     """Geräte und VDOMs aus dem FMG-Inventar — Auswahl im Werkzeug. Dazu die
     draw.io-URL, damit das Werkzeug den Öffnen-Button anbieten kann."""
-    inv = request.app.state.inventory
-    devices = [{"device": d, "adom": info["adom"], "vdoms": list(info["vdoms"] or ["root"])}
-               for d, info in sorted(inv.devices.items())]
-    return {"devices": devices, "max_hosts": diagram_model.MAX_HOSTS,
+    state = request.app.state
+    inv, prefixes = state.inventory, state.prefixes
+    sites = await _sites()
+    supernets = diagram_model._supernets(sites)
+    devices = []
+    for d, info in sorted(inv.devices.items()):
+        vdoms = list(info["vdoms"] or ["root"])
+        names = [diagram_model.site_of(inv, prefixes, d, v, supernets) for v in vdoms]
+        devices.append({"device": d, "adom": info["adom"], "vdoms": vdoms,
+                        "site": next((n for n in names if n), None)})
+    # Nur Standorte anbieten, hinter denen auch ein VDOM steht — eine leere
+    # Auswahl, die dann 422 wirft, ist keine Auswahl.
+    used = {d["site"] for d in devices if d["site"]}
+    site_list = [{"name": s["name"], "cidr": s["cidr"],
+                  "devices": sorted(d["device"] for d in devices if d["site"] == s["name"])}
+                 for s in sites if s["name"] in used]
+    return {"devices": devices, "sites": site_list, "max_hosts": diagram_model.MAX_HOSTS,
             "drawio_url": await drawio_url()}
 
 
@@ -81,8 +106,10 @@ async def build(body: DiagramRequest, request: Request,
                 _user: dict = Depends(get_current_user)) -> dict:
     state = request.app.state
     inv, prefixes = state.inventory, state.prefixes
+    sites = await _sites()
     try:
-        targets = diagram_model.scope_vdoms(inv, body.scope, body.device, body.vdom)
+        targets = diagram_model.scope_vdoms(inv, body.scope, body.device, body.vdom,
+                                            body.site, prefixes, sites)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
 
@@ -91,7 +118,8 @@ async def build(body: DiagramRequest, request: Request,
     itop_subnets: list[dict] = []
     itop_hosts: list[dict] = []
     itop_addresses: dict[str, dict] = {}
-    if itop_cfg.get("base_url") and body.hosts != "none":
+    wants_hosts = body.hosts != "none" and body.scope != "global"
+    if itop_cfg.get("base_url") and wants_hosts:
         itop = state.resolver.itop
         try:
             ipam = await itop.ipam(itop_cfg)
@@ -113,7 +141,7 @@ async def build(body: DiagramRequest, request: Request,
     librenms_cfg = await read_config("librenms")
     librenms = state.locate.librenms if librenms_cfg.get("base_url") else None
     librenms_devices: dict[str, dict] = {}
-    if librenms is not None and body.hosts != "none":
+    if librenms is not None and wants_hosts:
         try:
             librenms_devices = await librenms.device_index(librenms_cfg)
         except Exception as exc:
@@ -125,8 +153,8 @@ async def build(body: DiagramRequest, request: Request,
     try:
         mdl = await diagram_model.build(
             inv, prefixes, scope=body.scope, device=body.device, vdom=body.vdom,
-            hosts=body.hosts, itop_subnets=itop_subnets, itop_hosts=itop_hosts,
-            itop_addresses=itop_addresses, arp=arp, librenms=librenms,
+            site=body.site, hosts=body.hosts, sites=sites, itop_subnets=itop_subnets,
+            itop_hosts=itop_hosts, itop_addresses=itop_addresses, arp=arp, librenms=librenms,
             librenms_cfg=librenms_cfg if librenms else None, librenms_devices=librenms_devices,
         )
     except ValueError as exc:
@@ -136,7 +164,13 @@ async def build(body: DiagramRequest, request: Request,
             f"{mdl['stats']['hosts_found']} Hosts gefunden — mehr als {diagram_model.MAX_HOSTS}. "
             "Gezeichnet sind nur Netzwerkgeräte; für alle Hosts 'alle Hosts' wählen oder "
             "den Scope auf einen VDOM verkleinern.")
+    if body.scope == "global":
+        warnings.append("Gesamtplan: gezeichnet werden die Kopplungen der Firewalls, "
+                        "nicht ihre Netze und Hosts — dafür einen Standort oder eine "
+                        "Firewall wählen.")
     xml = drawio.render(mdl)
-    stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", f"{body.device}" + (f"_{body.vdom}" if body.vdom else ""))
+    raw = {"global": "gesamt", "site": body.site or "", "firewall": body.device or "",
+           "vdom": f"{body.device}_{body.vdom}"}[body.scope]
+    stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw).strip("_") or "netzplan"
     return {"filename": f"A38_Netzplan_{stem}.drawio", "xml": xml,
             "stats": mdl["stats"], "hosts_mode": mdl["hosts_mode"], "warnings": warnings}

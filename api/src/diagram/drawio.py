@@ -1,13 +1,18 @@
 """draw.io-Renderer: Netzplan-Modell → mxGraph-XML (unkomprimierte .drawio-Datei).
 
-Layout ist ein einfaches Schichtenmodell, das draw.io nicht selbst mitbringt:
-    Firewall-Container
-      └ VDOM-Container nebeneinander
-          └ Netz-Kästen im Raster, darin die Hosts als Liste (einklappbar,
-            ab HOST_COLLAPSE zugeklappt — der Plan bleibt lesbar, die Hosts
-            sind trotzdem drin)
+Layout ist ein Schichtenmodell, das draw.io nicht selbst mitbringt — von
+außen nach innen:
+    Standort-Container (nur wenn der Scope mehrere Standorte zeigt)
+      └ Firewall-Container
+          └ VDOM-Container
+              └ Netz-Kästen im Raster, darin die Hosts als Liste (einklappbar,
+                ab HOST_COLLAPSE zugeklappt — der Plan bleibt lesbar, die Hosts
+                sind trotzdem drin)
     rechts:  Nachbar-VDOMs, Internet/Default (die WAN-Seite)
-    unten:   Switches per LLDP
+    unter jeder Firewall: ihre Switches per LLDP
+Gerechnet wird von innen nach außen: erst die Netz-Kästen, daraus die Größe
+des VDOMs, daraus die der Firewall, daraus die des Standorts.
+
 Jeder Knoten trägt einen Tooltip mit allem, was die Quellen wissen — die
 Zeichnung ist damit gleichzeitig der Abgleich von FMG, iTop und LibreNMS.
 """
@@ -23,13 +28,20 @@ ICON = 24                   # Host-Symbol (Label steht rechts daneben)
 HOST_COLLAPSE = 12          # ab so vielen Hosts zugeklappt starten
 HOST_MAX_ROWS = 60          # mehr Zeilen zeichnet niemand mehr — Rest als "+N"
 NETS_PER_ROW = 4
+VDOMS_PER_ROW = 3
+FWS_PER_ROW = 3
+SITES_PER_ROW = 2
 GAP = 24
-VDOM_HEAD, FW_HEAD = 30, 34
+VDOM_HEAD, FW_HEAD, SITE_HEAD = 30, 34, 36
+VDOM_MIN_W = 200
+SWITCH_W, SWITCH_H, SWITCH_ROW = 72, 40, 76
 NEIGHBOR_W, NEIGHBOR_H = 200, 60
 
 STYLE = {
     "fw": "swimlane;html=1;startSize=34;fontStyle=1;fontSize=14;fillColor=#dae8fc;strokeColor=#6c8ebf;",
     "vdom": "swimlane;html=1;startSize=30;fontStyle=1;fontSize=12;fillColor=#f5f5f5;strokeColor=#666666;",
+    "site": "swimlane;html=1;startSize=36;fontStyle=1;fontSize=16;fillColor=#f0f0f0;"
+            "strokeColor=#333333;dashed=1;",
     "net": "swimlane;html=1;startSize=48;fontSize=10;align=left;spacingLeft=6;"
            "fillColor=#d5e8d4;strokeColor=#82b366;collapsible=1;",
     # Symbole aus der draw.io-Bibliothek „Network" (mxgraph.networks.*) — sie
@@ -181,90 +193,150 @@ def _net_height(net: dict) -> tuple[float, float]:
     return NET_HEAD + (n * (HOST_H + 4) + 8 if n else 6), NET_HEAD
 
 
-def render(model: dict) -> str:
-    sc = model["scope"]
-    title = f"Netzplan {sc['device']}" + (f"/{sc['vdom']}" if sc.get("vdom") else "")
-    doc = _Doc(title)
-    cell_of: dict[str, str] = {}
+def _pack(sizes: list[tuple[float, float]], cols: int,
+          gap: int = GAP) -> tuple[list[tuple[float, float]], float, float]:
+    """Kästen zeilenweise setzen: Positionen + Gesamtmaß. Ein Raster mit fester
+    Spaltenzahl statt eines echten Auto-Layouts — vorhersagbar, und in draw.io
+    lässt sich danach jederzeit „Anordnen → Layout" darüberlegen."""
+    if not sizes:
+        return [], 0.0, 0.0
+    pos: list[tuple[float, float]] = []
+    y, total_w = 0.0, 0.0
+    for i in range(0, len(sizes), cols):
+        row = sizes[i:i + cols]
+        x = 0.0
+        for w, _h in row:
+            pos.append((x, y))
+            x += w + gap
+        total_w = max(total_w, x - gap)
+        y += max(h for _w, h in row) + gap
+    return pos, total_w, y - gap
 
-    # ── Firewall-Container mit VDOMs ───────────────────────────────────────
-    fw_x, fw_y = 40, 40
-    x_cursor = GAP
-    fw_h = FW_HEAD
-    fw_id = doc.vertex(_esc(sc["device"]), STYLE["fw"], fw_x, fw_y, 10, 10,
-                       tooltip=f"FortiGate {sc['device']}")
-    for vd in model["vdoms"]:
-        nets = vd["networks"]
-        cols = max(1, min(NETS_PER_ROW, len(nets)))
-        vd_w = cols * (NET_W + GAP) + GAP
-        # Netze zeilenweise setzen; Zeilenhöhe = höchster (zugeklappter oder offener) Kasten
-        y = VDOM_HEAD + GAP
-        row_h = 0
-        placed: list[tuple[dict, float, float, float, bool]] = []
-        for i, net in enumerate(nets):
-            col = i % cols
-            if col == 0 and i > 0:
-                y += row_h + GAP
-                row_h = 0
-            full, short = _net_height(net)
-            collapsed = len(net["hosts"]) > HOST_COLLAPSE
-            h = short if collapsed else full
-            placed.append((net, GAP + col * (NET_W + GAP), y, h, collapsed))
-            row_h = max(row_h, h)
-        vd_h = y + row_h + GAP if nets else VDOM_HEAD + GAP
-        vd_id = doc.vertex(_esc(vd["vdom"]), STYLE["vdom"], x_cursor, FW_HEAD + GAP, vd_w, vd_h,
-                           parent=fw_id, tooltip=f"VDOM {vd['id']} · {len(nets)} Netze")
-        cell_of[vd["id"]] = vd_id
-        for net, nx, ny, nh, collapsed in placed:
-            full, short = _net_height(net)
-            net_id = doc.vertex(_net_label(net), STYLE["net"], nx, ny, NET_W, nh, parent=vd_id,
-                                tooltip=_net_tooltip(net), collapsed=collapsed,
-                                alt=(NET_W, full if collapsed else short))
-            cell_of[net["id"]] = net_id
-            hy = NET_HEAD + 4
-            for h in net["hosts"][:HOST_MAX_ROWS]:
-                doc.vertex(_host_label(h), host_style(h), 12, hy + (HOST_H - ICON) // 2, ICON, ICON,
-                           parent=net_id, tooltip=_host_tooltip(h))
-                hy += HOST_H + 4
-            if len(net["hosts"]) > HOST_MAX_ROWS:
-                doc.vertex(_esc(f"… +{len(net['hosts']) - HOST_MAX_ROWS} weitere"), STYLE["more"],
-                           12, hy, HOST_W, HOST_H, parent=net_id)
-        x_cursor += vd_w + GAP
-        fw_h = max(fw_h, FW_HEAD + GAP + vd_h + GAP)
-    fw_w = max(x_cursor, 300)
-    # Container-Geometrie nachziehen
-    for obj in doc.root.iter("object"):
-        if obj.get("id") == fw_id:
-            geo = obj.find("mxCell/mxGeometry")
-            geo.set("width", str(int(fw_w)))
-            geo.set("height", str(int(fw_h)))
-    # Firewall-Symbol rechts im Kopf des Containers
-    doc.vertex("", icon_style("firewall").replace("verticalLabelPosition=bottom;verticalAlign=top;", ""),
-               fw_w - 52, 3, 44, 28, parent=fw_id, tooltip=f"FortiGate {sc['device']}")
+
+def _measure_vdom(vd: dict, with_networks: bool) -> tuple[tuple[float, float], list]:
+    """Größe eines VDOM-Containers + Platzierung seiner Netz-Kästen."""
+    nets = vd["networks"] if with_networks else []
+    if not nets:
+        return (VDOM_MIN_W, VDOM_HEAD + GAP), []
+    sizes = []
+    placed = []
+    for net in nets:
+        full, short = _net_height(net)
+        collapsed = len(net["hosts"]) > HOST_COLLAPSE
+        sizes.append((NET_W, short if collapsed else full))
+        placed.append((net, collapsed, full, short))
+    pos, w, h = _pack(sizes, NETS_PER_ROW)
+    out = [(net, GAP + px, VDOM_HEAD + GAP + py, short if collapsed else full, collapsed, full, short)
+           for (net, collapsed, full, short), (px, py) in zip(placed, pos)]
+    return (max(w + 2 * GAP, VDOM_MIN_W), VDOM_HEAD + GAP + h + GAP), out
+
+
+def _measure_device(dev: dict, with_networks: bool) -> tuple[tuple[float, float], list]:
+    measured = [_measure_vdom(vd, with_networks) for vd in dev["vdoms"]]
+    pos, w, h = _pack([m[0] for m in measured], VDOMS_PER_ROW)
+    kids = [(vd, GAP + px, FW_HEAD + GAP + py, size, nets)
+            for vd, (px, py), ((size), nets) in zip(dev["vdoms"], pos, measured)]
+    sw_rows = -(-len(dev["switches"]) // max(1, int((w or VDOM_MIN_W) // (SWITCH_W + GAP)) or 1))
+    sw_h = sw_rows * SWITCH_ROW + GAP if dev["switches"] else 0
+    return (max(w + 2 * GAP, VDOM_MIN_W + 2 * GAP),
+            FW_HEAD + GAP + h + GAP + sw_h), kids
+
+
+def _measure_site(group: dict, with_networks: bool) -> tuple[tuple[float, float], list]:
+    measured = [_measure_device(d, with_networks) for d in group["devices"]]
+    pos, w, h = _pack([m[0] for m in measured], FWS_PER_ROW)
+    head = SITE_HEAD + GAP if group["name"] else 0
+    kids = [(dev, (GAP if group["name"] else 0) + px, head + py, size, vdoms)
+            for dev, (px, py), (size, vdoms) in zip(group["devices"], pos, measured)]
+    if not group["name"]:
+        return (w, h), kids
+    return (w + 2 * GAP, head + h + GAP), kids
+
+
+def _draw_vdom(doc: _Doc, vd: dict, parent: str, x: float, y: float,
+               size: tuple[float, float], nets: list, cell_of: dict, with_networks: bool) -> None:
+    label = _esc(vd["vdom"]) if with_networks else \
+        f"{_esc(vd['vdom'])} <span style='color:#888'>· {vd['network_count']} Netze</span>"
+    vd_id = doc.vertex(label, STYLE["vdom"], x, y, size[0], size[1], parent=parent,
+                       tooltip=f"VDOM {vd['id']} · {vd['network_count']} Netze")
+    cell_of[vd["id"]] = vd_id
+    for net, nx, ny, nh, collapsed, full, short in nets:
+        net_id = doc.vertex(_net_label(net), STYLE["net"], nx, ny, NET_W, nh, parent=vd_id,
+                            tooltip=_net_tooltip(net), collapsed=collapsed,
+                            alt=(NET_W, full if collapsed else short))
+        cell_of[net["id"]] = net_id
+        hy = NET_HEAD + 4
+        for h in net["hosts"][:HOST_MAX_ROWS]:
+            doc.vertex(_host_label(h), host_style(h), 12, hy + (HOST_H - ICON) // 2, ICON, ICON,
+                       parent=net_id, tooltip=_host_tooltip(h))
+            hy += HOST_H + 4
+        if len(net["hosts"]) > HOST_MAX_ROWS:
+            doc.vertex(_esc(f"… +{len(net['hosts']) - HOST_MAX_ROWS} weitere"), STYLE["more"],
+                       12, hy, HOST_W, HOST_H, parent=net_id)
+
+
+def _draw_device(doc: _Doc, dev: dict, parent: str, x: float, y: float,
+                 size: tuple[float, float], vdoms: list, cell_of: dict,
+                 with_networks: bool) -> None:
+    tip = " · ".join(p for p in (f"FortiGate {dev['device']}",
+                                 f"ADOM {dev['adom']}" if dev.get("adom") else None,
+                                 dev.get("site")) if p)
+    fw_id = doc.vertex(_esc(dev["device"]), STYLE["fw"], x, y, size[0], size[1],
+                       parent=parent, tooltip=tip)
+    cell_of[f"device:{dev['device']}"] = fw_id
+    doc.vertex("", icon_style("firewall").replace(
+        "verticalLabelPosition=bottom;verticalAlign=top;", ""), size[0] - 52, 3, 44, 28,
+        parent=fw_id, tooltip=tip)
+    for vd, vx, vy, vsize, nets in vdoms:
+        _draw_vdom(doc, vd, fw_id, vx, vy, vsize, nets, cell_of, with_networks)
+    # Switches unter die Firewall, an deren Container geklebt.
+    if dev["switches"]:
+        per_row = max(1, int((size[0] - 2 * GAP) // (SWITCH_W + GAP)))
+        sy = size[1] - (-(-len(dev["switches"]) // per_row)) * SWITCH_ROW
+        for i, sw in enumerate(dev["switches"]):
+            col, row = i % per_row, i // per_row
+            ports = ", ".join(sorted({p["fw_port"] for p in sw["ports"]}))
+            stip = "\n".join(f"{k}: {v}" for k, v in (
+                ("Switch", sw["name"]), ("IP", sw.get("ip")), ("Hardware", sw.get("hardware")),
+                ("An Firewall-Port", ports)) if v)
+            cell_of[sw["id"]] = doc.vertex(
+                f"<b>{_esc(sw['name'])}</b><br>{_esc(sw.get('ip') or '')}", icon_style("switch"),
+                GAP + col * (SWITCH_W + GAP), sy + row * SWITCH_ROW, SWITCH_W, SWITCH_H,
+                parent=fw_id, tooltip=stip)
+            doc.edge(cell_of[sw["id"]], fw_id, _esc(ports), "switch")
+
+
+def render(model: dict) -> str:
+    doc = _Doc(model["scope"].get("title") or "Netzplan")
+    cell_of: dict[str, str] = {}
+    with_networks = model.get("with_networks", True)
+
+    measured = [_measure_site(g, with_networks) for g in model["sites"]]
+    pos, total_w, total_h = _pack([m[0] for m in measured], SITES_PER_ROW)
+    x0, y0 = 40, 40
+    for group, (px, py), (size, devs) in zip(model["sites"], pos, measured):
+        gx, gy = x0 + px, y0 + py
+        if group["name"]:
+            parent = doc.vertex(_esc(group["name"]), STYLE["site"], gx, gy, size[0], size[1],
+                                tooltip=f"Standort {group['name']} · {len(group['devices'])} Firewalls")
+            cell_of[f"site:{group['name']}"] = parent
+            ox, oy = 0.0, 0.0
+        else:
+            parent, ox, oy = "1", gx, gy
+        for dev, dx, dy, dsize, vdoms in devs:
+            _draw_device(doc, dev, parent, ox + dx, oy + dy, dsize, vdoms, cell_of, with_networks)
 
     # ── Nachbarn (WAN-Seite) rechts ────────────────────────────────────────
-    nx = fw_x + fw_w + 2 * GAP
-    ny = fw_y
+    nx, ny = x0 + total_w + 2 * GAP, y0
     for nb in model["neighbors"]:
         is_default = nb["kind"] == "default"
         style = icon_style("cloud" if is_default else "firewall")
-        tip = nb["label"] if is_default else f"{nb['id']}" + (f"\nStandort: {nb['site']}" if nb.get("site") else "")
+        tip = nb["label"] if is_default else f"{nb['id']}" + (
+            f"\nStandort: {nb['site']}" if nb.get("site") else "")
         w, h = (96, 60) if is_default else (64, 44)
-        cell_of[nb["id"]] = doc.vertex(_esc(nb["label"]), style, nx + (NEIGHBOR_W - w) // 2, ny, w, h,
-                                       tooltip=tip)
+        cell_of[nb["id"]] = doc.vertex(_esc(nb["label"]), style, nx + (NEIGHBOR_W - w) // 2, ny,
+                                       w, h, tooltip=tip)
         ny += NEIGHBOR_H + GAP + 16
-
-    # ── Switches unten ─────────────────────────────────────────────────────
-    sx, sy = fw_x, fw_y + fw_h + 2 * GAP
-    for sw in model["switches"]:
-        ports = ", ".join(sorted({p["fw_port"] for p in sw["ports"]}))
-        label = f"<b>{_esc(sw['name'])}</b><br>{_esc(sw.get('ip') or '')}"
-        tip = "\n".join(f"{k}: {v}" for k, v in (("Switch", sw["name"]), ("IP", sw.get("ip")),
-                                                    ("Hardware", sw.get("hardware")),
-                                                    ("An Firewall-Port", ports)) if v)
-        cell_of[sw["id"]] = doc.vertex(label, icon_style("switch"), sx, sy, 64, 40, tooltip=tip)
-        doc.edge(cell_of[sw["id"]], fw_id, _esc(ports), "switch")
-        sx += NEIGHBOR_W + GAP
 
     # ── Kanten ─────────────────────────────────────────────────────────────
     seen: set[tuple[str, str, str]] = set()
