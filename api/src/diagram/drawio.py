@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 
 NET_W, NET_HEAD = 240, 48
 HOST_H, HOST_W = 30, 216
+ICON = 24                   # Host-Symbol (Label steht rechts daneben)
 HOST_COLLAPSE = 12          # ab so vielen Hosts zugeklappt starten
 HOST_MAX_ROWS = 60          # mehr Zeilen zeichnet niemand mehr — Rest als "+N"
 NETS_PER_ROW = 4
@@ -31,16 +32,18 @@ STYLE = {
     "vdom": "swimlane;html=1;startSize=30;fontStyle=1;fontSize=12;fillColor=#f5f5f5;strokeColor=#666666;",
     "net": "swimlane;html=1;startSize=48;fontSize=10;align=left;spacingLeft=6;"
            "fillColor=#d5e8d4;strokeColor=#82b366;collapsible=1;",
-    "host": "rounded=1;html=1;whiteSpace=wrap;fontSize=9;align=left;spacingLeft=4;"
-            "fillColor=#ffffff;strokeColor=#82b366;",
-    "netdev": "rounded=1;html=1;whiteSpace=wrap;fontSize=9;align=left;spacingLeft=4;"
-              "fillColor=#e1d5e7;strokeColor=#9673a6;",
+    # Symbole aus der draw.io-Bibliothek „Network" (mxgraph.networks.*) — sie
+    # sind Teil der Web-App, funktionieren also auch in der Offline-Instanz.
+    # Host-Zeile: kleines Symbol, Label rechts daneben.
+    "host-base": "shape=mxgraph.networks.{shape};html=1;strokeColor=none;aspect=fixed;"
+                 "labelPosition=right;verticalLabelPosition=middle;align=left;"
+                 "verticalAlign=middle;spacingLeft=4;fontSize=9;whiteSpace=nowrap;"
+                 "fillColor={color};",
     "more": "text;html=1;fontSize=9;fontStyle=2;align=left;spacingLeft=4;",
-    "neighbor": "rounded=1;html=1;whiteSpace=wrap;dashed=1;fontSize=11;"
-                "fillColor=#fff2cc;strokeColor=#d6b656;",
-    "default": "ellipse;shape=cloud;html=1;whiteSpace=wrap;fontSize=11;"
-               "fillColor=#f8cecc;strokeColor=#b85450;",
-    "switch": "rounded=0;html=1;whiteSpace=wrap;fontSize=10;fillColor=#e1d5e7;strokeColor=#9673a6;",
+    # Freistehende Symbole mit Label darunter (Nachbarn, Switches, Internet).
+    "icon-base": "shape=mxgraph.networks.{shape};html=1;strokeColor=none;aspect=fixed;"
+                 "verticalLabelPosition=bottom;verticalAlign=top;fontSize=11;"
+                 "whiteSpace=wrap;fillColor={color};",
     "edge": "edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=none;fontSize=9;"
             "labelBackgroundColor=#ffffff;",
     "edge-vdom-link": "strokeColor=#666666;dashed=1;",
@@ -53,6 +56,34 @@ STYLE = {
 
 def _esc(s) -> str:
     return html.escape(str(s if s is not None else ""), quote=False)
+
+
+COLOR = {"firewall": "#b85450", "switch": "#9673a6", "server": "#29AAE1",
+         "pc": "#6c8ebf", "cloud": "#b85450"}
+
+
+def host_shape(h: dict) -> str:
+    """Symbol je Host: iTop-Klasse zuerst, dann die Beschreibung, sonst PC."""
+    kind = (h.get("kind") or "").lower()
+    if kind in ("networkdevice", "switch"):
+        return "switch"
+    if kind == "server":
+        return "server"
+    desc = (h.get("description") or "").lower()
+    if any(k in desc for k in ("server", "srv", "vm", "host")):
+        return "server"
+    if any(k in desc for k in ("switch", "router", "firewall", "gateway", "ap ", "access point")):
+        return "switch"
+    return "pc"
+
+
+def host_style(h: dict) -> str:
+    shape = host_shape(h)
+    return STYLE["host-base"].format(shape=shape, color=COLOR[shape])
+
+
+def icon_style(shape: str) -> str:
+    return STYLE["icon-base"].format(shape=shape, color=COLOR[shape])
 
 
 class _Doc:
@@ -185,9 +216,8 @@ def render(model: dict) -> str:
             cell_of[net["id"]] = net_id
             hy = NET_HEAD + 4
             for h in net["hosts"][:HOST_MAX_ROWS]:
-                style = STYLE["netdev"] if h.get("kind") in ("NetworkDevice", "switch") else STYLE["host"]
-                doc.vertex(_host_label(h), style, 12, hy, HOST_W, HOST_H, parent=net_id,
-                           tooltip=_host_tooltip(h))
+                doc.vertex(_host_label(h), host_style(h), 12, hy + (HOST_H - ICON) // 2, ICON, ICON,
+                           parent=net_id, tooltip=_host_tooltip(h))
                 hy += HOST_H + 4
             if len(net["hosts"]) > HOST_MAX_ROWS:
                 doc.vertex(_esc(f"… +{len(net['hosts']) - HOST_MAX_ROWS} weitere"), STYLE["more"],
@@ -201,15 +231,21 @@ def render(model: dict) -> str:
             geo = obj.find("mxCell/mxGeometry")
             geo.set("width", str(int(fw_w)))
             geo.set("height", str(int(fw_h)))
+    # Firewall-Symbol rechts im Kopf des Containers
+    doc.vertex("", icon_style("firewall").replace("verticalLabelPosition=bottom;verticalAlign=top;", ""),
+               fw_w - 52, 3, 44, 28, parent=fw_id, tooltip=f"FortiGate {sc['device']}")
 
     # ── Nachbarn (WAN-Seite) rechts ────────────────────────────────────────
     nx = fw_x + fw_w + 2 * GAP
     ny = fw_y
     for nb in model["neighbors"]:
-        style = STYLE["default"] if nb["kind"] == "default" else STYLE["neighbor"]
-        tip = nb["label"] if nb["kind"] == "default" else f"{nb['id']}" + (f"\nStandort: {nb['site']}" if nb.get("site") else "")
-        cell_of[nb["id"]] = doc.vertex(_esc(nb["label"]), style, nx, ny, NEIGHBOR_W, NEIGHBOR_H, tooltip=tip)
-        ny += NEIGHBOR_H + GAP
+        is_default = nb["kind"] == "default"
+        style = icon_style("cloud" if is_default else "firewall")
+        tip = nb["label"] if is_default else f"{nb['id']}" + (f"\nStandort: {nb['site']}" if nb.get("site") else "")
+        w, h = (96, 60) if is_default else (64, 44)
+        cell_of[nb["id"]] = doc.vertex(_esc(nb["label"]), style, nx + (NEIGHBOR_W - w) // 2, ny, w, h,
+                                       tooltip=tip)
+        ny += NEIGHBOR_H + GAP + 16
 
     # ── Switches unten ─────────────────────────────────────────────────────
     sx, sy = fw_x, fw_y + fw_h + 2 * GAP
@@ -219,7 +255,7 @@ def render(model: dict) -> str:
         tip = "\n".join(f"{k}: {v}" for k, v in (("Switch", sw["name"]), ("IP", sw.get("ip")),
                                                     ("Hardware", sw.get("hardware")),
                                                     ("An Firewall-Port", ports)) if v)
-        cell_of[sw["id"]] = doc.vertex(label, STYLE["switch"], sx, sy, NEIGHBOR_W, NEIGHBOR_H, tooltip=tip)
+        cell_of[sw["id"]] = doc.vertex(label, icon_style("switch"), sx, sy, 72, 36, tooltip=tip)
         doc.edge(cell_of[sw["id"]], fw_id, _esc(ports), "switch")
         sx += NEIGHBOR_W + GAP
 

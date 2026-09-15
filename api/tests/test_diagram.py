@@ -96,6 +96,11 @@ async def test_drawio_xml_is_well_formed_and_complete(inventory, prefixes):
     assert "000c29aabbcc" in tips and "Server-LAN" in tips
     edges = [c for c in cells if c.get("edge") == "1"]
     assert len(edges) >= 3
+    # Symbole aus der draw.io-Network-Bibliothek: Server, Switch, Firewall, Wolke.
+    styles = " ".join(c.get("style", "") for c in cells)
+    for shape in ("mxgraph.networks.server", "mxgraph.networks.switch",
+                  "mxgraph.networks.firewall", "mxgraph.networks.cloud"):
+        assert shape in styles, shape
     # Jede Kante zeigt auf existierende Zellen.
     ids = {o.get("id") for o in objects} | {c.get("id") for c in cells}
     assert all(e.get("source") in ids and e.get("target") in ids for e in edges)

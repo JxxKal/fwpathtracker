@@ -125,8 +125,10 @@ FMG/iTop/DNS aufgelöst.
   LLDP (LibreNMS). Detailstufe wählbar: *nur Netze* (Netzverbindungsplan),
   *nur Netzwerkgeräte* (Switches, NetworkDevice-CIs) oder *alle Hosts* aus iTop,
   FMG-Objekten und ARP-Historie; *automatisch* fällt oberhalb von 1500 Hosts
-  auf Netzwerkgeräte zurück. Netz-Kästen mit vielen Hosts starten eingeklappt,
-  jeder Knoten trägt einen Tooltip mit den Quellen — die Zeichnung ist damit
+  auf Netzwerkgeräte zurück. Symbole aus der draw.io-Bibliothek „Network"
+  (Server, Switch, PC, Firewall, Wolke — offline verfügbar, Zuordnung über
+  iTop-Klasse und Beschreibung). Netz-Kästen mit vielen Hosts starten
+  eingeklappt, jeder Knoten trägt einen Tooltip mit den Quellen — die Zeichnung ist damit
   gleichzeitig der Abgleich von FMG, iTop und LibreNMS. Die Datei in draw.io
   öffnen; Standort- und Global-Scope sind die nächste Stufe.
 - **Martin Lehmann, wo hängt das Gerät?** — IP oder Name → **Switch und Port**, an dem das Gerät
