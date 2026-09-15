@@ -30,6 +30,7 @@ export default function NetDiagram() {
   const [vdom, setVdom] = useState('');
   const [site, setSite] = useState('');
   const [hosts, setHosts] = useState<DiagramHosts>('auto');
+  const [expand, setExpand] = useState(false);
   const [res, setRes] = useState<DiagramResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -50,7 +51,7 @@ export default function NetDiagram() {
     try {
       setRes(await buildDiagram(
         scope, scope === 'vdom' || scope === 'firewall' ? device : null,
-        scope === 'vdom' ? vdom : null, scope === 'site' ? site : null, hosts));
+        scope === 'vdom' ? vdom : null, scope === 'site' ? site : null, hosts, expand));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally { setBusy(false); }
@@ -113,6 +114,11 @@ export default function NetDiagram() {
             <option value="netdev">{de.diagram.hostsNetdev}</option>
             <option value="none">{de.diagram.hostsNone}</option>
           </select>
+        </label>
+        <label className={`flex items-center gap-1.5 pb-2 text-xs text-slate-300 ${
+          scope === 'global' || hosts === 'none' ? 'hidden' : ''}`} title={de.diagram.expandHint}>
+          <input type="checkbox" checked={expand} onChange={(e) => setExpand(e.target.checked)} />
+          {de.diagram.expand}
         </label>
         <button type="button" className="fwpt-btn" onClick={build}
           disabled={busy || (scope === 'site' ? !site : scope !== 'global' && !device)}>

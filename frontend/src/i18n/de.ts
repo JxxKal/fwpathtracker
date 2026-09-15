@@ -157,6 +157,8 @@ export const de = {
     hostsAll: 'alle Hosts',
     hostsNetdev: 'nur Netzwerkgeräte',
     hostsNone: 'nur Netze',
+    expand: 'Hosts ausgeklappt',
+    expandHint: 'Für Ausdruck und PDF, wo niemand klicken kann — die Zeichnung wird entsprechend groß.',
     hostsHint: 'automatisch: alle Hosts, ab {n} Hosts nur noch Netzwerkgeräte (Switches, Firewalls, Router).',
     build: 'Erzeugen',
     building: 'Sammle …',

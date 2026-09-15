@@ -240,7 +240,8 @@ def _pack(sizes: list[tuple[float, float]], cols: int,
 # schon beim Öffnen dort, wo das Layout sie hinlegen würde — und das erste
 # Auf- oder Zuklappen verrückt nicht plötzlich alles.
 
-def _measure_vdom(vd: dict, with_networks: bool) -> tuple[tuple[float, float], list]:
+def _measure_vdom(vd: dict, with_networks: bool,
+                  collapse: bool = True) -> tuple[tuple[float, float], list]:
     """Größe eines VDOM-Containers + Platzierung seiner Netz-Kästen (eine Spalte)."""
     nets = vd["networks"] if with_networks else []
     if not nets:
@@ -249,17 +250,18 @@ def _measure_vdom(vd: dict, with_networks: bool) -> tuple[tuple[float, float], l
     y = VDOM_HEAD + NET_M
     for net in nets:
         full, short = _net_height(net)
-        collapsed = bool(net["hosts"])
+        collapsed = collapse and bool(net["hosts"])
         h = short if collapsed else full
         placed.append((net, NET_M, y, h, collapsed, full, short))
         y += h + NET_SPACING
     return (NET_W + 2 * NET_M, y - NET_SPACING + NET_M), placed
 
 
-def _measure_device(dev: dict, with_networks: bool) -> tuple[tuple[float, float],
-                                                             tuple[float, float], list]:
+def _measure_device(dev: dict, with_networks: bool,
+                    collapse: bool = True) -> tuple[tuple[float, float],
+                                                    tuple[float, float], list]:
     """(Platzbedarf inkl. Symbol und Switch-Spalte, Container-Maß, VDOM-Kinder)."""
-    measured = [_measure_vdom(vd, with_networks) for vd in dev["vdoms"]]
+    measured = [_measure_vdom(vd, with_networks, collapse) for vd in dev["vdoms"]]
     inner_h = max((m[0][1] for m in measured), default=VDOM_HEAD + 2 * NET_M)
     x = VDOM_M
     kids = []
@@ -274,8 +276,9 @@ def _measure_device(dev: dict, with_networks: bool) -> tuple[tuple[float, float]
     return (box[0] + switch_col, DEV_ICON_H + box[1]), box, kids
 
 
-def _measure_site(group: dict, with_networks: bool) -> tuple[tuple[float, float], list]:
-    measured = [_measure_device(d, with_networks) for d in group["devices"]]
+def _measure_site(group: dict, with_networks: bool,
+                  collapse: bool = True) -> tuple[tuple[float, float], list]:
+    measured = [_measure_device(d, with_networks, collapse) for d in group["devices"]]
     pos, w, h = _pack([m[0] for m in measured], FWS_PER_ROW)
     head = SITE_HEAD + GAP if group["name"] else 0
     off = GAP if group["name"] else 0
@@ -340,12 +343,14 @@ def _draw_device(doc: _Doc, dev: dict, parent: str, x: float, y: float,
         doc.edge(cell_of[sw["id"]], fw_id, _esc(ports), "switch")
 
 
-def render(model: dict) -> str:
+def render(model: dict, collapse: bool = True) -> str:
+    """collapse=False zeichnet die Hostlisten offen — für Ausdruck und PDF, wo
+    niemand klicken kann. Die Zeichnung wird dann entsprechend groß."""
     doc = _Doc(model["scope"].get("title") or "Netzplan")
     cell_of: dict[str, str] = {}
     with_networks = model.get("with_networks", True)
 
-    measured = [_measure_site(g, with_networks) for g in model["sites"]]
+    measured = [_measure_site(g, with_networks, collapse) for g in model["sites"]]
     pos, total_w, _total_h = _pack([m[0] for m in measured], SITES_PER_ROW)
     x0, y0 = 40, 40
     for group, (px, py), (size, devs) in zip(model["sites"], pos, measured):

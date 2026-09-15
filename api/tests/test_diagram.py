@@ -229,3 +229,25 @@ async def test_networks_are_one_column_and_do_not_overlap(inventory, prefixes):
         assert len({g[0] for g in boxes}) == 1          # eine Spalte
         for a, b in zip(boxes, boxes[1:]):
             assert b[1] >= a[1] + a[3]                  # kein Überlappen
+
+
+async def test_expanded_rendering_keeps_the_boxes_open_and_apart(inventory, prefixes):
+    """Für Ausdruck/PDF: collapse=False zeichnet die Hostlisten offen — und die
+    Kästen müssen dann von vornherein den vollen Platz bekommen."""
+    m = await _build(inventory, prefixes)
+    root = ET.fromstring(drawio.render(m, collapse=False))
+    cells = [c for c in root.findall(".//mxCell") if "fillColor=#d5e8d4" in (c.get("style") or "")]
+    assert cells and not any(c.get("collapsed") == "1" for c in cells)
+    by_parent: dict[str, list] = {}
+    for c in cells:
+        by_parent.setdefault(c.get("parent"), []).append(_geo(c))
+    for boxes in by_parent.values():
+        boxes.sort(key=lambda g: g[1])
+        for a, b in zip(boxes, boxes[1:]):
+            assert b[1] >= a[1] + a[3]
+    # Offen ist höher als zugeklappt — sonst wäre nichts zu sehen.
+    closed = ET.fromstring(drawio.render(m))
+    tall = max(_geo(c)[3] for c in cells)
+    short = max(_geo(c)[3] for c in closed.findall(".//mxCell")
+                if "fillColor=#d5e8d4" in (c.get("style") or ""))
+    assert tall > short

@@ -26,6 +26,7 @@ class DiagramRequest(BaseModel):
     vdom: str | None = Field(default=None, max_length=64)
     site: str | None = Field(default=None, max_length=128)
     hosts: str = Field(default="auto", pattern="^(auto|all|netdev|none)$")
+    expand_hosts: bool = False
 
 
 async def _sites() -> list[dict]:
@@ -168,7 +169,7 @@ async def build(body: DiagramRequest, request: Request,
         warnings.append("Gesamtplan: gezeichnet werden die Kopplungen der Firewalls, "
                         "nicht ihre Netze und Hosts — dafür einen Standort oder eine "
                         "Firewall wählen.")
-    xml = drawio.render(mdl)
+    xml = drawio.render(mdl, collapse=not body.expand_hosts)
     raw = {"global": "gesamt", "site": body.site or "", "firewall": body.device or "",
            "vdom": f"{body.device}_{body.vdom}"}[body.scope]
     stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw).strip("_") or "netzplan"

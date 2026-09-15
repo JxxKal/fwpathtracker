@@ -355,7 +355,7 @@ export async function drawioTest(): Promise<DrawioTest> {
   return request('/api/diagram/drawio/test', { method: 'POST' });
 }
 export async function buildDiagram(scope: DiagramScope, device: string | null, vdom: string | null,
-  site: string | null, hosts: DiagramHosts): Promise<DiagramResult> {
+  site: string | null, hosts: DiagramHosts, expandHosts = false): Promise<DiagramResult> {
   if (isDemoMode()) {
     const xml = '<?xml version="1.0" encoding="UTF-8"?>\n<mxfile host="A38"><diagram name="Demo" id="demo"><mxGraphModel><root>'
       + '<mxCell id="0"/><mxCell id="1" parent="0"/>'
@@ -372,7 +372,10 @@ export async function buildDiagram(scope: DiagramScope, device: string | null, v
         neighbors: 3, switches: 2, sites: scope === 'global' ? 2 : 1, hosts_reduced: false },
     };
   }
-  return request('/api/diagram', { method: 'POST', body: JSON.stringify({ scope, device, vdom, site, hosts }) });
+  return request('/api/diagram', {
+    method: 'POST',
+    body: JSON.stringify({ scope, device, vdom, site, hosts, expand_hosts: expandHosts }),
+  });
 }
 
 export async function inventoryOwns(q: string): Promise<OwnsResult> {
