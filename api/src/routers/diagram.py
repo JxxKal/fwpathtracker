@@ -63,7 +63,7 @@ async def drawio_test(_admin: dict = Depends(require_admin)) -> dict:
     except HTTPException as exc:
         return {"ok": False, "checked": False, "status": None, "looks_like_drawio": False,
                 "hint": f"Vom Server aus nicht prüfbar ({exc.detail}). Für den Browser kann "
-                        "die URL trotzdem stimmen — mit „Im Browser öffnen" testen oder "
+                        "die URL trotzdem stimmen — mit 'Im Browser öffnen' testen oder "
                         "LAN-IP/FQDN statt Kurzname eintragen."}
     try:
         async with httpx.AsyncClient(timeout=10, verify=False, follow_redirects=True) as client:
