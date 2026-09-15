@@ -25,7 +25,9 @@ from datetime import datetime, timezone
 NET_W, NET_HEAD = 240, 48
 HOST_H, HOST_W = 30, 216
 ICON = 24                   # Host-Symbol (Label steht rechts daneben)
-HOST_COLLAPSE = 12          # ab so vielen Hosts zugeklappt starten
+# Netze mit Hosts starten ZUGEKLAPPT. Beim Öffnen zählt zuerst die Struktur —
+# welche Netze gibt es, wer hängt woran; die Hostliste holt man sich dann gezielt
+# per Klick. Ein Netz ohne Hosts hat nichts zum Aufklappen und bleibt, wie es ist.
 HOST_MAX_ROWS = 60          # mehr Zeilen zeichnet niemand mehr — Rest als "+N"
 FWS_PER_ROW = 3
 SITES_PER_ROW = 2
@@ -171,8 +173,15 @@ def _net_label(net: dict) -> str:
         net.get("alias") or net.get("itop_name") or net.get("description"),
     ) if p)
     zone = net.get("zone")
-    zone_s = f" · Zone {zone}" if zone and zone != net["interface"] else ""
-    return f"<b>{_esc(head or net['interface'])}</b><br>{_esc(net['cidr'])} · GW {_esc(net['fw_ip'])}<br>{_esc(net['interface'])}{_esc(zone_s)}"
+    # Dritte Zeile trägt die Anzahl mit: am zugeklappten Kasten ist sie die
+    # Information, ob sich das Aufklappen überhaupt lohnt.
+    tail = net["interface"]
+    if zone and zone != net["interface"]:
+        tail += f" · Zone {zone}"
+    if net.get("host_count"):
+        tail += f" · {net['host_count']} Hosts"
+    return (f"<b>{_esc(head or net['interface'])}</b><br>"
+            f"{_esc(net['cidr'])} · GW {_esc(net['fw_ip'])}<br>{_esc(tail)}")
 
 
 def _net_tooltip(net: dict) -> str:
@@ -240,7 +249,7 @@ def _measure_vdom(vd: dict, with_networks: bool) -> tuple[tuple[float, float], l
     y = VDOM_HEAD + NET_M
     for net in nets:
         full, short = _net_height(net)
-        collapsed = len(net["hosts"]) > HOST_COLLAPSE
+        collapsed = bool(net["hosts"])
         h = short if collapsed else full
         placed.append((net, NET_M, y, h, collapsed, full, short))
         y += h + NET_SPACING

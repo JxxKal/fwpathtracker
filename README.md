@@ -138,6 +138,9 @@ FMG/iTop/DNS aufgelöst.
   Der **Gesamtplan** zeichnet Firewalls nach Standort gruppiert und ihre
   Kopplungen — ohne Netze und Hosts, weil bei Dutzenden Geräten nur die Frage
   „wer redet mit wem" lesbar bleibt.
+  Netze **mit** Hosts starten **zugeklappt** — beim Öffnen zählt die Struktur,
+  die Hostliste holt man sich per Klick; die Anzahl steht am Kasten, damit man
+  sieht, ob sich das lohnt.
   Firewall- und VDOM-Container tragen draw.ios **Stack-Layout**
   (`childLayout=stackLayout`): ein aufgeklapptes Netz schiebt die darunter
   liegenden nach unten und zieht Container mit, statt sie zu überdecken; beim

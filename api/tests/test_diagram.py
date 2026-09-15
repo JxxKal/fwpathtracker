@@ -162,6 +162,22 @@ async def test_drawio_xml_is_well_formed_and_complete(inventory, prefixes):
     assert all(e.get("source") in ids and e.get("target") in ids for e in edges)
 
 
+async def test_every_network_with_hosts_starts_collapsed(inventory, prefixes):
+    """Beim Öffnen zählt die Struktur, nicht die Hostliste — Netze MIT Hosts
+    starten zugeklappt, Netze ohne haben nichts zum Aufklappen."""
+    m = await _build(inventory, prefixes)
+    root = ET.fromstring(drawio.render(m))
+    nets = {}
+    for obj in root.findall(".//object"):
+        cell = obj.find("mxCell")
+        if "fillColor=#d5e8d4" in (cell.get("style") or ""):
+            nets[obj.get("label")] = cell.get("collapsed") == "1"
+    lan1 = next(k for k in nets if "10.1.1.0/24" in k)
+    lan2 = next(k for k in nets if "10.1.2.0/24" in k)
+    assert nets[lan1] is True and "4 Hosts" in lan1     # Anzahl steht am Kasten
+    assert nets[lan2] is False and "Hosts" not in lan2  # ohne Hosts: nichts zu holen
+
+
 async def test_many_hosts_collapse_the_network_box(inventory, prefixes):
     hosts = [{"name": f"h{i}", "ip": f"10.1.1.{i}", "description": "", "kind": "Server"}
              for i in range(10, 90)]
