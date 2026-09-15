@@ -124,6 +124,20 @@ class ArpStore:
                 "ORDER BY last_seen DESC LIMIT $2", norm, limit)
         return [row_to_binding(r) for r in rows]
 
+    async def in_network(self, cidr: str, limit: int = 5000) -> list[dict]:
+        """Jüngste Bindung je IP innerhalb eines Netzes — für den Netzplan:
+        wer hat in diesem Segment je gesprochen, auch ohne iTop-Eintrag."""
+        try:
+            net = ipaddress.IPv4Network(cidr, strict=False)
+        except ValueError:
+            return []
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT DISTINCT ON (ip) * FROM arp_history "
+                "WHERE ip::inet << $1::cidr ORDER BY ip, last_seen DESC LIMIT $2",
+                str(net), limit)
+        return [row_to_binding(r) for r in rows]
+
     async def purge(self, retention_days: int) -> int:
         """Bindungen löschen, die länger als `retention_days` nicht gesehen wurden."""
         if retention_days <= 0:

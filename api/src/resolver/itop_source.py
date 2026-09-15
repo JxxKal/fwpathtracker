@@ -89,7 +89,8 @@ class ItopSource:
                     if not name or not ip_raw or ip_raw in ("0.0.0.0", ""):
                         continue
                     hosts.append({"name": name, "ip": ip_raw.split("/")[0],
-                                  "description": (ci.get("description") or "").strip()})
+                                  "description": (ci.get("description") or "").strip(),
+                                  "kind": cls})   # Server | NetworkDevice
         self._hosts = hosts
         self._loaded_at = time.monotonic()
         return hosts

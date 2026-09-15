@@ -318,6 +318,39 @@ export async function freeIps(cidr: string, want: number, start?: string, end?: 
   return request('/api/itop/free-ips', { method: 'POST', body: JSON.stringify({ cidr, want, start: start || null, end: end || null }) });
 }
 
+// ── Netzplan (draw.io) ────────────────────────────────────────────────────────
+
+export interface DiagramScopes { devices: { device: string; adom: string; vdoms: string[] }[]; max_hosts: number }
+export type DiagramHosts = 'auto' | 'all' | 'netdev' | 'none';
+export interface DiagramResult {
+  filename: string; xml: string; hosts_mode: DiagramHosts; warnings: string[];
+  stats: { vdoms: number; networks: number; hosts_found: number; hosts_shown: number;
+    neighbors: number; switches: number; hosts_reduced: boolean };
+}
+export async function diagramScopes(): Promise<DiagramScopes> {
+  if (isDemoMode()) {
+    return { max_hosts: 1500, devices: [
+      { device: 'fw-a', adom: 'corp', vdoms: ['root', 'dmz'] },
+      { device: 'fw-b', adom: 'corp', vdoms: ['root', 'prot'] },
+    ] };
+  }
+  return request('/api/diagram/scopes');
+}
+export async function buildDiagram(scope: 'vdom' | 'firewall', device: string, vdom: string | null,
+  hosts: DiagramHosts): Promise<DiagramResult> {
+  if (isDemoMode()) {
+    const xml = '<?xml version="1.0" encoding="UTF-8"?>\n<mxfile host="A38"><diagram name="Demo" id="demo"><mxGraphModel><root>'
+      + '<mxCell id="0"/><mxCell id="1" parent="0"/>'
+      + '<object id="c2" label="fw-a"><mxCell style="swimlane" vertex="1" parent="1"><mxGeometry x="40" y="40" width="300" height="200" as="geometry"/></mxCell></object>'
+      + '</root></mxGraphModel></diagram></mxfile>';
+    return {
+      filename: `A38_Netzplan_${device}${vdom ? `_${vdom}` : ''}.drawio`, xml, hosts_mode: hosts === 'auto' ? 'all' : hosts,
+      warnings: [], stats: { vdoms: scope === 'vdom' ? 1 : 2, networks: 5, hosts_found: 42, hosts_shown: hosts === 'none' ? 0 : 42, neighbors: 3, switches: 2, hosts_reduced: false },
+    };
+  }
+  return request('/api/diagram', { method: 'POST', body: JSON.stringify({ scope, device, vdom, hosts }) });
+}
+
 export async function inventoryOwns(q: string): Promise<OwnsResult> {
   if (isDemoMode()) {
     return {

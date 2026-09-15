@@ -11,6 +11,7 @@ import HopDetailPanel from './components/HopDetailPanel';
 import IpCalc from './components/IpCalc';
 import HostPortCheck from './components/HostPortCheck';
 import LocateHost from './components/LocateHost';
+import NetDiagram from './components/NetDiagram';
 import NetOwnership from './components/NetOwnership';
 import PathGraph from './components/PathGraph';
 import PortResult from './components/PortResult';
@@ -217,6 +218,7 @@ export default function App() {
               <IpCalc />
               <FreeSubnet />
               <FreeIp />
+              <NetDiagram />
             </div>
           </>
         )}

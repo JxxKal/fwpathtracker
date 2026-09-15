@@ -119,6 +119,16 @@ FMG/iTop/DNS aufgelöst.
   *zweifelhaft* (DNS oder ARP kennen sie), *belegt* (antwortet), *nicht
   prüfbar* (kein Ping im Container). Geprüft wird in Wellen, bis die gewünschte
   Anzahl freier Adressen beisammen ist.
+- **Netzplan (draw.io)** — VDOM oder Firewall als `.drawio`-Datei: Netze je
+  Interface (VLAN, CIDR, Zone, iTop-Name), VDOM-Links, Routen zu fremden VDOMs
+  als Nachbarn (Overlay/Transit — die WAN-Seite), Default-Route, Switches per
+  LLDP (LibreNMS). Detailstufe wählbar: *nur Netze* (Netzverbindungsplan),
+  *nur Netzwerkgeräte* (Switches, NetworkDevice-CIs) oder *alle Hosts* aus iTop,
+  FMG-Objekten und ARP-Historie; *automatisch* fällt oberhalb von 1500 Hosts
+  auf Netzwerkgeräte zurück. Netz-Kästen mit vielen Hosts starten eingeklappt,
+  jeder Knoten trägt einen Tooltip mit den Quellen — die Zeichnung ist damit
+  gleichzeitig der Abgleich von FMG, iTop und LibreNMS. Die Datei in draw.io
+  öffnen; Standort- und Global-Scope sind die nächste Stufe.
 - **Martin Lehmann, wo hängt das Gerät?** — IP oder Name → **Switch und Port**, an dem das Gerät
   physisch steckt. IP→MAC live von der FortiGate (die ist an fast allen
   Standorten der L3-Router), MAC→Port aus der **LibreNMS**-FDB. Zeigt alle
