@@ -99,6 +99,12 @@ FMG/iTop/DNS aufgelöst.
 
 ### 🧰 Werkzeuge
 
+Eigener Tab **Werkzeuge** mit Seitenleiste: links die Werkzeuge nach Aufgabe
+gruppiert (*Diagnose · Bestand · Planung*), rechts das gewählte über die volle
+Breite. Das zuletzt benutzte wird gemerkt, und je Werkzeug gibt es einen
+teilbaren Link (`?tab=werkzeuge&tool=…`). Die Tracker-Seite bleibt damit für
+Suche und Ergebnis frei.
+
 - **Netz-Zugehörigkeit** — an welchem VDOM/Interface ist ein Netz *connected*
   (der Ursprung)? Mit VLAN, Maske, Gateway; Warnung bei Mehrdeutigkeit.
 - **IP-Rechner** — Host/Maske oder Netzsegment → Netz, Maske, Host-Range,

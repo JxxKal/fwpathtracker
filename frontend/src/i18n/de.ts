@@ -1,7 +1,32 @@
 // Zentrale deutsche UI-Strings (Single-Language-App).
 export const de = {
   appTitle: 'A38',
-  tabs: { tracker: 'Tracker', checks: 'Checks', history: 'Verlauf', settings: 'Einstellungen' },
+  tabs: { tracker: 'Tracker', tools: 'Werkzeuge', checks: 'Checks', history: 'Verlauf',
+    settings: 'Einstellungen' },
+  tools: {
+    pick: 'Werkzeug',
+    link: 'Link kopieren',
+    linkCopied: 'kopiert',
+    groupDiagnose: 'Diagnose',
+    groupInventory: 'Bestand',
+    groupPlanning: 'Planung',
+    navNetz: 'Netz-Zugehörigkeit',
+    navSwitchport: 'Switchport-Suche',
+    navPorts: 'Netzwerkport-Check',
+    navVlans: 'VLAN-Übersicht',
+    navDiagram: 'Netzplan',
+    navSubnet: 'Freies Subnetz',
+    navFreeIp: 'Freie IP-Adresse',
+    navIpCalc: 'IP-Rechner',
+    hintNetz: 'An welchem VDOM/Interface ist ein Netz connected?',
+    hintSwitchport: 'IP oder Name → Switch und Port, an dem das Gerät steckt.',
+    hintPorts: 'Alle Ports eines Hosts mit VLAN, dazu die L3-Seite.',
+    hintVlans: 'Alle bekannten VLAN-Nummern, Bezeichnung und freie Bereiche.',
+    hintDiagram: 'Netze und Kopplungen als draw.io-Datei.',
+    hintSubnet: 'Freie Blöcke gewünschter Größe in einem Supernet.',
+    hintFreeIp: 'Freie Host-Adresse in einem Bereich, live geprüft.',
+    hintIpCalc: 'Netz, Maske, Host-Range, Broadcast.',
+  },
   login: {
     title: 'Anmelden',
     tagline: 'Der Passierschein für jedes Paket.',
@@ -17,6 +42,9 @@ export const de = {
     formLine: 'Formular A38 · Ausgabe 2026',
   },
   trace: {
+    emptyHint: 'Das Ergebnis erscheint hier. Netz-Zugehörigkeit, Switchport-Suche, '
+      + 'VLAN-Übersicht, Netzplan und die Planungswerkzeuge stehen im Tab',
+    emptyHintTail: '.',
     title: 'Pfad-Tracker',
     hint: 'Prüft für einen konkreten Dienst (Protokoll/Port), ob der Weg Quelle→Ziel über alle Firewalls im Pfad erlaubt ist — mit Regelvorschlag bei Blockade.',
     src: 'Quelle (IP oder Name)',

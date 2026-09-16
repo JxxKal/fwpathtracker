@@ -5,19 +5,12 @@ import LoginPage from './components/LoginPage';
 import HistoryList from './components/HistoryList';
 import AddToChecks from './components/AddToChecks';
 import ChecksPanel from './components/ChecksPanel';
-import FreeIp from './components/FreeIp';
-import FreeSubnet from './components/FreeSubnet';
 import HopDetailPanel from './components/HopDetailPanel';
-import IpCalc from './components/IpCalc';
-import HostPortCheck from './components/HostPortCheck';
-import LocateHost from './components/LocateHost';
-import NetDiagram from './components/NetDiagram';
-import NetOwnership from './components/NetOwnership';
 import PathGraph from './components/PathGraph';
 import PortResult from './components/PortResult';
 import ResultDrawer from './components/ResultDrawer';
+import ToolsPanel, { isToolId, type ToolId } from './components/ToolsPanel';
 import TraceForm, { type TraceMode } from './components/TraceForm';
-import VlanList from './components/VlanList';
 import DnsPanel from './components/settings/DnsPanel';
 import DrawioPanel from './components/settings/DrawioPanel';
 import FmgPanel from './components/settings/FmgPanel';
@@ -32,7 +25,13 @@ import { readCheckLink } from './checkLink';
 import { de } from './i18n/de';
 import type { Hop, PortTraceResult, Session, TraceRequest, TraceResult } from './types';
 
-type Tab = 'tracker' | 'checks' | 'verlauf' | 'einstellungen';
+type Tab = 'tracker' | 'werkzeuge' | 'checks' | 'verlauf' | 'einstellungen';
+
+/** Werkzeug aus dem Link (?tab=werkzeuge&tool=…) — einmal beim Start gelesen. */
+function readToolLink(): ToolId | null {
+  const v = new URLSearchParams(window.location.search).get('tool');
+  return isToolId(v) ? v : null;
+}
 
 const verdictBanner: Record<string, string> = {
   ALLOW: 'border-emerald-800 bg-emerald-950/60 text-emerald-300',
@@ -50,7 +49,9 @@ export default function App() {
   // Geteilter Check-Link (?tab=checks&group=…&check=…) — einmal beim Start lesen,
   // damit er auch nach einem zwischengeschalteten Login noch greift.
   const [checkLink] = useState(readCheckLink);
-  const [tab, setTab] = useState<Tab>(checkLink ? 'checks' : 'tracker');
+  const [toolLink] = useState(readToolLink);
+  const [tab, setTab] = useState<Tab>(
+    checkLink ? 'checks' : toolLink ? 'werkzeuge' : 'tracker');
   const [mode, setMode] = useState<TraceMode>('service');
   const [result, setResult] = useState<TraceResult | null>(null);
   const [portResult, setPortResult] = useState<PortTraceResult | null>(null);
@@ -133,7 +134,7 @@ export default function App() {
           <span className="font-semibold text-slate-100">{de.appTitle}</span>
         </div>
         <nav className="flex gap-1">
-          {(['tracker', 'checks', 'verlauf', 'einstellungen'] as Tab[])
+          {(['tracker', 'werkzeuge', 'checks', 'verlauf', 'einstellungen'] as Tab[])
             .filter((t) => t !== 'einstellungen' || session.role === 'admin')
             .map((t) => (
               <button
@@ -143,8 +144,9 @@ export default function App() {
                 }`}
                 onClick={() => setTab(t)}
               >
-                {t === 'tracker' ? de.tabs.tracker : t === 'checks' ? de.tabs.checks
-                  : t === 'verlauf' ? de.tabs.history : de.tabs.settings}
+                {t === 'tracker' ? de.tabs.tracker : t === 'werkzeuge' ? de.tabs.tools
+                  : t === 'checks' ? de.tabs.checks
+                    : t === 'verlauf' ? de.tabs.history : de.tabs.settings}
               </button>
             ))}
         </nav>
@@ -166,6 +168,18 @@ export default function App() {
               <div className="rounded-md border border-red-800 bg-red-950/60 p-3 text-sm text-red-300">
                 {error}
               </div>
+            )}
+            {/* Leerer Zustand: die Werkzeuge lagen bis eben auf dieser Seite —
+                wer sie sucht, soll nicht raten müssen, wo sie hin sind. */}
+            {!result && !portResult && !error && (
+              <p className="text-sm text-slate-500">
+                {de.trace.emptyHint}{' '}
+                <button type="button" className="text-cyan-400 hover:underline"
+                  onClick={() => setTab('werkzeuge')}>
+                  {de.tabs.tools}
+                </button>
+                {de.trace.emptyHintTail}
+              </p>
             )}
             {mode === 'ports' && portResult && <PortResult result={portResult} />}
             {mode === 'service' && result && (
@@ -211,18 +225,10 @@ export default function App() {
                 {drawerOpen && <ResultDrawer result={result} onClose={() => setDrawerOpen(false)} />}
               </>
             )}
-            <div className="grid gap-4 lg:grid-cols-2">
-              <NetOwnership />
-              <LocateHost />
-              <HostPortCheck />
-              <VlanList />
-              <IpCalc />
-              <FreeSubnet />
-              <FreeIp />
-              <NetDiagram />
-            </div>
           </>
         )}
+
+        {tab === 'werkzeuge' && <ToolsPanel initial={toolLink} />}
 
         {tab === 'checks' && (
           <ChecksPanel isAdmin={session.role === 'admin'} deepLink={checkLink} />
