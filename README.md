@@ -148,6 +148,13 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   Der **Gesamtplan** zeichnet Firewalls nach Standort gruppiert und ihre
   Kopplungen — ohne Netze und Hosts, weil bei Dutzenden Geräten nur die Frage
   „wer redet mit wem" lesbar bleibt.
+  Jede Zeichnung trägt unten rechts ein **Schriftfeld** im Stil eines
+  Engineering-Plans: Revisionstabelle, Vertraulichkeitsvermerk, Logo, Autor
+  mit Datum, Titel mit Scope-Zahlen, Zeichnungsnummer und Blatt. Gefüllt wird
+  es von A38 selbst — Titel und Zahlen aus dem Scope, Datum von heute, Autor
+  aus dem angemeldeten Benutzer, Nummer aus dem Dateinamen. Firma, Vermerk,
+  Gruppe und **Logo** sind Stammdaten aus *Einstellungen → Schriftfeld*
+  (Logo-Datei dort hochladen, sie wird in jede Zeichnung eingebettet).
   Netze **mit** Hosts starten **zugeklappt** — beim Öffnen zählt die Struktur,
   die Hostliste holt man sich per Klick; die Anzahl steht am Kasten, damit man
   sieht, ob sich das lohnt. Für Ausdruck und PDF gibt es den Schalter

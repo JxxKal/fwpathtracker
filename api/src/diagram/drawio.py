@@ -22,6 +22,8 @@ import html
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
+from diagram import titleblock
+
 NET_W, NET_HEAD = 240, 48
 HOST_H, HOST_W = 30, 216
 ICON = 24                   # Host-Symbol (Label steht rechts daneben)
@@ -343,9 +345,11 @@ def _draw_device(doc: _Doc, dev: dict, parent: str, x: float, y: float,
         doc.edge(cell_of[sw["id"]], fw_id, _esc(ports), "switch")
 
 
-def render(model: dict, collapse: bool = True) -> str:
+def render(model: dict, collapse: bool = True, title_block: dict | None = None) -> str:
     """collapse=False zeichnet die Hostlisten offen — für Ausdruck und PDF, wo
-    niemand klicken kann. Die Zeichnung wird dann entsprechend groß."""
+    niemand klicken kann. Die Zeichnung wird dann entsprechend groß.
+
+    title_block: Schriftfeld unten rechts (siehe titleblock.info_from)."""
     doc = _Doc(model["scope"].get("title") or "Netzplan")
     cell_of: dict[str, str] = {}
     with_networks = model.get("with_networks", True)
@@ -377,6 +381,12 @@ def render(model: dict, collapse: bool = True) -> str:
         cell_of[nb["id"]] = doc.vertex(_esc(nb["label"]), style, nx + (NEIGHBOR_W - w) // 2, ny,
                                        w, h, tooltip=tip)
         ny += NEIGHBOR_H + GAP + 16
+
+    # ── Schriftfeld unten rechts an der Zeichnung ──────────────────────────
+    if title_block:
+        right = max(x0 + total_w, nx + NEIGHBOR_W if model["neighbors"] else 0)
+        bottom = max(y0 + _total_h, ny)
+        titleblock.draw(doc, max(x0, right - titleblock.WIDTH), bottom + 2 * GAP, title_block)
 
     # ── Kanten ─────────────────────────────────────────────────────────────
     seen: set[tuple[str, str, str]] = set()

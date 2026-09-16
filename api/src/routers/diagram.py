@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 import httpx
 
 from deps import get_current_user, require_admin
-from diagram import drawio, model as diagram_model
+from diagram import drawio, model as diagram_model, titleblock
 from netguard import guard_egress_url
 from routers.config import read_config
 
@@ -72,6 +72,35 @@ async def scopes(request: Request, _user: dict = Depends(get_current_user)) -> d
             "drawio_url": await drawio_url()}
 
 
+async def _title_block(mdl: dict, stem: str, user: dict) -> dict | None:
+    """Schriftfeld füllen — Titel, Scope-Zahlen, Datum und Autor kennt A38
+    selbst; Firma, Vermerk, Gruppe und Logo sind Stammdaten."""
+    cfg = await read_config("titleblock")
+    if cfg.get("enabled") is False:
+        return None
+    st, sc = mdl["stats"], mdl["scope"]
+
+    def n(count: int, one: str, many: str) -> str:
+        return f"{count} {one if count == 1 else many}"
+
+    parts = [f"Scope {_SCOPE_LABEL.get(sc['scope'], sc['scope'])}",
+             n(st["devices"], "Firewall", "Firewalls"), n(st["vdoms"], "VDOM", "VDOMs"),
+             n(st["networks"], "Netz", "Netze")]
+    if mdl["hosts_mode"] != "none":
+        parts.append(n(st["hosts_shown"], "Host", "Hosts"))
+    prefix = (cfg.get("drawing_no_prefix") or "A38").strip()
+    return titleblock.info_from(
+        cfg, title=sc.get("title") or "Netzplan", subtitle=" · ".join(parts),
+        author=str(user.get("username") or ""),
+        drawing_no=f"{prefix}-{stem.upper()}",
+        note=f"Erzeugt von A38 aus FortiManager, iTop und LibreNMS",
+    )
+
+
+_SCOPE_LABEL = {"vdom": "VDOM", "firewall": "Firewall", "site": "Standort",
+                "global": "gesamt"}
+
+
 @router.post("/drawio/test")
 async def drawio_test(_admin: dict = Depends(require_admin)) -> dict:
     """Erreichbarkeit der draw.io-Instanz vom Server aus — ein GET auf die
@@ -104,7 +133,7 @@ async def drawio_test(_admin: dict = Depends(require_admin)) -> dict:
 
 @router.post("")
 async def build(body: DiagramRequest, request: Request,
-                _user: dict = Depends(get_current_user)) -> dict:
+                user: dict = Depends(get_current_user)) -> dict:
     state = request.app.state
     inv, prefixes = state.inventory, state.prefixes
     sites = await _sites()
@@ -169,9 +198,10 @@ async def build(body: DiagramRequest, request: Request,
         warnings.append("Gesamtplan: gezeichnet werden die Kopplungen der Firewalls, "
                         "nicht ihre Netze und Hosts — dafür einen Standort oder eine "
                         "Firewall wählen.")
-    xml = drawio.render(mdl, collapse=not body.expand_hosts)
     raw = {"global": "gesamt", "site": body.site or "", "firewall": body.device or "",
            "vdom": f"{body.device}_{body.vdom}"}[body.scope]
     stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw).strip("_") or "netzplan"
+    xml = drawio.render(mdl, collapse=not body.expand_hosts,
+                        title_block=await _title_block(mdl, stem, user))
     return {"filename": f"A38_Netzplan_{stem}.drawio", "xml": xml,
             "stats": mdl["stats"], "hosts_mode": mdl["hosts_mode"], "warnings": warnings}

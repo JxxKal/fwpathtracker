@@ -21,6 +21,7 @@ import SamlPanel from './components/settings/SamlPanel';
 import SiteSupernetsPanel from './components/settings/SiteSupernetsPanel';
 import SitesPanel from './components/settings/SitesPanel';
 import SslPanel from './components/settings/SslPanel';
+import TitleBlockPanel from './components/settings/TitleBlockPanel';
 import UsersPanel from './components/settings/UsersPanel';
 import { readCheckLink } from './checkLink';
 import { de } from './i18n/de';
@@ -275,6 +276,7 @@ export default function App() {
             <ItopPanel />
             <LibrenmsPanel />
             <DrawioPanel />
+            <TitleBlockPanel />
             <DnsPanel />
             <SitesPanel />
             <SiteSupernetsPanel />

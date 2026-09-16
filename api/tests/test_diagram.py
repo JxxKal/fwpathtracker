@@ -251,3 +251,65 @@ async def test_expanded_rendering_keeps_the_boxes_open_and_apart(inventory, pref
     short = max(_geo(c)[3] for c in closed.findall(".//mxCell")
                 if "fillColor=#d5e8d4" in (c.get("style") or ""))
     assert tall > short
+
+
+TB = {"company": "Beispiel AG", "confidential": "Company confidential",
+      "group": "WD2/DR PLT/IT OT", "drawing_no_prefix": "A38"}
+
+
+async def test_title_block_carries_what_a38_knows_itself(inventory, prefixes):
+    """Titel, Zahlen, Datum, Autor und Zeichnungsnummer soll niemand tippen —
+    die kennt A38. Firma, Vermerk und Gruppe sind Stammdaten."""
+    from datetime import date
+    from diagram import titleblock
+    m = await _build(inventory, prefixes)
+    info = titleblock.info_from(TB, title=m["scope"]["title"], subtitle="Scope VDOM · 4 Netze",
+                                author="jkaluza", drawing_no="A38-FW-A_ROOT")
+    root = ET.fromstring(drawio.render(m, title_block=info))
+    labels = [o.get("label", "") for o in root.findall(".//object")]
+    text = " | ".join(labels)
+    assert "Netzplan fw-a/root" in text and "Scope VDOM · 4 Netze" in text
+    assert date.today().strftime("%d.%m.%Y") in text
+    assert "jkaluza" in text and "A38-FW-A_ROOT" in text
+    assert "Company confidential" in text and "Beispiel AG" in text
+    assert "WD2/DR PLT/IT OT" in text
+    for head in ("Rev", "Datum", "Name", "Gruppe", "Autor", "Check", "Blatt 1"):
+        assert any(l == head or l.startswith(head) for l in labels), head
+    # Revision A trägt Datum und Name, die leeren Zeilen darüber nicht.
+    assert labels.count(date.today().strftime("%d.%m.%Y")) == 2   # Rev A + Autor-Zeile
+
+
+async def test_without_title_block_nothing_is_drawn(inventory, prefixes):
+    m = await _build(inventory, prefixes)
+    assert "Zeichnungsnummer" not in drawio.render(m)
+
+
+async def test_title_block_sits_below_the_drawing(inventory, prefixes):
+    """Es gehört unter die Zeichnung, nicht darüber — verglichen wird gegen
+    dieselbe Zeichnung ohne Schriftfeld."""
+    from diagram import titleblock
+    m = await _build(inventory, prefixes)
+
+    def top_level(xml):
+        return [_geo(o.find("mxCell")) for o in ET.fromstring(xml).findall(".//object")
+                if o.find("mxCell").get("parent") == "1"]
+
+    plain = top_level(drawio.render(m))
+    info = titleblock.info_from(TB, title="T", subtitle="S", author="a", drawing_no="N")
+    withtb = top_level(drawio.render(m, title_block=info))
+    content_bottom = max(g[1] + g[3] for g in plain)
+    added = [g for g in withtb if g not in plain]
+    assert len(added) > 20                       # das Schriftfeld besteht aus vielen Zellen
+    assert min(g[1] for g in added) >= content_bottom
+    # Und es ist ein zusammenhängender Block in der erwarteten Größe.
+    assert max(g[0] + g[2] for g in added) - min(g[0] for g in added) == titleblock.WIDTH
+    assert max(g[1] + g[3] for g in added) - min(g[1] for g in added) == titleblock.HEIGHT
+
+
+def test_logo_data_uri_is_written_the_way_mxgraph_reads_it():
+    """';base64,' würde den Style zerschneiden — draw.io schreibt ','."""
+    from diagram import titleblock
+    assert titleblock.normalize_logo("data:image/png;base64,AAAB") == "data:image/png,AAAB"
+    assert titleblock.normalize_logo("data:image/png,AAAB") == "data:image/png,AAAB"
+    assert titleblock.normalize_logo("https://example.net/logo.png") is None
+    assert titleblock.normalize_logo("") is None
