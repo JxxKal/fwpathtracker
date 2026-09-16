@@ -2,6 +2,7 @@ import { Check, Link2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { copyText } from '../checkLink';
 import { de } from '../i18n/de';
+import SideNav, { type NavGroup } from './SideNav';
 import FreeIp from './FreeIp';
 import FreeSubnet from './FreeSubnet';
 import HostPortCheck from './HostPortCheck';
@@ -66,10 +67,15 @@ export function buildToolLink(id: ToolId): string {
   const url = new URL(window.location.href);
   url.search = '';
   url.hash = '';
-  url.searchParams.set('tab', 'werkzeuge');
+  url.searchParams.set('tab', 'tools');
   url.searchParams.set('tool', id);
   return url.toString();
 }
+
+const NAV: NavGroup[] = TOOL_GROUPS.map((g) => ({
+  id: g.id, label: g.label,
+  items: g.tools.map((t) => ({ id: t.id, label: t.label, hint: t.hint })),
+}));
 
 function remembered(): ToolId {
   try {
@@ -110,45 +116,9 @@ export default function ToolsPanel({ initial }: { initial?: ToolId | null }) {
 
   return (
     <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-      {/* Schmale Ansicht: eine Auswahlliste statt der Seitenleiste. */}
-      <label className="flex flex-col gap-1 lg:hidden">
-        <span className="text-[11px] text-slate-500">{de.tools.pick}</span>
-        <select className="fwpt-input" value={active}
-          onChange={(e) => setActive(e.target.value as ToolId)}>
-          {TOOL_GROUPS.map((g) => (
-            <optgroup key={g.id} label={g.label}>
-              {g.tools.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
-            </optgroup>
-          ))}
-        </select>
-      </label>
-
-      <nav className="hidden w-60 shrink-0 space-y-4 lg:block">
-        {TOOL_GROUPS.map((g) => (
-          <div key={g.id}>
-            <p className="mb-1 px-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">
-              {g.label}
-            </p>
-            <div className="space-y-0.5">
-              {g.tools.map((t) => (
-                <button
-                  key={t.id} type="button" title={t.hint}
-                  onClick={() => setActive(t.id)}
-                  className={`w-full rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
-                    t.id === active
-                      ? 'bg-slate-800 font-medium text-cyan-400'
-                      : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
-                  }`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        ))}
-        <CopyToolLink id={active} />
-      </nav>
-
+      <SideNav groups={NAV} active={active} label={de.tools.pick}
+        onSelect={(id) => setActive(id as ToolId)}
+        footer={<CopyToolLink id={active} />} />
       <div className="min-w-0 flex-1">{tool.render()}</div>
     </div>
   );

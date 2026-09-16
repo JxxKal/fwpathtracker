@@ -1,6 +1,7 @@
 // Teilbare Links auf eine Check-Gruppe bzw. einen einzelnen Check —
 // gedacht zum Verschicken per Teams/Mail an Kollegen. App.tsx liest die
-// Parameter beim Start und springt in die Checks-Ansicht.
+// Parameter beim Start und springt in die Checks-Ansicht des Trackers.
+// Ältere Links (?tab=checks&…) landen dort ebenfalls — verschickt ist verschickt.
 
 export interface CheckDeepLink { groupId: string; checkId: string | null; }
 
@@ -8,7 +9,8 @@ export function buildCheckLink(groupId: string, checkId?: string | null): string
   const url = new URL(window.location.href);
   url.search = '';
   url.hash = '';
-  url.searchParams.set('tab', 'checks');
+  url.searchParams.set('tab', 'tracker');
+  url.searchParams.set('view', 'checks');
   url.searchParams.set('group', groupId);
   if (checkId) url.searchParams.set('check', checkId);
   return url.toString();

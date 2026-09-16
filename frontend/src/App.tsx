@@ -9,6 +9,7 @@ import HopDetailPanel from './components/HopDetailPanel';
 import PathGraph from './components/PathGraph';
 import PortResult from './components/PortResult';
 import ResultDrawer from './components/ResultDrawer';
+import SideNav, { type NavGroup } from './components/SideNav';
 import ToolsPanel, { isToolId, type ToolId } from './components/ToolsPanel';
 import TraceForm, { type TraceMode } from './components/TraceForm';
 import DnsPanel from './components/settings/DnsPanel';
@@ -25,12 +26,36 @@ import { readCheckLink } from './checkLink';
 import { de } from './i18n/de';
 import type { Hop, PortTraceResult, Session, TraceRequest, TraceResult } from './types';
 
-type Tab = 'tracker' | 'werkzeuge' | 'checks' | 'verlauf' | 'einstellungen';
+type Tab = 'tracker' | 'tools' | 'einstellungen';
+/** Ansichten innerhalb des Trackers — Prüfung, gespeicherte Checks, Verlauf. */
+type TrackerView = 'pfad' | 'checks' | 'verlauf';
 
-/** Werkzeug aus dem Link (?tab=werkzeuge&tool=…) — einmal beim Start gelesen. */
+const TRACKER_NAV: NavGroup[] = [
+  { id: 'pruefen', label: de.tracker.groupCheck,
+    items: [{ id: 'pfad', label: de.tracker.navPath, hint: de.trace.hint }] },
+  { id: 'gespeichert', label: de.tracker.groupSaved,
+    items: [
+      { id: 'checks', label: de.tabs.checks, hint: de.tracker.hintChecks },
+      { id: 'verlauf', label: de.tabs.history, hint: de.tracker.hintHistory },
+    ] },
+];
+
+/** Werkzeug aus dem Link (?tab=tools&tool=…) — einmal beim Start gelesen. */
 function readToolLink(): ToolId | null {
   const v = new URLSearchParams(window.location.search).get('tool');
   return isToolId(v) ? v : null;
+}
+
+/** Tab aus dem Link. 'werkzeuge', 'checks' und 'verlauf' waren bis zum Umbau
+ *  eigene Tabs — verschickte Links dürfen davon nichts merken. */
+function readTab(hasCheckLink: boolean, hasToolLink: boolean): [Tab, TrackerView] {
+  const t = new URLSearchParams(window.location.search).get('tab');
+  const view = new URLSearchParams(window.location.search).get('view');
+  if (t === 'tools' || t === 'werkzeuge' || hasToolLink) return ['tools', 'pfad'];
+  if (t === 'checks' || view === 'checks' || hasCheckLink) return ['tracker', 'checks'];
+  if (t === 'verlauf' || view === 'verlauf') return ['tracker', 'verlauf'];
+  if (t === 'einstellungen') return ['einstellungen', 'pfad'];
+  return ['tracker', 'pfad'];
 }
 
 const verdictBanner: Record<string, string> = {
@@ -50,8 +75,9 @@ export default function App() {
   // damit er auch nach einem zwischengeschalteten Login noch greift.
   const [checkLink] = useState(readCheckLink);
   const [toolLink] = useState(readToolLink);
-  const [tab, setTab] = useState<Tab>(
-    checkLink ? 'checks' : toolLink ? 'werkzeuge' : 'tracker');
+  const [start] = useState(() => readTab(readCheckLink() !== null, readToolLink() !== null));
+  const [tab, setTab] = useState<Tab>(start[0]);
+  const [view, setView] = useState<TrackerView>(start[1]);
   const [mode, setMode] = useState<TraceMode>('service');
   const [result, setResult] = useState<TraceResult | null>(null);
   const [portResult, setPortResult] = useState<PortTraceResult | null>(null);
@@ -134,19 +160,18 @@ export default function App() {
           <span className="font-semibold text-slate-100">{de.appTitle}</span>
         </div>
         <nav className="flex gap-1">
-          {(['tracker', 'werkzeuge', 'checks', 'verlauf', 'einstellungen'] as Tab[])
+          {(['tracker', 'tools', 'einstellungen'] as Tab[])
             .filter((t) => t !== 'einstellungen' || session.role === 'admin')
             .map((t) => (
               <button
                 key={t} type="button"
-                className={`rounded-md px-3 py-1.5 text-sm capitalize transition-colors ${
+                className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
                   tab === t ? 'bg-slate-800 text-cyan-400' : 'text-slate-400 hover:text-slate-200'
                 }`}
                 onClick={() => setTab(t)}
               >
-                {t === 'tracker' ? de.tabs.tracker : t === 'werkzeuge' ? de.tabs.tools
-                  : t === 'checks' ? de.tabs.checks
-                    : t === 'verlauf' ? de.tabs.history : de.tabs.settings}
+                {t === 'tracker' ? de.tabs.tracker
+                  : t === 'tools' ? de.tabs.tools : de.tabs.settings}
               </button>
             ))}
         </nav>
@@ -160,6 +185,11 @@ export default function App() {
 
       <main className="mx-auto max-w-[1800px] space-y-4 p-4">
         {tab === 'tracker' && (
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+            <SideNav groups={TRACKER_NAV} active={view} label={de.tracker.pick}
+              onSelect={(v) => setView(v as TrackerView)} />
+            <div className="min-w-0 flex-1 space-y-4">
+        {view === 'pfad' && (
           <>
             <TraceForm key={pendingReq ? JSON.stringify(pendingReq) : 'blank'}
               onSubmit={execute} onPortSubmit={executePorts} busy={busy}
@@ -175,7 +205,7 @@ export default function App() {
               <p className="text-sm text-slate-500">
                 {de.trace.emptyHint}{' '}
                 <button type="button" className="text-cyan-400 hover:underline"
-                  onClick={() => setTab('werkzeuge')}>
+                  onClick={() => setTab('tools')}>
                   {de.tabs.tools}
                 </button>
                 {de.trace.emptyHintTail}
@@ -227,14 +257,17 @@ export default function App() {
             )}
           </>
         )}
-
-        {tab === 'werkzeuge' && <ToolsPanel initial={toolLink} />}
-
-        {tab === 'checks' && (
+        {view === 'checks' && (
           <ChecksPanel isAdmin={session.role === 'admin'} deepLink={checkLink} />
         )}
+        {view === 'verlauf' && (
+          <HistoryList onReplay={(req) => { setView('pfad'); return execute(req); }} />
+        )}
+            </div>
+          </div>
+        )}
 
-        {tab === 'verlauf' && <HistoryList onReplay={execute} />}
+        {tab === 'tools' && <ToolsPanel initial={toolLink} />}
 
         {tab === 'einstellungen' && session.role === 'admin' && (
           <>

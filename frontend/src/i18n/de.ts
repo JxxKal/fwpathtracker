@@ -1,8 +1,17 @@
 // Zentrale deutsche UI-Strings (Single-Language-App).
 export const de = {
   appTitle: 'A38',
-  tabs: { tracker: 'Tracker', tools: 'Werkzeuge', checks: 'Checks', history: 'Verlauf',
+  tabs: { tracker: 'Tracker', tools: 'Network Tools', checks: 'Checks', history: 'Verlauf',
     settings: 'Einstellungen' },
+  nav: { pick: 'Ansicht' },
+  tracker: {
+    pick: 'Ansicht',
+    groupCheck: 'Prüfen',
+    groupSaved: 'Gespeichert',
+    navPath: 'Pfad prüfen',
+    hintChecks: 'Gespeicherte Prüfungen als Gruppen, wiederholbar auf Knopfdruck.',
+    hintHistory: 'Zuletzt geprüfte Pfade, per Klick erneut ausführen.',
+  },
   tools: {
     pick: 'Werkzeug',
     link: 'Link kopieren',
