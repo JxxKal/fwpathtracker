@@ -610,3 +610,131 @@ async def test_few_hosts_stay_individual_symbols(inventory, prefixes):
     labels = [o.get("label", "") for o in root.findall(".//object")]
     assert any(l.startswith("plc-13") and ".13" in l for l in labels)
     assert not any("×" in l for l in labels)
+
+
+# ── Physische Netzdokumentation (Hausvorgabe, Ebene 1 und 2) ────────────────
+
+class FakeLnms:
+    """LibreNMS-Stub: ein Core, zwei Verteiler, ein Zugangsswitch, ein Router."""
+
+    DEVICES = {
+        "1": {"device_id": 1, "sysName": "core-01", "hostname": "core-01", "ip": "10.0.0.1",
+              "hardware": "HP 5406", "os": "procurve"},
+        "2": {"device_id": 2, "sysName": "dist-a", "hostname": "dist-a", "ip": "10.0.0.2",
+              "hardware": "MOXA IKS", "os": "moxa"},
+        "3": {"device_id": 3, "sysName": "dist-b", "hostname": "dist-b", "ip": "10.0.0.3",
+              "hardware": "MOXA IKS", "os": "moxa"},
+        "4": {"device_id": 4, "sysName": "acc-1", "hostname": "acc-1", "ip": "10.0.0.4",
+              "hardware": "MOXA", "os": "moxa"},
+        "9": {"device_id": 9, "sysName": "fw-edge", "hostname": "fw-edge", "ip": "10.0.0.9",
+              "hardware": "FortiGate 60F", "os": "fortios"},
+    }
+    LINKS = [
+        {"local_device_id": 2, "remote_device_id": 1, "local_port": "p25", "remote_port": "Gi1/0/1",
+         "local_port_id": 201},
+        {"local_device_id": 3, "remote_device_id": 1, "local_port": "p25", "remote_port": "Gi1/0/2",
+         "local_port_id": 301},
+        {"local_device_id": 4, "remote_device_id": 2, "local_port": "p26", "remote_port": "p1",
+         "local_port_id": 401},
+        {"local_device_id": 1, "remote_device_id": 9, "local_port": "Gi1/0/24", "remote_port": "port3",
+         "local_port_id": 124},
+        # Nachbar ohne Device-Id = Endgerät; gehört auf Ebene 2, nicht hierher.
+        {"local_device_id": 4, "remote_device_id": None, "local_port": "p3",
+         "remote_hostname": "irgendein-pc", "local_port_id": 403},
+    ]
+    PORTS = {"4": [
+        {"port_id": 401, "ifName": "p1", "ifAlias": "Uplink", "ifOperStatus": "up"},
+        {"port_id": 402, "ifName": "p2", "ifAlias": "Anlage 3", "ifOperStatus": "up"},
+        {"port_id": 403, "ifName": "p3", "ifAlias": "", "ifOperStatus": "up"},
+        {"port_id": 404, "ifName": "p4", "ifAlias": "", "ifOperStatus": "down"},
+    ]}
+    FDB = {"4": [
+        {"port_id": 401, "mac_address": "000c29aaaa01"},
+        {"port_id": 401, "mac_address": "000c29aaaa02"},
+        {"port_id": 402, "mac_address": "000c29bbbb01"},
+        {"port_id": 403, "mac_address": "000c29cccc01"},
+    ]}
+
+    async def links(self, cfg):
+        return self.LINKS
+
+    async def device_index(self, cfg):
+        return {d["hostname"]: d for d in self.DEVICES.values()}
+
+    async def device(self, cfg, device_id):
+        return self.DEVICES[str(device_id)]
+
+    async def device_ports(self, cfg, device_id):
+        return self.PORTS[str(device_id)]
+
+    async def device_fdb(self, cfg, device_id):
+        return self.FDB[str(device_id)]
+
+    async def neighbours(self, cfg):
+        # Port 401 ist der Uplink zu dist-a (überwacht), 403 hängt an einem PC.
+        return {401: {"label": "dist-a / p26", "monitored": True, "device_id": 2},
+                403: {"label": "irgendein-pc", "monitored": False, "device_id": None}}
+
+
+async def test_infra_view_uses_lldp_between_monitored_devices(inventory, prefixes):
+    from diagram import physical
+    warn: list[str] = []
+    m = await physical.infra_model(FakeLnms(), {}, warn)
+    assert set(m["nodes"]) == {"1", "2", "3", "4", "9"}
+    assert len(m["edges"]) == 4 and not warn        # der PC-Nachbar zählt nicht
+    ports = {tuple(sorted(p)) for e in m["edges"] for p in e["ports"]}
+    assert ("Gi1/0/1", "p25") in ports
+
+    root = ET.fromstring(physical.render_infra(m))
+    labels = [o.get("label", "") for o in root.findall(".//object")]
+    assert any("core-01" in l for l in labels) and any("fw-edge" in l for l in labels)
+    edges = [c.get("value") for c in root.findall(".//mxCell") if c.get("edge") == "1"]
+    assert any("Gi1/0/1 ↔ p25" in (v or "") for v in edges)   # Ports in Knotenreihenfolge
+    # Der Core hat die meisten Nachbarn und steht deshalb ganz oben.
+    tops = {o.get("label"): _geo(o.find("mxCell"))[1] for o in root.findall(".//object")}
+    core_y = next(y for l, y in tops.items() if "core-01" in l)
+    assert all(y >= core_y for l, y in tops.items() if l)
+    # Firewalls bekommen ein anderes Symbol als Switche.
+    styles = {o.get("label"): o.find("mxCell").get("style") for o in root.findall(".//object")}
+    fw = next(s for l, s in styles.items() if "fw-edge" in (l or ""))
+    assert "router" in fw and "#b85450" in fw
+
+
+async def test_switch_view_maps_devices_to_ports_via_mac(inventory, prefixes):
+    """„Die Zuordnung der Endgeräte erfolgt über die MAC Adressen, die an dem
+    Switch sichtbar sind" — und die IP kommt aus der IP↔MAC-Historie."""
+    from diagram import physical
+    warn: list[str] = []
+
+    async def arp(macs):
+        assert "000c29bbbb01" in macs
+        return {"000c29bbbb01": {"ip": "10.124.58.73", "name": None,
+                                 "last_seen": "2026-09-01T10:00:00+00:00"}}
+
+    m = await physical.switch_model(FakeLnms(), {}, 4, arp, warn)
+    by_name = {p["name"]: p for p in m["ports"]}
+    assert by_name["p1"]["uplink"] is True and by_name["p1"]["hosts"] == []
+    assert by_name["p2"]["hosts"][0]["ip"] == "10.124.58.73"
+    assert by_name["p2"]["hosts"][0]["mac_readable"] == "00:0c:29:bb:bb:01"
+    assert by_name["p4"]["hosts"] == [] and by_name["p4"]["up"] is False
+
+    root = ET.fromstring(physical.render_switch(m))
+    labels = [o.get("label", "") for o in root.findall(".//object")]
+    assert any("acc-1" in l and "4 Ports" in l for l in labels)
+    assert any("10.124.58.73" in l for l in labels)
+    # Uplink-Port anders eingefärbt als belegte und freie Ports.
+    styles = {o.get("label"): o.find("mxCell").get("style") for o in root.findall(".//object")}
+    assert "#e1d5e7" in styles["p1"] and "#d5e8d4" in styles["p2"] and "#ffffff" in styles["p4"]
+
+
+async def test_infra_view_without_lldp_says_so(inventory, prefixes):
+    from diagram import physical
+
+    class Empty(FakeLnms):
+        async def links(self, cfg):
+            return []
+
+    warn: list[str] = []
+    m = await physical.infra_model(Empty(), {}, warn)
+    assert m["nodes"] == {} and any("LLDP" in w for w in warn)
+    ET.fromstring(physical.render_infra(m))     # darf trotzdem eine Datei liefern

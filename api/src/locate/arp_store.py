@@ -138,6 +138,21 @@ class ArpStore:
                 str(net), limit)
         return [row_to_binding(r) for r in rows]
 
+    async def latest_by_macs(self, macs: list[str]) -> dict[str, dict]:
+        """MAC → jüngste bekannte Bindung, für viele MACs in EINER Abfrage.
+
+        Der Switch-Plan fragt nach hunderten MACs; einzeln wären das hunderte
+        Roundtrips für Daten, die in einer Zeile stehen.
+        """
+        clean = sorted({m for m in (normalize_mac(x) for x in macs) if m})
+        if not clean:
+            return {}
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT DISTINCT ON (mac) * FROM arp_history WHERE mac = ANY($1::text[]) "
+                "ORDER BY mac, last_seen DESC", clean)
+        return {r["mac"]: row_to_binding(r) for r in rows}
+
     async def purge(self, retention_days: int) -> int:
         """Bindungen löschen, die länger als `retention_days` nicht gesehen wurden."""
         if retention_days <= 0:

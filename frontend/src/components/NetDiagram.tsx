@@ -1,6 +1,6 @@
 import { Download, ExternalLink, Map, Play } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { buildDiagram, diagramScopes, type DiagramHosts, type DiagramResult, type DiagramScope, type DiagramScopes, type DiagramView } from '../api';
+import { buildDiagram, diagramScopes, diagramSwitches, type SwitchEntry, type DiagramHosts, type DiagramResult, type DiagramScope, type DiagramScopes, type DiagramView } from '../api';
 import { de } from '../i18n/de';
 
 // Netzplan als draw.io: Scope wählen, Datei bauen lassen, herunterladen.
@@ -32,6 +32,11 @@ export default function NetDiagram() {
   const [hosts, setHosts] = useState<DiagramHosts>('auto');
   const [expand, setExpand] = useState(false);
   const [view, setView] = useState<DiagramView>('struktur');
+  const [switches, setSwitches] = useState<SwitchEntry[]>([]);
+  const [switchId, setSwitchId] = useState('');
+  // Die physischen Sichten kommen aus LibreNMS und kennen weder Scope noch
+  // Detailstufe — die Felder dafür bleiben ausgeblendet.
+  const physical = view.startsWith('physisch');
   const [res, setRes] = useState<DiagramResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -44,6 +49,16 @@ export default function NetDiagram() {
     }).catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   }, []);
 
+  // Switch-Liste erst holen, wenn die Ansicht sie braucht — sie kostet einen
+  // LibreNMS-Aufruf und interessiert in den L3-Sichten niemanden.
+  useEffect(() => {
+    if (view !== 'physisch-l2' || switches.length > 0) return;
+    diagramSwitches().then((r) => {
+      setSwitches(r.switches);
+      if (r.switches.length > 0) setSwitchId((s) => s || r.switches[0].device_id);
+    }).catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+  }, [view, switches.length]);
+
   const vdoms = useMemo(() => scopes?.devices.find((d) => d.device === device)?.vdoms ?? [], [scopes, device]);
   useEffect(() => { if (vdoms.length > 0 && !vdoms.includes(vdom)) setVdom(vdoms[0]); }, [vdoms, vdom]);
 
@@ -52,7 +67,8 @@ export default function NetDiagram() {
     try {
       setRes(await buildDiagram(
         scope, scope === 'vdom' || scope === 'firewall' ? device : null,
-        scope === 'vdom' ? vdom : null, scope === 'site' ? site : null, hosts, expand, view));
+        scope === 'vdom' ? vdom : null, scope === 'site' ? site : null, hosts, expand, view,
+        view === 'physisch-l2' ? switchId : null));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally { setBusy(false); }
@@ -76,9 +92,11 @@ export default function NetDiagram() {
             onChange={(e) => setView(e.target.value as DiagramView)}>
             <option value="struktur">{de.diagram.viewStruktur}</option>
             <option value="logisch">{de.diagram.viewLogisch}</option>
+            <option value="physisch-l1">{de.diagram.viewPhysL1}</option>
+            <option value="physisch-l2">{de.diagram.viewPhysL2}</option>
           </select>
         </label>
-        <label className="flex flex-col gap-1">
+        <label className={`flex flex-col gap-1 ${physical ? 'hidden' : ''}`}>
           <span className="text-[11px] text-slate-500">{de.diagram.scope}</span>
           <select className="fwpt-input w-52" value={scope} onChange={(e) => setScope(e.target.value as DiagramScope)}>
             <option value="vdom">{de.diagram.scopeVdom}</option>
@@ -87,7 +105,7 @@ export default function NetDiagram() {
             <option value="global">{de.diagram.scopeGlobal}</option>
           </select>
         </label>
-        {(scope === 'vdom' || scope === 'firewall') && (
+        {!physical && (scope === 'vdom' || scope === 'firewall') && (
           <label className="flex flex-col gap-1">
             <span className="text-[11px] text-slate-500">{de.diagram.device}</span>
             <select className="fwpt-input w-44 font-mono" value={device} onChange={(e) => setDevice(e.target.value)}>
@@ -99,7 +117,7 @@ export default function NetDiagram() {
             </select>
           </label>
         )}
-        {scope === 'vdom' && (
+        {!physical && scope === 'vdom' && (
           <label className="flex flex-col gap-1">
             <span className="text-[11px] text-slate-500">{de.diagram.vdom}</span>
             <select className="fwpt-input w-32 font-mono" value={vdom} onChange={(e) => setVdom(e.target.value)}>
@@ -107,7 +125,7 @@ export default function NetDiagram() {
             </select>
           </label>
         )}
-        {scope === 'site' && (
+        {!physical && scope === 'site' && (
           <label className="flex flex-col gap-1">
             <span className="text-[11px] text-slate-500">{de.diagram.site}</span>
             <select className="fwpt-input w-52" value={site} onChange={(e) => setSite(e.target.value)}>
@@ -120,7 +138,20 @@ export default function NetDiagram() {
             </select>
           </label>
         )}
-        <label className={`flex flex-col gap-1 ${scope === 'global' ? 'hidden' : ''}`}>
+        {view === 'physisch-l2' && (
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-slate-500">{de.diagram.switchPick}</span>
+            <select className="fwpt-input w-64 font-mono" value={switchId}
+              onChange={(e) => setSwitchId(e.target.value)}>
+              {switches.map((s) => (
+                <option key={s.device_id} value={s.device_id} title={s.hardware ?? undefined}>
+                  {s.name}{s.ip ? ` — ${s.ip}` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <label className={`flex flex-col gap-1 ${physical || scope === 'global' ? 'hidden' : ''}`}>
           <span className="text-[11px] text-slate-500">{de.diagram.hosts}</span>
           <select className="fwpt-input w-44" value={hosts} onChange={(e) => setHosts(e.target.value as DiagramHosts)}>
             <option value="auto">{de.diagram.hostsAuto}</option>
@@ -130,21 +161,27 @@ export default function NetDiagram() {
           </select>
         </label>
         <label className={`flex items-center gap-1.5 pb-2 text-xs text-slate-300 ${
-          scope === 'global' || hosts === 'none' ? 'hidden' : ''}`} title={de.diagram.expandHint}>
+          physical || view === 'logisch' || scope === 'global' || hosts === 'none' ? 'hidden' : ''}`} title={de.diagram.expandHint}>
           <input type="checkbox" checked={expand} onChange={(e) => setExpand(e.target.checked)} />
           {de.diagram.expand}
         </label>
         <button type="button" className="fwpt-btn" onClick={build}
-          disabled={busy || (scope === 'site' ? !site : scope !== 'global' && !device)}>
+          disabled={busy || (view === 'physisch-l2' ? !switchId
+            : physical ? false : scope === 'site' ? !site : scope !== 'global' && !device)}>
           <Play size={14} /> {busy ? de.diagram.building : de.diagram.build}
         </button>
       </div>
       <p className="text-[11px] text-slate-600">
-        {view === 'logisch' ? de.diagram.viewLogischHint
+        {view === 'physisch-l1' ? de.diagram.viewPhysL1Hint
+          : view === 'physisch-l2' ? de.diagram.viewPhysL2Hint
+            : view === 'logisch' ? de.diagram.viewLogischHint
           : scope === 'global' ? de.diagram.globalHint
           : de.diagram.hostsHint.replace('{n}', String(scopes?.max_hosts ?? 1500))}
       </p>
-      {scope === 'site' && scopes?.sites.length === 0 && (
+      {view === 'physisch-l2' && switches.length === 0 && !err && (
+        <p className="text-sm text-amber-400">{de.diagram.noSwitches}</p>
+      )}
+      {!physical && scope === 'site' && scopes?.sites.length === 0 && (
         <p className="text-sm text-amber-400">{de.diagram.noSites}</p>
       )}
 

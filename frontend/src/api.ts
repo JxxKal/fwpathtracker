@@ -328,7 +328,7 @@ export interface DiagramScopes {
 }
 export type DiagramHosts = 'auto' | 'all' | 'netdev' | 'none';
 export type DiagramScope = 'vdom' | 'firewall' | 'site' | 'global';
-export type DiagramView = 'struktur' | 'logisch';
+export type DiagramView = 'struktur' | 'logisch' | 'physisch-l1' | 'physisch-l2';
 export interface DiagramResult {
   filename: string; xml: string; hosts_mode: DiagramHosts; warnings: string[];
   stats: { devices: number; vdoms: number; networks: number; hosts_found: number;
@@ -354,20 +354,32 @@ export async function diagramScopes(): Promise<DiagramScopes> {
   return request('/api/diagram/scopes');
 }
 export interface DrawioTest { ok: boolean; checked: boolean; status: number | null; looks_like_drawio: boolean; hint: string | null }
+export interface SwitchEntry { device_id: string; name: string; ip: string | null; hardware: string | null }
+export async function diagramSwitches(): Promise<{ switches: SwitchEntry[] }> {
+  if (isDemoMode()) {
+    return { switches: [
+      { device_id: '1', name: 'core-01', ip: '10.0.0.1', hardware: 'HP 5406' },
+      { device_id: '4', name: 'moxa-iks', ip: '10.0.0.4', hardware: 'MOXA IKS' },
+    ] };
+  }
+  return request('/api/diagram/switches');
+}
 export async function drawioTest(): Promise<DrawioTest> {
   if (isDemoMode()) return { ok: true, checked: true, status: 200, looks_like_drawio: true, hint: null };
   return request('/api/diagram/drawio/test', { method: 'POST' });
 }
 export async function buildDiagram(scope: DiagramScope, device: string | null, vdom: string | null,
   site: string | null, hosts: DiagramHosts, expandHosts = false,
-  view: DiagramView = 'struktur'): Promise<DiagramResult> {
+  view: DiagramView = 'struktur', switchId: string | null = null): Promise<DiagramResult> {
   if (isDemoMode()) {
     const xml = '<?xml version="1.0" encoding="UTF-8"?>\n<mxfile host="A38"><diagram name="Demo" id="demo"><mxGraphModel><root>'
       + '<mxCell id="0"/><mxCell id="1" parent="0"/>'
       + '<object id="c2" label="fw-a"><mxCell style="swimlane" vertex="1" parent="1"><mxGeometry x="40" y="40" width="300" height="200" as="geometry"/></mxCell></object>'
       + '</root></mxGraphModel></diagram></mxfile>';
-    const stem = (view === 'logisch' ? 'logisch_' : '') + (scope === 'global' ? 'gesamt'
-      : scope === 'site' ? site : scope === 'firewall' ? device : `${device}_${vdom}`);
+    const stem = view === 'physisch-l1' ? 'physisch_infrastruktur'
+      : view === 'physisch-l2' ? 'physisch_switch'
+        : (view === 'logisch' ? 'logisch_' : '') + (scope === 'global' ? 'gesamt'
+          : scope === 'site' ? site : scope === 'firewall' ? device : `${device}_${vdom}`);
     const mode: DiagramHosts = scope === 'global' ? 'none' : hosts === 'auto' ? 'all' : hosts;
     return {
       filename: `A38_Netzplan_${stem}.drawio`, xml, hosts_mode: mode,
@@ -379,7 +391,8 @@ export async function buildDiagram(scope: DiagramScope, device: string | null, v
   }
   return request('/api/diagram', {
     method: 'POST',
-    body: JSON.stringify({ scope, device, vdom, site, hosts, expand_hosts: expandHosts, view }),
+    body: JSON.stringify({ scope, device, vdom, site, hosts, expand_hosts: expandHosts,
+      view, switch_id: switchId }),
   });
 }
 

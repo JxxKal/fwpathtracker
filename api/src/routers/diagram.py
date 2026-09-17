@@ -12,7 +12,8 @@ from pydantic import BaseModel, Field
 import httpx
 
 from deps import get_current_user, require_admin
-from diagram import drawio, linkstatus, logical, model as diagram_model, titleblock
+from diagram import (drawio, linkstatus, logical, model as diagram_model,
+                     physical, titleblock)
 from netguard import guard_egress_url
 from routers.config import read_config
 
@@ -60,7 +61,11 @@ class DiagramRequest(BaseModel):
     expand_hosts: bool = False
     # struktur = Container-Sicht (VDOMs, Kopplungen, Switche);
     # logisch   = Busleisten-Sicht nach der Hausvorgabe (ohne Switche, DIN A3 quer)
-    view: str = Field(default="struktur", pattern="^(struktur|logisch)$")
+    # struktur/logisch = L3-Sicht aus dem FMG-Inventar;
+    # physisch-l1/l2   = Kabel-Sicht aus LibreNMS (LLDP bzw. FDB)
+    view: str = Field(default="struktur",
+                      pattern="^(struktur|logisch|physisch-l1|physisch-l2)$")
+    switch_id: str | None = Field(default=None, max_length=32)
 
 
 def _site_detail(site: str | None, scores: dict[str, int]) -> str | None:
@@ -191,9 +196,83 @@ async def drawio_test(_admin: dict = Depends(require_admin)) -> dict:
             "looks_like_drawio": looks, "hint": None}
 
 
+@router.get("/switches")
+async def switches(request: Request, _user: dict = Depends(get_current_user)) -> dict:
+    """Überwachte Geräte aus LibreNMS — Auswahl für den Switch-Plan (Ebene 2)."""
+    cfg = await read_config("librenms")
+    if not cfg.get("base_url"):
+        raise HTTPException(400, "LibreNMS ist nicht konfiguriert.")
+    try:
+        index = await request.app.state.locate.librenms.device_index(cfg)
+    except Exception as exc:
+        raise HTTPException(502, f"LibreNMS nicht abrufbar: {exc}") from exc
+    seen: dict[str, dict] = {}
+    for dev in index.values():
+        did = str(dev.get("device_id") or "")
+        if did and did not in seen:
+            seen[did] = {"device_id": did,
+                         "name": dev.get("sysName") or dev.get("hostname") or did,
+                         "ip": dev.get("ip"), "hardware": dev.get("hardware")}
+    return {"switches": sorted(seen.values(), key=lambda d: d["name"].lower())}
+
+
+async def _physical(body: DiagramRequest, request: Request, user: dict) -> dict:
+    """Ebene 1 (LLDP-Topologie) und Ebene 2 (Geräte an einem Switch)."""
+    state = request.app.state
+    cfg = await read_config("librenms")
+    if not cfg.get("base_url"):
+        raise HTTPException(400, "LibreNMS ist nicht konfiguriert — die physische "
+                                 "Sicht kommt vollständig von dort.")
+    client = state.locate.librenms
+    warnings: list[str] = []
+
+    if body.view == "physisch-l1":
+        mdl = await physical.infra_model(client, cfg, warnings)
+        title = "Netzwerk physisch · Infrastruktur"
+        subtitle = (f"{len(mdl['nodes'])} Geräte · {len(mdl['edges'])} LLDP-Verbindungen")
+        stem, stats = "physisch_infrastruktur", {
+            "devices": len(mdl["nodes"]), "links": len(mdl["edges"])}
+        render = physical.render_infra
+    else:
+        if not body.switch_id:
+            raise HTTPException(422, "Für die Switch-Ansicht bitte ein Gerät wählen.")
+
+        async def arp_by_mac(macs: list[str]) -> dict:
+            try:
+                return await state.arp_store.latest_by_macs(macs)
+            except Exception as exc:
+                warnings.append(f"IP↔MAC-Historie nicht lesbar: {exc}")
+                return {}
+
+        mdl = await physical.switch_model(client, cfg, body.switch_id, arp_by_mac, warnings)
+        name = mdl["device"].get("sysName") or mdl["device"].get("hostname") or body.switch_id
+        attached = sum(len(p["hosts"]) for p in mdl["ports"])
+        title = f"Netzwerk physisch · {name}"
+        subtitle = f"{len(mdl['ports'])} Ports · {attached} angeschlossene Geräte"
+        stem = f"physisch_{name}"
+        stats = {"ports": len(mdl["ports"]), "hosts": attached,
+                 "uplinks": sum(1 for p in mdl["ports"] if p["uplink"])}
+        render = physical.render_switch
+
+    stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", stem).strip("_") or "physisch"
+    cfg_tb = await read_config("titleblock")
+    tb = None
+    if cfg_tb.get("enabled") is not False:
+        prefix = (cfg_tb.get("drawing_no_prefix") or "A38").strip()
+        tb = titleblock.info_from(
+            cfg_tb, title=title, subtitle=subtitle,
+            author=str(user.get("username") or ""),
+            drawing_no=f"{prefix}-{stem.upper()}",
+            note="Erzeugt von A38 aus LibreNMS (LLDP und FDB)")
+    return {"filename": f"A38_Netzplan_{stem}.drawio", "xml": render(mdl, tb),
+            "stats": stats, "hosts_mode": "none", "warnings": warnings}
+
+
 @router.post("")
 async def build(body: DiagramRequest, request: Request,
                 user: dict = Depends(get_current_user)) -> dict:
+    if body.view.startswith("physisch"):
+        return await _physical(body, request, user)
     state = request.app.state
     inv, prefixes = state.inventory, state.prefixes
     sites = await _sites()

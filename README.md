@@ -137,7 +137,15 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   Switche werden im Schriftfeld gezählt. Wird eine Geräteliste zu lang, steht
   je Geräteklasse ein Symbol mit Anzahl und Verweis auf eine **Tabellenseite**
   in derselben Datei. Druckformat DIN A3 quer.
-  Beide Darstellungen teilen Scope und Schriftfeld: VDOM, Firewall, **Standort**
+  **Physisch Ebene 1** zeichnet, wie die Netzwerkkomponenten untereinander
+  hängen: Knoten und Kanten aus den **LLDP**-Nachbarschaften in LibreNMS, mit
+  den Ports an beiden Enden, Ebenen per Breitensuche vom bestvernetzten Gerät
+  (Core oben, Zugang unten), Firewalls mit eigenem Symbol. Kanten zu nicht
+  überwachten Nachbarn bleiben draußen — Endgeräte gehören auf Ebene 2.
+  **Physisch Ebene 2** zeigt EINEN Switch als Port-Panel mit den Geräten, die
+  dort in der **FDB** stehen: Zuordnung über die MAC wie gefordert, IP aus der
+  IP↔MAC-Historie, Uplinks farblich getrennt von belegten und freien Ports.
+  Struktur und Logisch teilen Scope und Schriftfeld: VDOM, Firewall, **Standort**
   oder **alle Standorte**; Netze je
   Interface (VLAN, CIDR, Zone, iTop-Name), VDOM-Links, Routen zu fremden VDOMs
   als Nachbarn (Overlay/Transit — die WAN-Seite), Default-Route, Switches per
