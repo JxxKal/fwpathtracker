@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 import httpx
 
 from deps import get_current_user, require_admin
-from diagram import drawio, model as diagram_model, titleblock
+from diagram import drawio, linkstatus, model as diagram_model, titleblock
 from netguard import guard_egress_url
 from routers.config import read_config
 
@@ -133,8 +133,7 @@ async def _title_block(mdl: dict, stem: str, user: dict) -> dict | None:
 
     parts = [f"Scope {_SCOPE_LABEL.get(sc['scope'], sc['scope'])}",
              n(st["devices"], "Firewall", "Firewalls"), n(st["vdoms"], "VDOM", "VDOMs"),
-             n(st["networks"], "Netz", "Netze")
-             + (f" ({st['networks_off']} abgeschaltet)" if st.get("networks_off") else "")]
+             n(st["networks"], "Netz", "Netze") + _net_note(st)]
     if mdl["hosts_mode"] != "none":
         parts.append(n(st["hosts_shown"], "Host", "Hosts"))
     prefix = (cfg.get("drawing_no_prefix") or "A38").strip()
@@ -148,6 +147,15 @@ async def _title_block(mdl: dict, stem: str, user: dict) -> dict | None:
 
 _SCOPE_LABEL = {"vdom": "VDOM", "firewall": "Firewall", "site": "Standort",
                 "global": "gesamt"}
+
+
+def _net_note(st: dict) -> str:
+    bits = []
+    if st.get("networks_off"):
+        bits.append(f"{st['networks_off']} abgeschaltet")
+    if st.get("networks_link_down"):
+        bits.append(f"{st['networks_link_down']} ohne Link")
+    return f" ({', '.join(bits)})" if bits else ""
 
 
 @router.post("/drawio/test")
@@ -229,10 +237,21 @@ async def build(body: DiagramRequest, request: Request,
     async def arp(cidr: str) -> list[dict]:
         return await state.arp_store.in_network(cidr)
 
+    # Link-Status live holen, solange Netze gezeichnet werden. Der Gesamtplan
+    # zeigt keine Netze — dort wäre es nur Last ohne Nutzen.
+    links: dict = {}
+    if body.scope != "global":
+        links = await linkstatus.collect(targets, inv, await read_config("fmg"),
+                                         state.cfg, warnings)
+        if not links:
+            warnings.append("Link-Status nicht ermittelbar — gezeichnet wird nach "
+                            "Konfiguration; ein Interface ohne Kabel sieht dann aktiv aus.")
+
     try:
         mdl = await diagram_model.build(
             inv, prefixes, scope=body.scope, device=body.device, vdom=body.vdom,
-            site=body.site, hosts=body.hosts, sites=sites, itop_subnets=itop_subnets,
+            site=body.site, hosts=body.hosts, sites=sites, link_status=links,
+            itop_subnets=itop_subnets,
             itop_hosts=itop_hosts, itop_addresses=itop_addresses, arp=arp, librenms=librenms,
             librenms_cfg=librenms_cfg if librenms else None, librenms_devices=librenms_devices,
         )

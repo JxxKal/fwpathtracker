@@ -468,3 +468,56 @@ def test_nested_supernets_do_not_let_the_bigger_range_win():
     sup = _supernets(sites)
     assert site_scores(inv, "EUGERN1", ["root"], sup) == {"Gas Nord": 3}
     assert site_of_device(inv, inv.build_prefix_table(), "EUGERN1", sup) == "Gas Nord"
+
+
+LINKS = {("fw-a", "root"): {"lan1": {"link": True}, "lan2": {"link": False},
+                            "wan": {"link": None}}}
+
+
+async def test_link_down_is_its_own_state_next_to_shutdown(inventory, prefixes):
+    """Die Konfiguration kennt nur 'set status up|down'. Ob ein Kabel steckt,
+    ist Laufzeitzustand — und ein Plan, der ein totes Interface wie ein
+    lebendiges zeichnet, behauptet etwas Falsches."""
+    m = await _build(inventory, prefixes, link_status=LINKS)
+    nets = {n["cidr"]: n for n in m["vdoms"][0]["networks"]}
+    assert nets["10.1.1.0/24"]["link"] is True      # aktiv
+    assert nets["10.1.2.0/24"]["link"] is False     # Kabel ab
+    assert nets["203.0.113.0/30"]["link"] is None   # nicht ermittelbar
+    assert nets["10.1.3.0/24"]["enabled"] is False  # shutdown, davon unabhängig
+    assert m["stats"]["networks_link_down"] == 1 and m["stats"]["networks_off"] == 1
+    # Reihenfolge: aktiv, dann ohne Link, dann abgeschaltet.
+    order = [(n["enabled"], n["link"] is not False) for n in m["vdoms"][0]["networks"]]
+    assert order == sorted(order, key=lambda t: (not t[0], not t[1]))
+
+    root = ET.fromstring(drawio.render(m))
+    def box(cidr):
+        return next(o for o in root.findall(".//object") if cidr in o.get("label", ""))
+    down, off, up = box("10.1.2.0/24"), box("10.1.3.0/24"), box("10.1.1.0/24")
+    assert "Link down" in down.get("label") and "fillColor=#fff2cc" in down.find("mxCell").get("style")
+    assert "abgeschaltet" in off.get("label") and "fillColor=#ededed" in off.find("mxCell").get("style")
+    assert "Link down" not in up.get("label") and "fillColor=#d5e8d4" in up.find("mxCell").get("style")
+    assert "Link down" in down.get("tooltip")
+
+
+async def test_unknown_link_state_is_not_treated_as_up_or_down(inventory, prefixes):
+    """Ohne Antwort vom Gerät wird nach Konfiguration gezeichnet — aber nichts
+    als 'ohne Link' behauptet, was niemand geprüft hat."""
+    m = await _build(inventory, prefixes)          # gar kein link_status
+    assert all(n["link"] is None for n in m["vdoms"][0]["networks"])
+    assert m["stats"]["networks_link_down"] == 0
+    assert "Link down" not in drawio.render(m)
+
+
+def test_link_status_parsing_handles_both_fortios_shapes():
+    from diagram import linkstatus
+    as_list = [{"name": "wan2", "link": False, "status": "up"},
+               {"name": "lan1", "link": True, "status": "up"},
+               {"kaputt": 1}]
+    as_dict = {"wan2": {"link": 0, "status": "up"}, "lan1": {"link": 1, "status": "up"}}
+    for results in (as_list, as_dict):
+        got = linkstatus.parse(results)
+        assert got["wan2"]["link"] is False and got["lan1"]["link"] is True
+    # Unbekannte Kodierung bleibt unbekannt, statt 'up' zu raten.
+    assert linkstatus.parse([{"name": "x", "link": "vielleicht"}])["x"]["link"] is None
+    assert linkstatus.parse([{"name": "y"}])["y"]["link"] is None
+    assert linkstatus.parse(None) == {}

@@ -156,7 +156,8 @@ def scope_vdoms(inv: Inventory, scope: str, device: str | None, vdom: str | None
     return [(device, vdom)]
 
 
-def _networks(inv: Inventory, device: str, vdom: str, itop_subnets: list[dict]) -> list[dict]:
+def _networks(inv: Inventory, device: str, vdom: str, itop_subnets: list[dict],
+              link_status: dict | None = None) -> list[dict]:
     """Netze des VDOMs mit L3-Fakten und iTop-Name — abgeschaltete Interfaces
     ausdrücklich mit, als solche markiert.
 
@@ -168,6 +169,7 @@ def _networks(inv: Inventory, device: str, vdom: str, itop_subnets: list[dict]) 
     fehlt. Die VLAN-Übersicht hält es aus demselben Grund genauso.
     """
     by_cidr = {s["cidr"]: s for s in itop_subnets}
+    links = (link_status or {}).get((device, vdom)) or {}
     out: list[dict] = []
     for intf in (inv.interfaces.get(device) or {}).values():
         if intf["vdom"] != vdom:
@@ -186,12 +188,17 @@ def _networks(inv: Inventory, device: str, vdom: str, itop_subnets: list[dict]) 
                 "alias": facts["alias"], "description": facts["description"],
                 "type": intf.get("type"),
                 "enabled": bool(intf.get("enabled", True)),
+                # None = nicht ermittelbar (FMG nicht erreichbar, Gerät offline).
+                # Das ist ausdrücklich NICHT dasselbe wie "up".
+                "link": (links.get(intf["name"]) or {}).get("link"),
                 "itop_name": (it or {}).get("name") or None,
                 "itop_gateway": (it or {}).get("gateway"),
                 "hosts": [], "host_count": 0, "hosts_truncated": False,
             })
-    # Abgeschaltete ans Ende: der Plan liest sich von aktiv nach stillgelegt.
-    out.sort(key=lambda n: (not n["enabled"], n["vlan"] is None, n["vlan"] or 0, n["cidr"]))
+    # Reihenfolge: aktiv, dann Link down, dann abgeschaltet — der Plan liest
+    # sich von lebendig nach stillgelegt.
+    out.sort(key=lambda n: (not n["enabled"], n["link"] is False,
+                            n["vlan"] is None, n["vlan"] or 0, n["cidr"]))
     return out
 
 
@@ -368,6 +375,7 @@ async def _switches(devices: list[str], librenms, librenms_cfg: dict | None) -> 
 async def build(inv: Inventory, prefixes: PrefixTable, *, scope: str,
                 device: str | None = None, vdom: str | None = None, site: str | None = None,
                 hosts: str = "auto", sites: list[dict] | None = None,
+                link_status: dict | None = None,
                 itop_subnets: list[dict] | None = None, itop_hosts: list[dict] | None = None,
                 itop_addresses: dict[str, dict] | None = None, arp: ArpLookup | None = None,
                 librenms=None, librenms_cfg: dict | None = None,
@@ -387,11 +395,13 @@ async def build(inv: Inventory, prefixes: PrefixTable, *, scope: str,
     vdoms: list[dict] = []
     edges: list[dict] = []
     for d, v in targets:
-        all_nets = _networks(inv, d, v, itop_subnets or [])
+        all_nets = _networks(inv, d, v, itop_subnets or [], link_status)
         nets = all_nets if with_networks else []
         vdoms.append({"id": vdom_key(d, v), "device": d, "vdom": v, "networks": nets,
                       "network_count": len(all_nets),
-                      "networks_off": sum(1 for n in all_nets if not n["enabled"])})
+                      "networks_off": sum(1 for n in all_nets if not n["enabled"]),
+                      "networks_link_down": sum(1 for n in all_nets
+                                                if n["enabled"] and n["link"] is False)})
         edges.extend(_neighbors(inv, prefixes, d, v, in_scope))
 
     # Hosts einsammeln, dann je nach Modus (und Menge) ausdünnen.
@@ -466,6 +476,7 @@ async def build(inv: Inventory, prefixes: PrefixTable, *, scope: str,
         "stats": {"devices": len(devices), "vdoms": len(vdoms),
                   "networks": sum(vd["network_count"] for vd in vdoms),
                   "networks_off": sum(vd["networks_off"] for vd in vdoms),
+                  "networks_link_down": sum(vd["networks_link_down"] for vd in vdoms),
                   "hosts_found": total, "hosts_shown": shown, "neighbors": len(neighbors),
                   "switches": len(switches), "sites": len([g for g in site_groups if g["name"]]),
                   "ha_clusters": sum(1 for d in devices if d.get("ha")),

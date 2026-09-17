@@ -70,6 +70,12 @@ STYLE: dict[str, str] = {
     "net-off": "swimlane;html=1;startSize=48;fontSize=10;align=left;spacingLeft=6;"
                "fillColor=#ededed;strokeColor=#999999;fontColor=#666666;dashed=1;"
                "collapsible=1;",
+    # Konfiguriert und eingeschaltet, aber ohne Link: kein Kabel, kein Gegenüber.
+    # Anderer Zustand als Shutdown, deshalb andere Farbe — bernstein wie die
+    # Warnungen im Tracker.
+    "net-down": "swimlane;html=1;startSize=48;fontSize=10;align=left;spacingLeft=6;"
+                "fillColor=#fff2cc;strokeColor=#d6b656;fontColor=#7a5c00;dashed=1;"
+                "collapsible=1;",
     # Symbole aus der draw.io-Bibliothek „Network" (mxgraph.networks.*) — sie
     # sind Teil der Web-App, funktionieren also auch in der Offline-Instanz.
     # Host-Zeile: kleines Symbol, Label rechts daneben.
@@ -195,13 +201,17 @@ def _net_label(net: dict) -> str:
     name = _esc(head or net["interface"])
     if not net.get("enabled", True):
         name += " <span style='font-weight:normal'>· abgeschaltet</span>"
+    elif net.get("link") is False:
+        name += " <span style='font-weight:normal'>· Link down</span>"
     return (f"<b>{name}</b><br>"
             f"{_esc(net['cidr'])} · GW {_esc(net['fw_ip'])}<br>{_esc(tail)}")
 
 
 def _net_tooltip(net: dict) -> str:
     rows = [("Interface", net["interface"]),
-            ("Status", "abgeschaltet (shutdown)" if not net.get("enabled", True) else None),
+            ("Status", "abgeschaltet (shutdown)" if not net.get("enabled", True)
+             else "Link down (konfiguriert, aber kein Link)" if net.get("link") is False
+             else None),
             ("Netz", net["cidr"]), ("Firewall-IP", net["fw_ip"]),
             ("VLAN", net.get("vlan")), ("Zone", net.get("zone")), ("Alias", net.get("alias")),
             ("Beschreibung", net.get("description")), ("iTop-Subnetz", net.get("itop_name")),
@@ -317,7 +327,12 @@ def _draw_vdom(doc: _Doc, vd: dict, parent: str, x: float, y: float,
                        tooltip=f"VDOM {vd['id']} · {vd['network_count']} Netze")
     cell_of[vd["id"]] = vd_id
     for net, nx, ny, nh, collapsed, full, short in nets:
-        style = STYLE["net"] if net.get("enabled", True) else STYLE["net-off"]
+        if not net.get("enabled", True):
+            style = STYLE["net-off"]
+        elif net.get("link") is False:
+            style = STYLE["net-down"]
+        else:
+            style = STYLE["net"]
         net_id = doc.vertex(_net_label(net), style, nx, ny, NET_W, nh, parent=vd_id,
                             tooltip=_net_tooltip(net), collapsed=collapsed,
                             alt=(NET_W, full if collapsed else short))

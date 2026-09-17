@@ -166,6 +166,13 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   sortiert: ein Netzplan dokumentiert den konfigurierten Bestand, und ein
   stillgelegtes Segment wegzulassen hieße, dass der Plan der Firewall-Config
   widerspricht. Für die Pfad-Engine zählt es weiterhin **nicht** als connected.
+  Davon zu trennen ist der **Link-Status**: `set status up` sagt nichts darüber,
+  ob ein Kabel steckt. Das ist Laufzeitzustand und steht in keinem Snapshot —
+  A38 holt ihn beim Erzeugen live (ein Monitor-Aufruf je VDOM im Scope,
+  parallel) und zeichnet Interfaces ohne Link bernsteinfarben als *Link down*.
+  Ist der Zustand nicht ermittelbar (FMG/Gerät nicht erreichbar), bleibt er
+  **unbekannt** statt „up" — die Zeichnung sagt das dann in einer Warnung.
+  Netze werden nach *aktiv · ohne Link · abgeschaltet* sortiert.
   **Firewalls im HA-Cluster** bekommen ein Abzeichen (`HA A-P · 2 Knoten`) und
   einen kräftigeren Rahmen; der Tooltip nennt Gruppe, Mitglieder, Rollen,
   Seriennummern und Status (aus `dvmdb/device`, kein zusätzlicher Sync nötig).
