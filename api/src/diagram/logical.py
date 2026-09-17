@@ -23,6 +23,7 @@ from __future__ import annotations
 import ipaddress
 
 from diagram import titleblock
+from diagram.labels import common_prefix, short_ip, strip_prefix
 from diagram.mx import A3_LANDSCAPE, Doc, esc
 
 # Farben je Netz, in dieser Reihenfolge durchgereicht. Gewählt nach gut
@@ -76,18 +77,6 @@ STENCILS = {"server": "mxgraph.networks.server", "pc": "mxgraph.networks.pc",
 CLASS_LABEL = {"server": "Server", "pc": "Endgerät", "switch": "Netzwerkgerät"}
 
 
-def short_ip(ip: str, cidr: str) -> str:
-    """IP auf die im Netz signifikanten Stellen kürzen: im /24 bleibt `.73`,
-    im /16 `.58.73`. Das ist die Abkürzung, die die Anforderung verlangt —
-    sie hält die Zeichnung lesbar, ohne mehrdeutig zu werden."""
-    try:
-        net = ipaddress.IPv4Network(cidr)
-    except ValueError:
-        return ip
-    keep = max(1, min(4, (32 - net.prefixlen + 7) // 8))
-    return "." + ".".join(ip.split(".")[-keep:])
-
-
 def host_class(h: dict) -> str:
     kind = (h.get("kind") or "").lower()
     if kind in ("networkdevice", "switch"):
@@ -122,34 +111,8 @@ def _bar_label(net: dict) -> str:
     return esc(" · ".join(bits) + tail)
 
 
-def common_prefix(names: list[str]) -> str:
-    """Gemeinsames Namenspräfix eines Netzes, am Trennzeichen abgeschnitten.
-
-    Gerätenamen im Feld sind gebaut wie WD-OT-L3-SVO3036: Standort, Rolle,
-    Ebene, Gerät. In einem Netz ist alles bis auf den letzten Teil gleich —
-    ausgeschrieben kostet das die Lesbarkeit und bringt nichts. Der Präfix
-    wandert einmal an die Leiste, die Geräte tragen nur noch ihren Rest.
-    """
-    real = [n for n in names if n]
-    if len(real) < 3:
-        return ""
-    prefix = real[0]
-    for name in real[1:]:
-        while prefix and not name.upper().startswith(prefix.upper()):
-            prefix = prefix[:-1]
-        if not prefix:
-            return ""
-    cut = max(prefix.rfind(c) for c in "-_.")
-    prefix = prefix[:cut + 1] if cut > 0 else ""
-    if len(prefix) < 4 or any(len(n) <= len(prefix) for n in real):
-        return ""
-    return prefix
-
-
 def _host_label(h: dict, cidr: str, prefix: str = "") -> str:
-    name = h.get("name") or ""
-    if prefix and name.upper().startswith(prefix.upper()):
-        name = name[len(prefix):]
+    name = strip_prefix(h.get("name") or "", prefix)
     short = short_ip(h["ip"], cidr)
     return f"{esc(name)}<br>{esc(short)}" if name else f"<b>{esc(short)}</b>"
 

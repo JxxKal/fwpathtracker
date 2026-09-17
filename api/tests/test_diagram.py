@@ -734,7 +734,32 @@ async def test_infra_view_uses_lldp_between_monitored_devices(inventory, prefixe
     # Firewalls bekommen ein anderes Symbol als Switche.
     styles = {o.get("label"): o.find("mxCell").get("style") for o in root.findall(".//object")}
     fw = next(s for l, s in styles.items() if "fw-edge" in (l or ""))
-    assert "router" in fw and "#b85450" in fw
+    assert "networks.firewall" in fw and "#b85450" in fw
+    core = next(s for l, s in styles.items() if "core-01" in (l or ""))
+    assert "switches" in core
+
+
+def test_port_prefix_keeps_the_module_when_there_are_several():
+    """Ein Chassis mit mehreren Modulen darf die Modulnummer nicht verlieren —
+    gekürzt wird nur, was wirklich allen gemeinsam ist."""
+    from diagram.labels import common_prefix, strip_prefix
+    names = ["Ten-GigabitEthernet1/0/1", "Ten-GigabitEthernet1/0/2",
+             "Ten-GigabitEthernet2/0/1"]
+    prefix = common_prefix(names)
+    assert prefix == "Ten-GigabitEthernet"
+    assert [strip_prefix(n, prefix) for n in names] == ["1/0/1", "1/0/2", "2/0/1"]
+
+
+def test_device_shape_follows_vendor_and_role():
+    """Ein modellgenaues Faceplate gibt draw.io nicht her — aber die Klasse
+    (Firewall, Layer-3-Switch, Access-Switch, AP) ist ablesbar."""
+    from diagram.physical import device_shape
+    assert device_shape({"os": "fortios"})[0].endswith("networks.firewall")
+    assert device_shape({"hardware": "Juniper MX"})[0].endswith("networks.router")
+    assert device_shape({"hardware": "Cisco Catalyst 9300"})[0].endswith("layer_3_switch")
+    assert device_shape({"sysDescr": "Aruba AP-515 access point"})[0].endswith("wireless_hub")
+    assert device_shape({"hardware": "MOXA IKS-6728"})[0].endswith("workgroup_switch")
+    assert device_shape({})[0].endswith("workgroup_switch")
 
 
 async def test_switch_view_maps_devices_to_ports_via_mac(inventory, prefixes):
@@ -762,6 +787,68 @@ async def test_switch_view_maps_devices_to_ports_via_mac(inventory, prefixes):
     # Uplink-Port anders eingefärbt als belegte und freie Ports.
     styles = {o.get("label"): o.find("mxCell").get("style") for o in root.findall(".//object")}
     assert "#e1d5e7" in styles["p1"] and "#d5e8d4" in styles["p2"] and "#ffffff" in styles["p4"]
+
+
+class LongPortLnms(FakeLnms):
+    """Wie im Feld: lange Portnamen und ein Haufen logischer Interfaces."""
+
+    PORTS = {"4": (
+        [{"port_id": 400 + i, "ifName": f"Ten-GigabitEthernet1/0/{i}", "ifAlias": "",
+          "ifOperStatus": "up"} for i in range(1, 25)]
+        + [{"port_id": 500, "ifName": "Bridge-Aggregation1", "ifOperStatus": "up"},
+           {"port_id": 501, "ifName": "Vlan-interface100", "ifOperStatus": "up"},
+           {"port_id": 502, "ifName": "NULL0", "ifOperStatus": "up"},
+           {"port_id": 503, "ifName": "InLoopBack0", "ifOperStatus": "up"}])}
+    FDB = {"4": [{"port_id": 400 + i, "mac_address": f"000c29aa00{i:02x}"}
+                 for i in range(2, 12)]}
+
+    async def neighbours(self, cfg):
+        return {401: {"label": "core / Gi1/0/1", "monitored": True, "device_id": 1}}
+
+
+async def test_long_port_names_are_shortened_and_logical_ports_left_out(inventory, prefixes):
+    """„Ten-GigabitEthernet1/0/24" ist auf einem Port-Kästchen nicht zu lesen,
+    und Bridge-Aggregation oder Vlan-interface haben gar keine Buchse."""
+    from diagram import physical
+
+    async def arp(macs):
+        return {}
+
+    warn: list[str] = []
+    m = await physical.switch_model(LongPortLnms(), {}, 4, arp, warn)
+    assert len(m["ports"]) == 24 and m["logical"] == 4
+    root = ET.fromstring(physical.render_switch(m))
+    labels = [o.get("label", "") for o in root.findall(".//object")]
+    # Alle Ports auf einem Modul: übrig bleibt die Portnummer — wie auf der
+    # echten Frontblende. Das Präfix steht einmal am Panel.
+    assert "24" in labels and "Ten-GigabitEthernet1/0/24" not in labels
+    head = next(l for l in labels if "acc-1" in l)
+    assert "Ten-GigabitEthernet1/0/" in head and "4 logische Interfaces" in head
+    # Die Geräte stehen auf gleichmäßigen Plätzen, nicht übereinander.
+    icons = [_geo(o.find("mxCell")) for o in root.findall(".//object")
+             if "networks.pc" in (o.find("mxCell").get("style") or "")]
+    xs = sorted(g[0] for g in icons)
+    assert len(xs) == 10
+    assert all(b - a >= 120 for a, b in zip(xs, xs[1:]) if abs(b - a) > 1)
+
+
+async def test_switch_view_resolves_names_via_dns(inventory, prefixes):
+    """Ohne Namen trägt ein Gerät nur seine MAC — die sagt beim Lesen niemandem
+    etwas. A38 kann Reverse-DNS, also wird es auch hier benutzt."""
+    from diagram import physical
+
+    async def arp(macs):
+        return {"000c29bbbb01": {"ip": "10.124.58.73", "name": None}}
+
+    async def dns(ip):
+        return "hmi-panel-3.op-tech.com" if ip == "10.124.58.73" else None
+
+    m = await physical.switch_model(FakeLnms(), {}, 4, arp, [], dns=dns)
+    host = next(h for p in m["ports"] for h in p["hosts"] if h.get("ip"))
+    assert host["name"] == "hmi-panel-3.op-tech.com"
+    labels = [o.get("label", "") for o in ET.fromstring(
+        physical.render_switch(m)).findall(".//object")]
+    assert any("hmi-panel-3" in l and "10.124.58.73" in l for l in labels)
 
 
 async def test_infra_view_without_lldp_says_so(inventory, prefixes):

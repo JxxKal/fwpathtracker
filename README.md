@@ -148,7 +148,17 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   überwachten Nachbarn bleiben draußen — Endgeräte gehören auf Ebene 2.
   **Physisch Ebene 2** zeigt EINEN Switch als Port-Panel mit den Geräten, die
   dort in der **FDB** stehen: Zuordnung über die MAC wie gefordert, IP aus der
-  IP↔MAC-Historie, Uplinks farblich getrennt von belegten und freien Ports.
+  IP↔MAC-Historie, Name aus Reverse-DNS, Uplinks farblich getrennt von
+  belegten und freien Ports. Portnamen werden um ihr gemeinsames Präfix
+  gekürzt (`Ten-GigabitEthernet1/0/24` → `24`, bei mehreren Modulen bleibt
+  `1/0/24`); das Präfix steht einmal am Panelkopf. Logische Interfaces
+  (Bridge-Aggregation, Vlan-interface, Loopback …) haben keine Buchse und
+  gehören nicht aufs Panel — sie werden gezählt, nicht gezeichnet. Die Geräte
+  liegen auf gleichmäßigen Plätzen über und unter dem Panel statt an der
+  Port-Position; nebeneinander liegende Ports sind 62 px auseinander, eine
+  Beschriftung braucht 150. Das Symbol richtet sich nach Hersteller und Rolle
+  (Firewall, Layer-3-Switch, Access-Switch, Access Point) — eine
+  Klassenaussage, kein modellgenaues Faceplate; das Modell steht daneben.
   Struktur und Logisch teilen Scope und Schriftfeld: VDOM, Firewall, **Standort**
   oder **alle Standorte**; Netze je
   Interface (VLAN, CIDR, Zone, iTop-Name), VDOM-Links, Routen zu fremden VDOMs

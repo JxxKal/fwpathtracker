@@ -245,14 +245,23 @@ async def _physical(body: DiagramRequest, request: Request, user: dict) -> dict:
                 warnings.append(f"IP↔MAC-Historie nicht lesbar: {exc}")
                 return {}
 
-        mdl = await physical.switch_model(client, cfg, body.switch_id, arp_by_mac, warnings)
+        dns_cfg = await read_config("dns")
+
+        async def dns(ip: str) -> str | None:
+            hit = await dns_source.resolve_ip(dns_cfg, ip, timeout_s=1.5)
+            return hit["name"] if hit else None
+
+        mdl = await physical.switch_model(
+            client, cfg, body.switch_id, arp_by_mac, warnings,
+            dns=dns if (dns_cfg.get("resolvers") or dns_cfg.get("search_domains")) else None)
         name = mdl["device"].get("sysName") or mdl["device"].get("hostname") or body.switch_id
         attached = sum(len(p["hosts"]) for p in mdl["ports"])
         title = f"Netzwerk physisch · {name}"
         subtitle = f"{len(mdl['ports'])} Ports · {attached} angeschlossene Geräte"
         stem = f"physisch_{name}"
         stats = {"ports": len(mdl["ports"]), "hosts": attached,
-                 "uplinks": sum(1 for p in mdl["ports"] if p["uplink"])}
+                 "uplinks": sum(1 for p in mdl["ports"] if p["uplink"]),
+                 "logical": mdl.get("logical", 0)}
         render = physical.render_switch
 
     stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", stem).strip("_") or "physisch"
