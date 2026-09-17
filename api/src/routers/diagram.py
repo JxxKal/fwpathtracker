@@ -29,6 +29,19 @@ class DiagramRequest(BaseModel):
     expand_hosts: bool = False
 
 
+def _site_detail(site: str | None, scores: dict[str, int]) -> str | None:
+    """„Gas Nord · 7 von 9 Netzen · auch Hamburg (1)" — so ist sichtbar, worauf
+    die Zuordnung beruht und wo sie wackelt."""
+    total = sum(scores.values())
+    if not site or not total:
+        return None
+    others = sorted(((n, c) for n, c in scores.items() if n != site), key=lambda x: -x[1])
+    text = f"{site} · {scores.get(site, 0)} von {total} Netzen"
+    if others:
+        text += " · auch " + ", ".join(f"{n} ({c})" for n, c in others[:3])
+    return text
+
+
 async def _sites() -> list[dict]:
     """Standort-Supernetze aus den Einstellungen — dieselbe Quelle wie der
     Free-Subnet-Finder, damit ein Standort überall dasselbe bedeutet."""
@@ -59,9 +72,12 @@ async def scopes(request: Request, _user: dict = Depends(get_current_user)) -> d
     devices = []
     for d, info in sorted(inv.devices.items()):
         vdoms = list(info["vdoms"] or ["root"])
-        names = [diagram_model.site_of(inv, prefixes, d, v, supernets) for v in vdoms]
-        devices.append({"device": d, "adom": info["adom"], "vdoms": vdoms,
-                        "site": next((n for n in names if n), None)})
+        site = diagram_model.site_of_device(inv, prefixes, d, supernets)
+        devices.append({"device": d, "adom": info["adom"], "vdoms": vdoms, "site": site,
+                        # Begründung mitliefern: eine Standortzuordnung, die man
+                        # nicht nachvollziehen kann, merkt niemand, wenn sie falsch ist.
+                        "site_detail": _site_detail(
+                            site, diagram_model.site_scores(inv, d, vdoms, supernets))})
     # Nur Standorte anbieten, hinter denen auch ein VDOM steht — eine leere
     # Auswahl, die dann 422 wirft, ist keine Auswahl.
     used = {d["site"] for d in devices if d["site"]}

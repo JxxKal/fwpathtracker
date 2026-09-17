@@ -381,3 +381,77 @@ def test_ha_parsing_is_defensive_about_fmg_field_variants():
     # Unbrauchbare Einträge fliegen raus, statt alles zu kippen.
     messy = parse_ha({"ha_mode": 1, "ha_slave": ["kaputt", {"sn": "ohne-name"}, {"name": "ok"}]})
     assert [x["name"] for x in messy["members"]] == ["ok"]
+
+
+def _fw_rows(name: str, ips: list[str], vdom: str = "root") -> list[dict]:
+    from conftest import _row
+    return [
+        _row("device", name, {"name": name, "vdom": [{"name": vdom}]}),
+        _row("interface", name, [
+            {"name": f"port{i}", "ip": [ip, "255.255.255.0"], "vdom": [vdom]}
+            for i, ip in enumerate(ips, start=1)]),
+    ]
+
+
+# Feld-Fall: die EUGE*-Firewalls routen ihre Segmente in „Gas Nord", tragen
+# aber eine Management-Adresse aus dem Hamburger Bereich. Dessen Supernetz ist
+# enger geschnitten — nach der alten Regel („engstes Supernetz gewinnt") zog
+# diese EINE Adresse die Firewall nach Hamburg.
+FIELD_SITES = [{"name": "Gas Nord", "cidr": "10.180.16.0/20"},
+               {"name": "Hamburg", "cidr": "10.180.32.0/21"}]
+
+
+def test_site_follows_the_majority_of_locally_routed_segments():
+    from inventory.store import Inventory
+    from diagram.model import _supernets, site_of_device, site_scores
+    rows = _fw_rows("EUGESH1", ["10.180.17.1", "10.180.18.1", "10.180.19.1",
+                                "10.180.20.1", "10.180.32.9"])
+    inv = Inventory.build(rows)
+    sup = _supernets(FIELD_SITES)
+    assert site_scores(inv, "EUGESH1", ["root"], sup) == {"Gas Nord": 4, "Hamburg": 1}
+    assert site_of_device(inv, inv.build_prefix_table(), "EUGESH1", sup) == "Gas Nord"
+
+
+def test_site_tie_goes_to_the_narrower_supernet():
+    from inventory.store import Inventory
+    from diagram.model import _supernets, site_of_device
+    inv = Inventory.build(_fw_rows("xha002", ["10.180.17.1", "10.180.32.9"]))
+    assert site_of_device(inv, inv.build_prefix_table(), "xha002",
+                          _supernets(FIELD_SITES)) == "Hamburg"
+
+
+def test_site_counts_across_all_vdoms_of_a_device():
+    """Das Router-VDOM hält nur das Transfernetz, das Schutz-VDOM die
+    Standortsegmente — zusammen zählen, nicht das erste VDOM entscheiden lassen."""
+    from conftest import _row
+    from inventory.store import Inventory
+    from diagram.model import _supernets, site_of_device
+    rows = [
+        _row("device", "EUGEBA1", {"name": "EUGEBA1",
+                                   "vdom": [{"name": "Router"}, {"name": "prot"}]}),
+        _row("interface", "EUGEBA1", [
+            {"name": "wan", "ip": ["10.180.32.9", "255.255.255.252"], "vdom": ["Router"]},
+            {"name": "v1", "ip": ["10.180.17.1", "255.255.255.0"], "vdom": ["prot"]},
+            {"name": "v2", "ip": ["10.180.18.1", "255.255.255.0"], "vdom": ["prot"]},
+        ]),
+    ]
+    inv = Inventory.build(rows)
+    sup = _supernets(FIELD_SITES)
+    assert site_of_device(inv, inv.build_prefix_table(), "EUGEBA1", sup) == "Gas Nord"
+
+
+def test_site_override_from_settings_still_wins():
+    from inventory.store import Inventory
+    from diagram.model import _supernets, site_of_device
+    inv = Inventory.build(_fw_rows("xfk200", ["10.180.17.1", "10.180.18.1"]))
+    prefixes = inv.build_prefix_table(
+        [{"cidr": "10.180.17.0/24", "device": "xfk200", "vdom": "root", "name": "Sonderfall"}])
+    assert site_of_device(inv, prefixes, "xfk200", _supernets(FIELD_SITES)) == "Sonderfall"
+
+
+def test_site_detail_names_the_evidence_and_the_runner_up():
+    from routers.diagram import _site_detail
+    assert _site_detail("Gas Nord", {"Gas Nord": 7, "Hamburg": 1}) \
+        == "Gas Nord · 7 von 8 Netzen · auch Hamburg (1)"
+    assert _site_detail("Gas Nord", {"Gas Nord": 3}) == "Gas Nord · 3 von 3 Netzen"
+    assert _site_detail(None, {}) is None

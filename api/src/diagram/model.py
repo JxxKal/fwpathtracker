@@ -54,21 +54,60 @@ def _supernets(sites: list[dict]) -> list[tuple[str, ipaddress.IPv4Network]]:
     return out
 
 
+def _override(prefixes: PrefixTable, device: str, vdoms: list[str]) -> str | None:
+    for e in prefixes.entries:
+        if e.device == device and e.vdom in vdoms and e.site_name:
+            return e.site_name
+    return None
+
+
+def site_scores(inv: Inventory, device: str, vdoms: list[str],
+                supernets: list[tuple[str, ipaddress.IPv4Network]]) -> dict[str, int]:
+    """Standortname → Anzahl connected Netze des Geräts in dessen Supernetz.
+
+    Gezählt statt geraten: ein Gerät hat viele Netze, und einzelne davon
+    zeigen woandershin — eine Management-Adresse aus einem zentralen Bereich,
+    ein Transfernetz zum Nachbarstandort. Wer den ERSTEN Treffer nimmt, hängt
+    die Firewall an das falsche Haus (Feld-Fall: EUGE*-Firewalls landeten in
+    Hamburg statt Gas Nord). Zu Hause ist sie dort, wo die Mehrheit der
+    Segmente liegt, die sie lokal routet.
+    """
+    nets = [n for v in vdoms for n, _ in inv.connected_networks(device, v)]
+    out: dict[str, int] = {}
+    for name, sup in supernets:
+        hits = sum(1 for n in nets if n.subnet_of(sup))
+        if hits:
+            out[name] = out.get(name, 0) + hits
+    return out
+
+
+def _best_site(scores: dict[str, int],
+               supernets: list[tuple[str, ipaddress.IPv4Network]]) -> str | None:
+    if not scores:
+        return None
+    # Gleichstand: das engere Supernetz gewinnt — es ist die genauere Aussage.
+    depth = {name: max(s.prefixlen for n, s in supernets if n == name) for name in scores}
+    return max(scores, key=lambda n: (scores[n], depth[n]))
+
+
 def site_of(inv: Inventory, prefixes: PrefixTable, device: str, vdom: str,
             supernets: list[tuple[str, ipaddress.IPv4Network]]) -> str | None:
-    """Standort eines VDOMs: erst ein ausdrücklicher Site-Override aus den
-    Einstellungen, sonst das engste Standort-Supernetz, in dem eines seiner
-    connected Netze liegt. Ein VDOM ohne beides hat keinen Standort — das ist
-    eine Aussage, kein Fehler (Transit-/Lab-Geräte gibt es wirklich)."""
-    for e in prefixes.entries:
-        if e.device == device and e.vdom == vdom and e.site_name:
-            return e.site_name
-    best: tuple[str, ipaddress.IPv4Network] | None = None
-    nets = [n for n, _ in inv.connected_networks(device, vdom)]
-    for name, sup in supernets:
-        if any(n.subnet_of(sup) for n in nets) and (best is None or sup.prefixlen > best[1].prefixlen):
-            best = (name, sup)
-    return best[0] if best else None
+    """Standort EINES VDOMs: erst ein Site-Override aus den Einstellungen,
+    sonst der Standort mit den meisten connected Netzen dieses VDOMs. Ohne
+    beides hat das VDOM keinen Standort — eine Aussage, kein Fehler
+    (Transit-/Lab-Geräte gibt es wirklich)."""
+    return (_override(prefixes, device, [vdom])
+            or _best_site(site_scores(inv, device, [vdom], supernets), supernets))
+
+
+def site_of_device(inv: Inventory, prefixes: PrefixTable, device: str,
+                   supernets: list[tuple[str, ipaddress.IPv4Network]]) -> str | None:
+    """Standort des GANZEN Geräts — über alle VDOMs gezählt. Ein Router-VDOM
+    mit einem Transfernetz darf die Zuordnung nicht allein bestimmen, während
+    das Schutz-VDOM daneben die Standortsegmente hält."""
+    vdoms = (inv.devices.get(device) or {}).get("vdoms") or ["root"]
+    return (_override(prefixes, device, list(vdoms))
+            or _best_site(site_scores(inv, device, list(vdoms), supernets), supernets))
 
 
 def all_vdoms(inv: Inventory) -> list[tuple[str, str]]:
@@ -377,13 +416,10 @@ async def build(inv: Inventory, prefixes: PrefixTable, *, scope: str,
 
     # Geräte → Standorte gruppieren. Die Gruppen sind das Gerüst der Zeichnung:
     # Standort-Container > Firewall-Container > VDOM > Netz.
-    site_by_vdom = {vd["id"]: site_of(inv, prefixes, vd["device"], vd["vdom"], supernets)
-                    for vd in vdoms}
     devices: list[dict] = []
     for dev in scope_devices:
         dev_vdoms = [vd for vd in vdoms if vd["device"] == dev]
-        names = [site_by_vdom[vd["id"]] for vd in dev_vdoms if site_by_vdom[vd["id"]]]
-        devices.append({"device": dev, "site": names[0] if names else None,
+        devices.append({"device": dev, "site": site_of_device(inv, prefixes, dev, supernets),
                         "adom": inv.adom_of(dev), "vdoms": dev_vdoms,
                         "ha": (inv.devices.get(dev) or {}).get("ha"),
                         "switches": sw_by_device.get(dev, [])})
@@ -404,7 +440,7 @@ async def build(inv: Inventory, prefixes: PrefixTable, *, scope: str,
             neighbors.append({"id": nid, "kind": "default", "label": "Internet / Default-Route"})
         else:
             d, _, v = nid.partition("/")
-            nb_site = site_of(inv, prefixes, d, v, supernets) if d in inv.devices else None
+            nb_site = site_of_device(inv, prefixes, d, supernets) if d in inv.devices else None
             ha = (inv.devices.get(d) or {}).get("ha")
             label = nid + (f" ({nb_site})" if nb_site else "")
             neighbors.append({"id": nid, "kind": "vdom", "device": d, "vdom": v,

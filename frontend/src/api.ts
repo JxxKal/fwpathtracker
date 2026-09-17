@@ -321,7 +321,8 @@ export async function freeIps(cidr: string, want: number, start?: string, end?: 
 // ── Netzplan (draw.io) ────────────────────────────────────────────────────────
 
 export interface DiagramScopes {
-  devices: { device: string; adom: string; vdoms: string[]; site: string | null }[];
+  devices: { device: string; adom: string; vdoms: string[]; site: string | null;
+    site_detail: string | null }[];
   sites: { name: string; cidr: string; devices: string[] }[];
   max_hosts: number; drawio_url: string | null;
 }
@@ -338,8 +339,10 @@ export async function diagramScopes(): Promise<DiagramScopes> {
     return {
       max_hosts: 1500, drawio_url: 'http://drawio.example.net:8780',
       devices: [
-        { device: 'fw-a', adom: 'corp', vdoms: ['root', 'dmz'], site: 'Holstein' },
-        { device: 'fw-b', adom: 'corp', vdoms: ['root', 'prot'], site: 'Hamburg' },
+        { device: 'fw-a', adom: 'corp', vdoms: ['root', 'dmz'], site: 'Holstein',
+          site_detail: 'Holstein · 3 von 4 Netzen · auch Hamburg (1)' },
+        { device: 'fw-b', adom: 'corp', vdoms: ['root', 'prot'], site: 'Hamburg',
+          site_detail: 'Hamburg · 2 von 2 Netzen' },
       ],
       sites: [
         { name: 'Holstein', cidr: '10.180.0.0/20', devices: ['fw-a'] },

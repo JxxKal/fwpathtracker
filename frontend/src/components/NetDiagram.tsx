@@ -83,7 +83,9 @@ export default function NetDiagram() {
             <span className="text-[11px] text-slate-500">{de.diagram.device}</span>
             <select className="fwpt-input w-44 font-mono" value={device} onChange={(e) => setDevice(e.target.value)}>
               {(scopes?.devices ?? []).map((d) => (
-                <option key={d.device} value={d.device}>{d.device}{d.site ? ` — ${d.site}` : ''}</option>
+                <option key={d.device} value={d.device} title={d.site_detail ?? undefined}>
+                  {d.device}{d.site ? ` — ${d.site}` : ''}
+                </option>
               ))}
             </select>
           </label>

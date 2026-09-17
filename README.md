@@ -143,8 +143,15 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   gleichzeitig der Abgleich von FMG, iTop und LibreNMS. Herunterladen oder
   direkt in der eigenen draw.io-Instanz öffnen (s.u.).
   Der **Standort** ergibt sich aus den Standort-Supernetzen (Einstellungen,
-  dieselbe Quelle wie der Free-Subnet-Finder): ein VDOM gehört dorthin, wenn
-  eines seiner connected Netze im Supernetz liegt; ein Site-Override schlägt das.
+  dieselbe Quelle wie der Free-Subnet-Finder): eine Firewall gehört dorthin, wo
+  die **Mehrheit** der Netze liegt, die sie lokal routet — über alle ihre VDOMs
+  gezählt. Nicht der erste oder engste Treffer, denn einzelne Netze zeigen
+  woandershin (Management-Adresse aus einem zentralen Bereich, Transfernetz zum
+  Nachbarstandort) und würden die Firewall ans falsche Haus hängen. Bei
+  Gleichstand gewinnt das engere Supernetz; ein Site-Override aus den
+  Einstellungen schlägt alles. Die Geräteauswahl im Werkzeug zeigt die
+  Begründung als Tooltip („Gas Nord · 7 von 8 Netzen · auch Hamburg (1)"),
+  damit eine falsche Zuordnung auffällt statt still zu bleiben.
   Der **Gesamtplan** zeichnet Firewalls nach Standort gruppiert und ihre
   Kopplungen — ohne Netze und Hosts, weil bei Dutzenden Geräten nur die Frage
   „wer redet mit wem" lesbar bleibt.
