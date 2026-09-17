@@ -12,7 +12,10 @@
 #     ./scripts/standort-diagnose.sh
 #
 # Zugang: Default admin + ADMIN_PASSWORD aus .env. Sonst überschreiben:
-#     API=https://a38.example:8443 A38_USER=jan A38_PASS=… ./scripts/standort-diagnose.sh
+#     API=https://a38.example.com A38_USER=jan A38_PASS=… ./scripts/standort-diagnose.sh
+#
+# Hinweis: Das Frontend leitet http auf https um. Läuft A38 unter einem eigenen
+# Namen, diesen mit API= angeben — localhost trifft sonst die Weiterleitung.
 # ══════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
@@ -33,8 +36,11 @@ if [ -z "${A38_PASS:-}" ]; then
   [ -n "$A38_PASS" ] || { echo "ADMIN_PASSWORD steht nicht in $ENVFILE." >&2; exit 1; }
 fi
 
-CURL=(curl -sS --max-time 20)
-case "$API" in https://*) CURL+=(-k) ;; esac   # Self-signed im OT ist der Normalfall
+# -L: das Frontend-nginx leitet http auf https um (301) — ohne Folgen landet
+#     man auf der Weiterleitungsseite statt bei der API.
+# --post301/302: curl macht sonst aus dem POST des Logins ein GET.
+# -k: das Zertifikat im OT ist selbst ausgestellt.
+CURL=(curl -sS --max-time 20 -k -L --post301 --post302)
 
 # Zugangsdaten über die Umgebung an Python geben, nicht über die Kommandozeile:
 # ein Passwort mit Anführungszeichen oder $ zerlegt sonst das JSON — und in der
@@ -46,10 +52,18 @@ TOKEN=$(printf '%s' "$LOGIN" |
   python3 -c 'import sys,json
 try: print(json.load(sys.stdin).get("token",""))
 except Exception: print("")')
-[ -n "$TOKEN" ] || {
+if [ -z "$TOKEN" ]; then
   echo "Login an $API als '$A38_USER' fehlgeschlagen." >&2
-  echo "Antwort: ${LOGIN:-（leer — läuft die API dort?）}" >&2
-  exit 1; }
+  case "$LOGIN" in
+    *"<html"*|*"<HTML"*)
+      echo "Die Antwort war HTML, nicht JSON — die URL zeigt auf den Webserver," >&2
+      echo "nicht auf die API. Mit dem Hostnamen aufrufen, unter dem A38 läuft:" >&2
+      echo "    API=https://a38.example.com ./scripts/standort-diagnose.sh" >&2 ;;
+    "") echo "Keine Antwort — läuft der Stack auf diesem Host?" >&2 ;;
+    *)  echo "Antwort: $(printf '%s' "$LOGIN" | head -c 300)" >&2 ;;
+  esac
+  exit 1
+fi
 AUTH=(-H "Authorization: Bearer $TOKEN")
 
 echo "=== Standort-Supernetze"
