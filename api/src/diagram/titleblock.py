@@ -1,4 +1,4 @@
-"""Schriftfeld (Title Block) unten rechts in jeder erzeugten Zeichnung.
+"""Schriftfeld (Title Block) neben jeder erzeugten Zeichnung.
 
 Aufbau wie im Engineering-Schriftfeld, das im Haus verwendet wird:
 
@@ -11,6 +11,10 @@ Aufbau wie im Engineering-Schriftfeld, das im Haus verwendet wird:
     │                  │                ├───────────────────┬──────────┤
     │                  │                │ Zeichnungsnummer  │  Blatt   │
     └──────────────────┴────────────────┴───────────────────┴──────────┘
+
+Es steht RECHTS neben dem Plan, nicht darunter: Container wachsen beim
+Aufklappen nach unten, ein Schriftfeld auf festen Koordinaten läge dann
+mitten in der Hostliste. Die Breite ändert sich beim Aufklappen nicht.
 
 Was A38 selbst weiß, füllt A38 selbst: Titel und Untertitel aus dem Scope,
 Datum von heute, Autor aus dem angemeldeten Benutzer, Zeichnungsnummer aus
@@ -56,11 +60,18 @@ def _fmt_date(value: str | None = None) -> str:
     return value or date.today().strftime("%d.%m.%Y")
 
 
-def draw(doc, x: float, y: float, info: dict) -> None:
-    """Schriftfeld mit der linken oberen Ecke bei (x, y) zeichnen."""
+def draw(doc, x: float, y: float, info: dict) -> str:
+    """Schriftfeld mit der linken oberen Ecke bei (x, y) zeichnen.
+
+    Alle Zellen liegen in EINER Gruppe: so ist das Schriftfeld ein Objekt, das
+    man in draw.io mit einem Klick anfasst und irgendwo hinschiebt, statt
+    dreißig Kästchen einzeln einzusammeln. Gibt die Gruppen-Id zurück.
+    """
+    group = doc.vertex("", "group;connectable=0;", x, y, WIDTH, HEIGHT)
+
     def box(dx: float, dy: float, w: float, h: float, text: str = "",
             style: str = CELL, tooltip: str | None = None) -> None:
-        doc.vertex(text, style, x + dx, y + dy, w, h, tooltip=tooltip)
+        doc.vertex(text, style, dx, dy, w, h, parent=group, tooltip=tooltip)
 
     # ── Links: Revisionstabelle ───────────────────────────────────────────
     c0, c1, c2 = REV_W
@@ -111,6 +122,7 @@ def draw(doc, x: float, y: float, info: dict) -> None:
     box(rx, 7 * ROW, right_w - r3, ROW,
         f"Zeichnungsnummer &#160;&#160; {info.get('drawing_no') or '—'}", CELL_L)
     box(rx + right_w - r3, 7 * ROW, r3, ROW, f"Blatt {info.get('sheet') or '1'}", CELL)
+    return group
 
 
 def info_from(cfg: dict, *, title: str, subtitle: str, author: str,

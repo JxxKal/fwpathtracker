@@ -176,13 +176,17 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   **Firewalls im HA-Cluster** bekommen ein Abzeichen (`HA A-P · 2 Knoten`) und
   einen kräftigeren Rahmen; der Tooltip nennt Gruppe, Mitglieder, Rollen,
   Seriennummern und Status (aus `dvmdb/device`, kein zusätzlicher Sync nötig).
-  Jede Zeichnung trägt unten rechts ein **Schriftfeld** im Stil eines
+  Jede Zeichnung trägt **rechts daneben** ein **Schriftfeld** im Stil eines
   Engineering-Plans: Revisionstabelle, Vertraulichkeitsvermerk, Logo, Autor
   mit Datum, Titel mit Scope-Zahlen, Zeichnungsnummer und Blatt. Gefüllt wird
   es von A38 selbst — Titel und Zahlen aus dem Scope, Datum von heute, Autor
   aus dem angemeldeten Benutzer, Nummer aus dem Dateinamen. Firma, Vermerk,
   Gruppe und **Logo** sind Stammdaten aus *Einstellungen → Schriftfeld*
-  (Logo-Datei dort hochladen, sie wird in jede Zeichnung eingebettet).
+  (Logo-Datei dort hochladen, sie wird in jede Zeichnung eingebettet). Es steht
+  **neben** dem Plan statt darunter: Container wachsen beim Aufklappen nach
+  unten und würden ein Schriftfeld auf festen Koordinaten überdecken. Alle
+  Zellen liegen in einer Gruppe, lassen sich also mit einem Klick anfassen und
+  verschieben.
   Netze **mit** Hosts starten **zugeklappt** — beim Öffnen zählt die Struktur,
   die Hostliste holt man sich per Klick; die Anzahl steht am Kasten, damit man
   sieht, ob sich das lohnt. Für Ausdruck und PDF gibt es den Schalter

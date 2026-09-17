@@ -284,26 +284,38 @@ async def test_without_title_block_nothing_is_drawn(inventory, prefixes):
     assert "Zeichnungsnummer" not in drawio.render(m)
 
 
-async def test_title_block_sits_below_the_drawing(inventory, prefixes):
-    """Es gehört unter die Zeichnung, nicht darüber — verglichen wird gegen
-    dieselbe Zeichnung ohne Schriftfeld."""
+async def test_title_block_sits_beside_the_drawing_and_is_one_object(inventory, prefixes):
+    """Neben der Zeichnung, nicht darunter: Container wachsen beim Aufklappen
+    nach unten und würden ein Schriftfeld auf festen Koordinaten überdecken.
+    Und es ist EINE Gruppe, damit man es in draw.io am Stück verschieben kann."""
     from diagram import titleblock
     m = await _build(inventory, prefixes)
 
     def top_level(xml):
-        return [_geo(o.find("mxCell")) for o in ET.fromstring(xml).findall(".//object")
-                if o.find("mxCell").get("parent") == "1"]
+        root = ET.fromstring(xml)
+        return root, [(o, _geo(o.find("mxCell"))) for o in root.findall(".//object")
+                      if o.find("mxCell").get("parent") == "1"]
 
-    plain = top_level(drawio.render(m))
+    _r, plain = top_level(drawio.render(m))
     info = titleblock.info_from(TB, title="T", subtitle="S", author="a", drawing_no="N")
-    withtb = top_level(drawio.render(m, title_block=info))
-    content_bottom = max(g[1] + g[3] for g in plain)
-    added = [g for g in withtb if g not in plain]
-    assert len(added) > 20                       # das Schriftfeld besteht aus vielen Zellen
-    assert min(g[1] for g in added) >= content_bottom
-    # Und es ist ein zusammenhängender Block in der erwarteten Größe.
-    assert max(g[0] + g[2] for g in added) - min(g[0] for g in added) == titleblock.WIDTH
-    assert max(g[1] + g[3] for g in added) - min(g[1] for g in added) == titleblock.HEIGHT
+    root, withtb = top_level(drawio.render(m, title_block=info))
+
+    # Genau EIN neues Objekt auf oberster Ebene: die Gruppe.
+    added = [(o, g) for o, g in withtb if g not in [g2 for _o2, g2 in plain]]
+    assert len(added) == 1
+    group, (gx, gy, gw, gh) = added[0]
+    assert "group" in group.find("mxCell").get("style")
+    assert (gw, gh) == (titleblock.WIDTH, titleblock.HEIGHT)
+
+    # Alle Zellen des Schriftfelds hängen in dieser Gruppe.
+    gid = group.get("id")
+    inside = [o for o in root.findall(".//object") if o.find("mxCell").get("parent") == gid]
+    assert len(inside) > 20
+    assert any(o.get("label", "").startswith("Zeichnungsnummer") for o in inside)
+
+    # Und es liegt rechts von allem, was wachsen kann.
+    content_right = max(g[0] + g[2] for _o, g in plain)
+    assert gx >= content_right
 
 
 def test_logo_data_uri_is_written_the_way_mxgraph_reads_it():

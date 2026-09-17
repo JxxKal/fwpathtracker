@@ -444,11 +444,17 @@ def render(model: dict, collapse: bool = True, title_block: dict | None = None) 
                                        w, h, tooltip=tip)
         ny += NEIGHBOR_H + GAP + 16
 
-    # ── Schriftfeld unten rechts an der Zeichnung ──────────────────────────
+    # ── Schriftfeld ────────────────────────────────────────────────────────
+    # NEBEN die Zeichnung, nicht darunter: Container wachsen beim Aufklappen
+    # nach unten, und ein Schriftfeld auf festen Koordinaten läge dann mitten
+    # in der Hostliste. Rechts daneben kann das nie passieren — die Breite
+    # ändert sich beim Aufklappen nicht. Unterkante bündig mit der Zeichnung,
+    # damit es im geschlossenen Zustand unten rechts steht, wo es hingehört.
     if title_block:
         right = max(x0 + total_w, nx + NEIGHBOR_W if model["neighbors"] else 0)
         bottom = max(y0 + _total_h, ny)
-        titleblock.draw(doc, max(x0, right - titleblock.WIDTH), bottom + 2 * GAP, title_block)
+        titleblock.draw(doc, right + 2 * GAP,
+                        max(y0, bottom - titleblock.HEIGHT), title_block)
 
     # ── Kanten ─────────────────────────────────────────────────────────────
     seen: set[tuple[str, str, str]] = set()
