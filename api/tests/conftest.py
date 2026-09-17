@@ -31,11 +31,21 @@ def _row(kind: str, key: str, data) -> dict:
 def lab_snapshot_rows() -> list[dict]:
     return [
         _row("device", "fw-a", {"name": "fw-a", "vdom": [{"name": "root"}, {"name": "dmz"}]}),
-        _row("device", "fw-b", {"name": "fw-b", "vdom": [{"name": "root"}, {"name": "prot"}]}),
+        # fw-b läuft als HA-Paar (A-P) — wie im Feld an den größeren Standorten.
+        _row("device", "fw-b", {"name": "fw-b", "vdom": [{"name": "root"}, {"name": "prot"}],
+                                "ha_mode": 1, "ha_group_id": 3, "ha_group_name": "clu-b",
+                                "ha_slave": [
+                                    {"name": "fw-b-1", "sn": "FGVMB1", "role": 1, "status": 1},
+                                    {"name": "fw-b-2", "sn": "FGVMB2", "role": 0, "status": 1},
+                                ]}),
 
         _row("interface", "fw-a", [
             {"name": "lan1", "ip": ["10.1.1.1", "255.255.255.0"], "vdom": ["root"]},
             {"name": "lan2", "ip": ["10.1.2.1", "255.255.255.0"], "vdom": ["root"]},
+            # Stillgelegtes Segment: gehört in den Netzplan (markiert), aber
+            # nicht in die Pfad-Engine.
+            {"name": "lan3", "ip": ["10.1.3.1", "255.255.255.0"], "vdom": ["root"],
+             "status": "down"},
             {"name": "vpn-to-b", "type": "tunnel", "vdom": ["root"]},
             {"name": "wan", "ip": ["203.0.113.1", "255.255.255.252"], "vdom": ["root"]},
             {"name": "xlink1", "ip": ["10.99.0.1", "255.255.255.252"], "vdom": ["root"]},

@@ -103,6 +103,56 @@ def _intf_enabled(value: Any) -> bool:
 GLOBAL_ADOM = "global"
 
 
+# FortiManager-HA (dvmdb/device). ASSUMPTION (nicht am Lab verifiziert):
+# ha_mode 0=standalone, 1=A-P, 2=A-A; Mitglieder in 'ha_slave' mit
+# name/sn/role/status, role 1=Master. Feldnamen und Kodierung schwanken
+# zwischen FMG-Versionen — deshalb defensiv: Unbekanntes wird durchgereicht
+# statt verworfen, und ohne Modus UND ohne Mitglieder gilt ein Gerät als
+# Standalone. Ein falsch gelesenes HA-Feld darf nie ein Gerät verschwinden
+# lassen, es darf nur das Abzeichen im Netzplan kosten.
+_HA_MODES = {0: "A-P", 1: "A-P", 2: "A-A", 3: "ELBC", 4: "Dual"}
+_HA_STANDALONE = ("0", "standalone", "none", "")
+_HA_ROLES = {0: "Slave", 1: "Master"}
+
+
+def _ha_mode(value: Any) -> str | None:
+    raw = str(value if value is not None else "").strip().lower()
+    if raw in _HA_STANDALONE:
+        return None
+    try:
+        return _HA_MODES.get(int(raw), raw.upper())
+    except ValueError:
+        return {"a-p": "A-P", "ap": "A-P", "active-passive": "A-P",
+                "a-a": "A-A", "aa": "A-A", "active-active": "A-A"}.get(raw, raw.upper())
+
+
+def parse_ha(data: Any) -> dict | None:
+    """HA-Angaben eines Geräts — None, wenn es standalone läuft."""
+    if not isinstance(data, dict):
+        return None
+    mode = _ha_mode(data.get("ha_mode"))
+    members = []
+    for m in _as_list(data.get("ha_slave")):
+        if not isinstance(m, dict):
+            continue
+        name = str(m.get("name") or "").strip()
+        if not name:
+            continue
+        role = m.get("role")
+        members.append({
+            "name": name,
+            "serial": str(m.get("sn") or "").strip() or None,
+            "role": _HA_ROLES.get(role, str(role)) if role is not None else None,
+            "up": None if m.get("status") is None else str(m.get("status")) not in ("0", "down"),
+            "priority": m.get("prio"),
+        })
+    if mode is None and not members:
+        return None
+    group = str(data.get("ha_group_name") or "").strip() or None
+    return {"mode": mode or "HA", "group": group, "group_id": data.get("ha_group_id"),
+            "members": members}
+
+
 def vlan_number(value: Any) -> int | None:
     """VLAN-Tag eines Interfaces → Nummer, sonst None.
 
@@ -200,7 +250,8 @@ class Inventory:
             data = r["data"]
             name = data.get("name") or r["key"]
             vdoms = [v.get("name") for v in _as_list(data.get("vdom")) if v.get("name")]
-            inv.devices[name] = {"adom": r["adom"], "vdoms": vdoms or ["root"], "data": data}
+            inv.devices[name] = {"adom": r["adom"], "vdoms": vdoms or ["root"],
+                                 "ha": parse_ha(data), "data": data}
 
         for r in by_kind.get("interface", []):
             device = r["key"]

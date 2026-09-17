@@ -148,6 +148,14 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   Der **Gesamtplan** zeichnet Firewalls nach Standort gruppiert und ihre
   Kopplungen — ohne Netze und Hosts, weil bei Dutzenden Geräten nur die Frage
   „wer redet mit wem" lesbar bleibt.
+  **Abgeschaltete Interfaces** (Shutdown) stehen mit im Plan, grau und
+  gestrichelt als *abgeschaltet* gekennzeichnet und ans Ende der Spalte
+  sortiert: ein Netzplan dokumentiert den konfigurierten Bestand, und ein
+  stillgelegtes Segment wegzulassen hieße, dass der Plan der Firewall-Config
+  widerspricht. Für die Pfad-Engine zählt es weiterhin **nicht** als connected.
+  **Firewalls im HA-Cluster** bekommen ein Abzeichen (`HA A-P · 2 Knoten`) und
+  einen kräftigeren Rahmen; der Tooltip nennt Gruppe, Mitglieder, Rollen,
+  Seriennummern und Status (aus `dvmdb/device`, kein zusätzlicher Sync nötig).
   Jede Zeichnung trägt unten rechts ein **Schriftfeld** im Stil eines
   Engineering-Plans: Revisionstabelle, Vertraulichkeitsvermerk, Logo, Autor
   mit Datum, Titel mit Scope-Zahlen, Zeichnungsnummer und Blatt. Gefüllt wird

@@ -58,8 +58,18 @@ STYLE: dict[str, str] = {
             f"marginBottom={NET_M};stackSpacing={NET_SPACING};",
     "site": "swimlane;html=1;startSize=36;fontStyle=1;fontSize=16;fillColor=#f0f0f0;"
             "strokeColor=#333333;dashed=1;",
+    # HA-Cluster: kräftigerer Rahmen am Container plus ein Abzeichen neben dem
+    # Symbol. Zwei Geräte, die als eines arbeiten, soll man im Plan sehen,
+    # ohne den Tooltip zu öffnen.
+    "ha": "rounded=1;html=1;whiteSpace=wrap;fontSize=10;fontStyle=1;"
+          "fillColor=#d4e1f5;strokeColor=#3d6ea8;fontColor=#1f3f66;",
     "net": "swimlane;html=1;startSize=48;fontSize=10;align=left;spacingLeft=6;"
            "fillColor=#d5e8d4;strokeColor=#82b366;collapsible=1;",
+    # Interface im Shutdown: dasselbe Netz, aber sichtbar stillgelegt — grau
+    # und gestrichelt, damit es niemand für ein aktives Segment hält.
+    "net-off": "swimlane;html=1;startSize=48;fontSize=10;align=left;spacingLeft=6;"
+               "fillColor=#ededed;strokeColor=#999999;fontColor=#666666;dashed=1;"
+               "collapsible=1;",
     # Symbole aus der draw.io-Bibliothek „Network" (mxgraph.networks.*) — sie
     # sind Teil der Web-App, funktionieren also auch in der Offline-Instanz.
     # Host-Zeile: kleines Symbol, Label rechts daneben.
@@ -182,12 +192,17 @@ def _net_label(net: dict) -> str:
         tail += f" · Zone {zone}"
     if net.get("host_count"):
         tail += f" · {net['host_count']} Hosts"
-    return (f"<b>{_esc(head or net['interface'])}</b><br>"
+    name = _esc(head or net["interface"])
+    if not net.get("enabled", True):
+        name += " <span style='font-weight:normal'>· abgeschaltet</span>"
+    return (f"<b>{name}</b><br>"
             f"{_esc(net['cidr'])} · GW {_esc(net['fw_ip'])}<br>{_esc(tail)}")
 
 
 def _net_tooltip(net: dict) -> str:
-    rows = [("Interface", net["interface"]), ("Netz", net["cidr"]), ("Firewall-IP", net["fw_ip"]),
+    rows = [("Interface", net["interface"]),
+            ("Status", "abgeschaltet (shutdown)" if not net.get("enabled", True) else None),
+            ("Netz", net["cidr"]), ("Firewall-IP", net["fw_ip"]),
             ("VLAN", net.get("vlan")), ("Zone", net.get("zone")), ("Alias", net.get("alias")),
             ("Beschreibung", net.get("description")), ("iTop-Subnetz", net.get("itop_name")),
             ("iTop-Gateway", net.get("itop_gateway")), ("Hosts", net.get("host_count"))]
@@ -302,7 +317,8 @@ def _draw_vdom(doc: _Doc, vd: dict, parent: str, x: float, y: float,
                        tooltip=f"VDOM {vd['id']} · {vd['network_count']} Netze")
     cell_of[vd["id"]] = vd_id
     for net, nx, ny, nh, collapsed, full, short in nets:
-        net_id = doc.vertex(_net_label(net), STYLE["net"], nx, ny, NET_W, nh, parent=vd_id,
+        style = STYLE["net"] if net.get("enabled", True) else STYLE["net-off"]
+        net_id = doc.vertex(_net_label(net), style, nx, ny, NET_W, nh, parent=vd_id,
                             tooltip=_net_tooltip(net), collapsed=collapsed,
                             alt=(NET_W, full if collapsed else short))
         cell_of[net["id"]] = net_id
@@ -316,19 +332,48 @@ def _draw_vdom(doc: _Doc, vd: dict, parent: str, x: float, y: float,
                        12, hy, HOST_W, HOST_H, parent=net_id)
 
 
+def _ha_text(ha: dict) -> tuple[str, str]:
+    """(Abzeichen, Tooltip) für ein Gerät im HA-Cluster."""
+    n = len(ha["members"])
+    badge = f"HA {_esc(ha['mode'])}" + (f" · {n} Knoten" if n else "")
+    lines = [f"HA-Cluster ({ha['mode']})"]
+    if ha.get("group"):
+        gid = f" (ID {ha['group_id']})" if ha.get("group_id") is not None else ""
+        lines.append(f"Gruppe: {ha['group']}{gid}")
+    for m in ha["members"]:
+        bits = [m["name"]]
+        if m.get("role"):
+            bits.append(m["role"])
+        if m.get("serial"):
+            bits.append(m["serial"])
+        if m.get("up") is not None:
+            bits.append("up" if m["up"] else "down")
+        lines.append(" · ".join(bits))
+    return badge, "\n".join(lines)
+
+
 def _draw_device(doc: _Doc, dev: dict, parent: str, x: float, y: float,
                  box: tuple[float, float], vdoms: list, cell_of: dict,
                  with_networks: bool) -> None:
     """Symbol über dem Container, VDOMs darin, Switches rechts daneben. Der
     Container enthält NUR VDOMs — alles andere würde das Stack-Layout mit
     einreihen."""
+    ha = dev.get("ha")
     tip = " · ".join(p for p in (f"FortiGate {dev['device']}",
                                  f"ADOM {dev['adom']}" if dev.get("adom") else None,
                                  dev.get("site")) if p)
+    if ha:
+        badge, ha_tip = _ha_text(ha)
+        tip = f"{tip}\n\n{ha_tip}"
     doc.vertex("", icon_style("firewall").replace(
         "verticalLabelPosition=bottom;verticalAlign=top;", ""), x, y, 44, 28,
         parent=parent, tooltip=tip)
-    fw_id = doc.vertex(_esc(dev["device"]), STYLE["fw"], x, y + DEV_ICON_H, box[0], box[1],
+    label = _esc(dev["device"])
+    style = STYLE["fw"]
+    if ha:
+        doc.vertex(badge, STYLE["ha"], x + 52, y + 1, 150, 26, parent=parent, tooltip=ha_tip)
+        style = style.replace("strokeColor=#6c8ebf;", "strokeColor=#3d6ea8;strokeWidth=3;")
+    fw_id = doc.vertex(label, style, x, y + DEV_ICON_H, box[0], box[1],
                        parent=parent, tooltip=tip)
     cell_of[f"device:{dev['device']}"] = fw_id
     for vd, vx, vy, vsize, nets in vdoms:

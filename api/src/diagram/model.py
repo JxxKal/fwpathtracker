@@ -111,11 +111,20 @@ def scope_vdoms(inv: Inventory, scope: str, device: str | None, vdom: str | None
 
 
 def _networks(inv: Inventory, device: str, vdom: str, itop_subnets: list[dict]) -> list[dict]:
-    """Connected Netze des VDOMs mit L3-Fakten und iTop-Name."""
+    """Netze des VDOMs mit L3-Fakten und iTop-Name — abgeschaltete Interfaces
+    ausdrücklich mit, als solche markiert.
+
+    Für die Pfad-Engine zählt ein Interface im Shutdown NICHT als connected;
+    es trägt keinen Verkehr, und es als Ingress zu wählen wäre falsch. Ein
+    Netzplan ist aber ein Dokument über den KONFIGURIERTEN Bestand: ein
+    stillgelegtes Segment einfach wegzulassen hieße, dass der Plan der
+    Firewall-Konfiguration widerspricht und niemand erfährt, warum VLAN X
+    fehlt. Die VLAN-Übersicht hält es aus demselben Grund genauso.
+    """
     by_cidr = {s["cidr"]: s for s in itop_subnets}
     out: list[dict] = []
     for intf in (inv.interfaces.get(device) or {}).values():
-        if intf["vdom"] != vdom or not intf.get("enabled", True):
+        if intf["vdom"] != vdom:
             continue
         addrs = ([intf["ip"]] if intf["ip"] is not None else []) + list(intf.get("secondary_ips") or [])
         if not addrs:
@@ -130,11 +139,13 @@ def _networks(inv: Inventory, device: str, vdom: str, itop_subnets: list[dict]) 
                 "vlan": facts["vlan"], "zone": facts["zone"],
                 "alias": facts["alias"], "description": facts["description"],
                 "type": intf.get("type"),
+                "enabled": bool(intf.get("enabled", True)),
                 "itop_name": (it or {}).get("name") or None,
                 "itop_gateway": (it or {}).get("gateway"),
                 "hosts": [], "host_count": 0, "hosts_truncated": False,
             })
-    out.sort(key=lambda n: (n["vlan"] is None, n["vlan"] or 0, n["cidr"]))
+    # Abgeschaltete ans Ende: der Plan liest sich von aktiv nach stillgelegt.
+    out.sort(key=lambda n: (not n["enabled"], n["vlan"] is None, n["vlan"] or 0, n["cidr"]))
     return out
 
 
@@ -330,10 +341,11 @@ async def build(inv: Inventory, prefixes: PrefixTable, *, scope: str,
     vdoms: list[dict] = []
     edges: list[dict] = []
     for d, v in targets:
-        nets = _networks(inv, d, v, itop_subnets or []) if with_networks else []
+        all_nets = _networks(inv, d, v, itop_subnets or [])
+        nets = all_nets if with_networks else []
         vdoms.append({"id": vdom_key(d, v), "device": d, "vdom": v, "networks": nets,
-                      "network_count": len(nets) if with_networks
-                      else len(inv.connected_networks(d, v))})
+                      "network_count": len(all_nets),
+                      "networks_off": sum(1 for n in all_nets if not n["enabled"])})
         edges.extend(_neighbors(inv, prefixes, d, v, in_scope))
 
     # Hosts einsammeln, dann je nach Modus (und Menge) ausdünnen.
@@ -373,6 +385,7 @@ async def build(inv: Inventory, prefixes: PrefixTable, *, scope: str,
         names = [site_by_vdom[vd["id"]] for vd in dev_vdoms if site_by_vdom[vd["id"]]]
         devices.append({"device": dev, "site": names[0] if names else None,
                         "adom": inv.adom_of(dev), "vdoms": dev_vdoms,
+                        "ha": (inv.devices.get(dev) or {}).get("ha"),
                         "switches": sw_by_device.get(dev, [])})
     grouped: dict[str, list[dict]] = {}
     for d in devices:
@@ -392,8 +405,11 @@ async def build(inv: Inventory, prefixes: PrefixTable, *, scope: str,
         else:
             d, _, v = nid.partition("/")
             nb_site = site_of(inv, prefixes, d, v, supernets) if d in inv.devices else None
-            neighbors.append({"id": nid, "kind": "vdom", "device": d, "vdom": v, "site": nb_site,
-                              "label": nid + (f" ({nb_site})" if nb_site else "")})
+            ha = (inv.devices.get(d) or {}).get("ha")
+            label = nid + (f" ({nb_site})" if nb_site else "")
+            neighbors.append({"id": nid, "kind": "vdom", "device": d, "vdom": v,
+                              "site": nb_site, "ha": ha,
+                              "label": label + (f" · HA {ha['mode']}" if ha else "")})
 
     return {
         "scope": {"scope": scope, "device": device, "vdom": vdom, "site": site,
@@ -403,8 +419,10 @@ async def build(inv: Inventory, prefixes: PrefixTable, *, scope: str,
         "hosts_mode": mode, "with_networks": with_networks,
         "stats": {"devices": len(devices), "vdoms": len(vdoms),
                   "networks": sum(vd["network_count"] for vd in vdoms),
+                  "networks_off": sum(vd["networks_off"] for vd in vdoms),
                   "hosts_found": total, "hosts_shown": shown, "neighbors": len(neighbors),
                   "switches": len(switches), "sites": len([g for g in site_groups if g["name"]]),
+                  "ha_clusters": sum(1 for d in devices if d.get("ha")),
                   "hosts_reduced": hosts == "auto" and mode == "netdev"},
     }
 

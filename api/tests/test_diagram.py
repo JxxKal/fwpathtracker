@@ -313,3 +313,71 @@ def test_logo_data_uri_is_written_the_way_mxgraph_reads_it():
     assert titleblock.normalize_logo("data:image/png,AAAB") == "data:image/png,AAAB"
     assert titleblock.normalize_logo("https://example.net/logo.png") is None
     assert titleblock.normalize_logo("") is None
+
+
+async def test_shutdown_interface_is_drawn_but_marked(inventory, prefixes):
+    """Ein stillgelegtes Segment gehört in den Plan: sonst widerspricht das
+    Dokument der Firewall-Konfiguration und niemand erfährt, warum es fehlt.
+    Für die Pfad-Engine bleibt es unverändert kein connected Netz."""
+    m = await _build(inventory, prefixes)
+    nets = {n["cidr"]: n for n in m["vdoms"][0]["networks"]}
+    assert nets["10.1.3.0/24"]["enabled"] is False
+    assert nets["10.1.1.0/24"]["enabled"] is True
+    assert m["stats"]["networks_off"] == 1
+    # Abgeschaltete stehen am Ende der Spalte.
+    order = [n["enabled"] for n in m["vdoms"][0]["networks"]]
+    assert order == sorted(order, reverse=True)
+    # Und die Pfad-Engine sieht es weiterhin nicht als connected.
+    assert all(str(n) != "10.1.3.0/24" for n, _ in inventory.connected_networks("fw-a", "root"))
+
+    root = ET.fromstring(drawio.render(m))
+    off = [o for o in root.findall(".//object") if "10.1.3.0/24" in o.get("label", "")]
+    assert len(off) == 1
+    assert "abgeschaltet" in off[0].get("label")
+    assert "shutdown" in off[0].get("tooltip", "")
+    assert "fillColor=#ededed" in off[0].find("mxCell").get("style")
+
+
+async def test_ha_cluster_is_highlighted_with_badge_and_frame(inventory, prefixes):
+    m = await _build(inventory, prefixes, scope="firewall", device="fw-b", vdom=None)
+    ha = m["devices"][0]["ha"]
+    assert ha["mode"] == "A-P" and ha["group"] == "clu-b" and ha["group_id"] == 3
+    assert [x["name"] for x in ha["members"]] == ["fw-b-1", "fw-b-2"]
+    assert [x["role"] for x in ha["members"]] == ["Master", "Slave"]
+    assert m["stats"]["ha_clusters"] == 1
+
+    root = ET.fromstring(drawio.render(m))
+    badge = [o for o in root.findall(".//object") if o.get("label", "").startswith("HA ")]
+    assert len(badge) == 1 and badge[0].get("label") == "HA A-P · 2 Knoten"
+    tip = badge[0].get("tooltip")
+    assert "clu-b" in tip and "fw-b-1 · Master · FGVMB1 · up" in tip
+    fw = [o for o in root.findall(".//object")
+          if o.get("label") == "fw-b" and "swimlane" in o.find("mxCell").get("style")]
+    assert "strokeWidth=3" in fw[0].find("mxCell").get("style")
+
+
+async def test_standalone_firewall_gets_no_ha_marks(inventory, prefixes):
+    m = await _build(inventory, prefixes, scope="firewall", device="fw-a", vdom=None)
+    assert m["devices"][0]["ha"] is None and m["stats"]["ha_clusters"] == 0
+    root = ET.fromstring(drawio.render(m))
+    assert not [o for o in root.findall(".//object") if o.get("label", "").startswith("HA ")]
+
+
+def test_ha_parsing_is_defensive_about_fmg_field_variants():
+    """Feldnamen und Kodierung schwanken zwischen FMG-Versionen — ein falsch
+    gelesenes HA-Feld darf nur das Abzeichen kosten, nie ein Gerät."""
+    from inventory.store import parse_ha
+    assert parse_ha({"ha_mode": 0}) is None
+    assert parse_ha({"ha_mode": "standalone"}) is None
+    assert parse_ha({}) is None
+    assert parse_ha(None) is None
+    assert parse_ha({"ha_mode": 2})["mode"] == "A-A"
+    assert parse_ha({"ha_mode": "active-passive"})["mode"] == "A-P"
+    assert parse_ha({"ha_mode": "irgendwas"})["mode"] == "IRGENDWAS"
+    # Nur Mitglieder, kein Modus → trotzdem ein Cluster.
+    only = parse_ha({"ha_slave": [{"name": "a"}, {"name": "b"}]})
+    assert only["mode"] == "HA" and len(only["members"]) == 2
+    assert only["members"][0]["role"] is None and only["members"][0]["up"] is None
+    # Unbrauchbare Einträge fliegen raus, statt alles zu kippen.
+    messy = parse_ha({"ha_mode": 1, "ha_slave": ["kaputt", {"sn": "ohne-name"}, {"name": "ok"}]})
+    assert [x["name"] for x in messy["members"]] == ["ok"]

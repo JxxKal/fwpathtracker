@@ -85,7 +85,8 @@ async def _title_block(mdl: dict, stem: str, user: dict) -> dict | None:
 
     parts = [f"Scope {_SCOPE_LABEL.get(sc['scope'], sc['scope'])}",
              n(st["devices"], "Firewall", "Firewalls"), n(st["vdoms"], "VDOM", "VDOMs"),
-             n(st["networks"], "Netz", "Netze")]
+             n(st["networks"], "Netz", "Netze")
+             + (f" ({st['networks_off']} abgeschaltet)" if st.get("networks_off") else "")]
     if mdl["hosts_mode"] != "none":
         parts.append(n(st["hosts_shown"], "Host", "Hosts"))
     prefix = (cfg.get("drawing_no_prefix") or "A38").strip()
