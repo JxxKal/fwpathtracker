@@ -455,3 +455,16 @@ def test_site_detail_names_the_evidence_and_the_runner_up():
         == "Gas Nord · 7 von 8 Netzen · auch Hamburg (1)"
     assert _site_detail("Gas Nord", {"Gas Nord": 3}) == "Gas Nord · 3 von 3 Netzen"
     assert _site_detail(None, {}) is None
+
+
+def test_nested_supernets_do_not_let_the_bigger_range_win():
+    """Standort-/20 innerhalb eines Haus-/16: jedes Netz stimmt nur einmal ab,
+    und zwar für den spezifischsten Bereich — sonst gewinnt der große immer."""
+    from inventory.store import Inventory
+    from diagram.model import _supernets, site_of_device, site_scores
+    sites = [{"name": "Haus", "cidr": "10.180.0.0/16"},
+             {"name": "Gas Nord", "cidr": "10.180.16.0/20"}]
+    inv = Inventory.build(_fw_rows("EUGERN1", ["10.180.17.1", "10.180.18.1", "10.180.19.1"]))
+    sup = _supernets(sites)
+    assert site_scores(inv, "EUGERN1", ["root"], sup) == {"Gas Nord": 3}
+    assert site_of_device(inv, inv.build_prefix_table(), "EUGERN1", sup) == "Gas Nord"

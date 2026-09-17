@@ -74,10 +74,17 @@ def site_scores(inv: Inventory, device: str, vdoms: list[str],
     """
     nets = [n for v in vdoms for n, _ in inv.connected_networks(device, v)]
     out: dict[str, int] = {}
-    for name, sup in supernets:
-        hits = sum(1 for n in nets if n.subnet_of(sup))
-        if hits:
-            out[name] = out.get(name, 0) + hits
+    for net in nets:
+        # Jedes Netz hat EINE Stimme, und zwar für den spezifischsten Standort,
+        # der es enthält. Zählt man je Supernetz, stimmt ein Netz bei
+        # verschachtelten Bereichen (Standort-/20 innerhalb eines Haus-/16)
+        # doppelt ab und der größere Bereich gewinnt jede Abstimmung.
+        hit = max((s for _n, s in supernets if net.subnet_of(s)),
+                  key=lambda s: s.prefixlen, default=None)
+        if hit is None:
+            continue
+        name = next(n for n, s in supernets if s == hit)
+        out[name] = out.get(name, 0) + 1
     return out
 
 
