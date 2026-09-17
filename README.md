@@ -133,7 +133,11 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   Container für Firewall, VDOM und Netz mit Kopplungen und Switchen. **Logisch**
   nach der Hausvorgabe für die OT-Dokumentation: Netze als farbige Busleisten
   mit VLAN-ID, Endgeräte mit auf die signifikanten Stellen gekürzter IP
-  (`.73` im /24, `.58.73` im /16), **ohne Switche und Ports** — ausgeblendete
+  (`.73` im /24, `.58.73` im /16) und um das gemeinsame Namenspräfix des Netzes
+  gekürztem Namen (`WD-OT-L3-SVO3036` → `SVO3036`; das Präfix steht einmal an
+  der Leiste). Geräte liegen in **zwei Höhenlagen** versetzt, damit lange Namen
+  nicht aneinanderstoßen, und hängen mit **senkrechten** Abgängen an ihrer
+  Leiste. **Ohne Switche und Ports** — ausgeblendete
   Switche werden im Schriftfeld gezählt. Wird eine Geräteliste zu lang, steht
   je Geräteklasse ein Symbol mit Anzahl und Verweis auf eine **Tabellenseite**
   in derselben Datei. Druckformat DIN A3 quer.
@@ -233,6 +237,12 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   Bestand, keine Reservierungs-Datenbank.
 
 ### 🔎 Resolver & Namensauflösung
+
+Namen im Netzplan kommen aus **allen** Quellen: iTop-CI, iTop-Adressobjekt,
+FortiManager-Adressobjekt, LibreNMS — und für alles, was danach noch namenlos
+ist, aus **Reverse-DNS** (gedeckelt auf 400 Abfragen je Zeichnung, 16
+parallel). Wie viele Namen von dort kamen, sagt die Antwort als Hinweis; das
+ist zugleich eine Aussage über den Pflegestand im iTop.
 
 FMG-Objekte → **iTop** (TeemIP) → **DNS**, mit Provenance-Anzeige in beide
 Richtungen. Autocomplete für Quelle/Ziel.
