@@ -15,6 +15,7 @@ from deps import get_current_user, require_admin
 from diagram import (drawio, linkstatus, logical, model as diagram_model,
                      physical, titleblock)
 from netguard import guard_egress_url
+from resolver import dns_source
 from routers.config import read_config
 
 log = logging.getLogger("routers.diagram")
@@ -319,6 +320,18 @@ async def build(body: DiagramRequest, request: Request,
     async def arp(cidr: str) -> list[dict]:
         return await state.arp_store.in_network(cidr)
 
+    # Reverse-DNS als letzte Namensquelle: sie kennt auch die Geräte, die
+    # niemand im iTop gepflegt hat — und das sind erfahrungsgemäß genau die,
+    # bei denen im Plan sonst nur eine nackte IP steht.
+    dns_cfg = await read_config("dns")
+
+    async def dns(ip: str) -> str | None:
+        hit = await dns_source.resolve_ip(dns_cfg, ip, timeout_s=1.5)
+        return hit["name"] if hit else None
+
+    use_dns = dns if wants_hosts and (dns_cfg.get("resolvers")
+                                      or dns_cfg.get("search_domains")) else None
+
     # Link-Status live holen, solange Netze gezeichnet werden. Der Gesamtplan
     # zeigt keine Netze — dort wäre es nur Last ohne Nutzen.
     links: dict = {}
@@ -334,11 +347,15 @@ async def build(body: DiagramRequest, request: Request,
             inv, prefixes, scope=body.scope, device=body.device, vdom=body.vdom,
             site=body.site, hosts=body.hosts, sites=sites, link_status=links,
             itop_subnets=itop_subnets,
-            itop_hosts=itop_hosts, itop_addresses=itop_addresses, arp=arp, librenms=librenms,
+            itop_hosts=itop_hosts, itop_addresses=itop_addresses, arp=arp, dns=use_dns,
+            librenms=librenms,
             librenms_cfg=librenms_cfg if librenms else None, librenms_devices=librenms_devices,
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    if mdl["stats"].get("names_from_dns"):
+        warnings.append(f"{mdl['stats']['names_from_dns']} Gerätenamen kamen aus dem "
+                        "Reverse-DNS — im iTop sind sie nicht gepflegt.")
     if mdl["stats"]["hosts_reduced"]:
         warnings.append(
             f"{mdl['stats']['hosts_found']} Hosts gefunden — mehr als {diagram_model.MAX_HOSTS}. "

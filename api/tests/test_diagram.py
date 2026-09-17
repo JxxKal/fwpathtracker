@@ -608,8 +608,45 @@ async def test_few_hosts_stay_individual_symbols(inventory, prefixes):
     root = ET.fromstring(logical.render(m, max_hosts=18))
     assert [d.get("name") for d in root.findall("diagram")] == ["Netzplan fw-a/root"]
     labels = [o.get("label", "") for o in root.findall(".//object")]
-    assert any(l.startswith("plc-13") and ".13" in l for l in labels)
+    # Gemeinsames Namenspräfix wandert an die Leiste, die Geräte tragen den Rest.
+    assert any(l.startswith("13<br>.13") for l in labels)
+    assert any("Namen ohne plc-" in l for l in labels)
     assert not any("×" in l for l in labels)
+
+
+def test_common_prefix_only_strips_what_is_really_common():
+    """Gerätenamen im Feld sind gebaut wie WD-OT-L3-SVO3036 — in einem Netz
+    ist alles bis auf den letzten Teil gleich. Abgeschnitten wird aber nur am
+    Trennzeichen, und nur wenn es sich lohnt."""
+    from diagram.logical import common_prefix
+    assert common_prefix(["WD-OT-L3-SVO3036", "WD-OT-L3-SVO3101", "WD-OT-L3-SVO3099"]) \
+        == "WD-OT-L3-"
+    # Mitten im Wort wird nicht geschnitten.
+    assert common_prefix(["srv-alpha", "srv-alfred", "srv-alpine"]) == "srv-"
+    # Zu wenige Namen, kein gemeinsamer Teil, oder ein Name wäre danach leer.
+    assert common_prefix(["WD-OT-L3-A", "WD-OT-L3-B"]) == ""
+    assert common_prefix(["alpha", "beta", "gamma"]) == ""
+    assert common_prefix(["ab-", "ab-x", "ab-y"]) == ""
+    assert common_prefix([]) == ""
+
+
+async def test_hosts_alternate_height_and_drop_straight_down(inventory, prefixes):
+    """Nebeneinander stoßen lange Namen aneinander, und ohne festen
+    Einstiegspunkt zielt jede Linie auf die Leistenmitte — dann wird aus den
+    Abgängen ein Sternchen."""
+    from diagram import logical
+    hosts = [{"name": f"WD-OT-L3-SVO30{i}", "ip": f"10.1.1.{i}", "description": "",
+              "kind": "Server"} for i in range(10, 18)]
+    m = await _build(inventory, prefixes, itop_hosts=hosts, itop_addresses={})
+    root = ET.fromstring(logical.render(m))
+    icons = [(o.get("label"), _geo(o.find("mxCell")))
+             for o in root.findall(".//object")
+             if "mxgraph.networks.server" in (o.find("mxCell").get("style") or "")]
+    ys = sorted({g[1] for _l, g in icons})
+    assert len(ys) == 2 and ys[1] - ys[0] == logical.STAGGER
+    drops = [c.get("style") for c in root.findall(".//mxCell") if c.get("edge") == "1"]
+    fracs = {s.split("entryX=")[1].split(";")[0] for s in drops if "entryX=" in s}
+    assert len(fracs) >= 5 and "0.5000" not in fracs or len(fracs) >= 5
 
 
 # ── Physische Netzdokumentation (Hausvorgabe, Ebene 1 und 2) ────────────────

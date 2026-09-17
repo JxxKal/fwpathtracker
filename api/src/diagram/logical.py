@@ -35,8 +35,14 @@ PALETTE = [
 GREY = ("#999999", "#ededed")
 
 BAND_HEAD = 34
-BAR_H, BAR_GAP = 14, 118
-HOST_W, HOST_H, ICON = 118, 46, 26
+BAR_H = 14
+# Zwei Höhenlagen für die Geräte: nebeneinander stoßen lange Namen sonst
+# aneinander. Versetzt liegen benachbarte Beschriftungen doppelt so weit
+# auseinander, ohne dass die Zeichnung breiter wird.
+HOST_W, HOST_H, ICON = 136, 46, 26
+STAGGER = 60
+HOST_BLOCK = STAGGER + HOST_H + 16
+BAR_GAP = HOST_BLOCK + BAR_H + 44
 LABEL_W = 250
 GAP = 24
 MAX_HOSTS_DRAWN = 18          # darüber: je Klasse ein Symbol + Tabellenverweis
@@ -51,7 +57,11 @@ HOST = ("shape={stencil};html=1;aspect=fixed;fillColor={line};strokeColor=none;"
         "verticalLabelPosition=bottom;verticalAlign=top;fontSize=9;whiteSpace=wrap;")
 GROUPED = ("rounded=1;html=1;whiteSpace=wrap;fontSize=9;fillColor={fill};"
            "strokeColor={line};fontColor=#333333;")
-DROP = "html=1;endArrow=none;strokeColor={line};exitX=0.5;exitY=1;entryX=0.5;entryY=0;"
+# edgeStyle=none + fester Einstiegspunkt auf der Leiste: sonst zielt jede
+# Linie auf die Leistenmitte und es entsteht ein Sternchen statt Abgängen.
+DROP = ("edgeStyle=none;html=1;endArrow=none;strokeColor={line};"
+        "exitX=0.5;exitY=1;exitDx=0;exitDy=0;"
+        "entryX={frac:.4f};entryY=0;entryDx=0;entryDy=0;")
 FW = ("shape=mxgraph.networks.firewall;html=1;aspect=fixed;fillColor=#b85450;"
       "strokeColor=none;verticalLabelPosition=bottom;verticalAlign=top;fontSize=11;")
 UPLINK = ("html=1;endArrow=none;strokeColor=#b85450;dashed=1;fontSize=9;"
@@ -112,10 +122,36 @@ def _bar_label(net: dict) -> str:
     return esc(" · ".join(bits) + tail)
 
 
-def _host_label(h: dict, cidr: str) -> str:
+def common_prefix(names: list[str]) -> str:
+    """Gemeinsames Namenspräfix eines Netzes, am Trennzeichen abgeschnitten.
+
+    Gerätenamen im Feld sind gebaut wie WD-OT-L3-SVO3036: Standort, Rolle,
+    Ebene, Gerät. In einem Netz ist alles bis auf den letzten Teil gleich —
+    ausgeschrieben kostet das die Lesbarkeit und bringt nichts. Der Präfix
+    wandert einmal an die Leiste, die Geräte tragen nur noch ihren Rest.
+    """
+    real = [n for n in names if n]
+    if len(real) < 3:
+        return ""
+    prefix = real[0]
+    for name in real[1:]:
+        while prefix and not name.upper().startswith(prefix.upper()):
+            prefix = prefix[:-1]
+        if not prefix:
+            return ""
+    cut = max(prefix.rfind(c) for c in "-_.")
+    prefix = prefix[:cut + 1] if cut > 0 else ""
+    if len(prefix) < 4 or any(len(n) <= len(prefix) for n in real):
+        return ""
+    return prefix
+
+
+def _host_label(h: dict, cidr: str, prefix: str = "") -> str:
     name = h.get("name") or ""
+    if prefix and name.upper().startswith(prefix.upper()):
+        name = name[len(prefix):]
     short = short_ip(h["ip"], cidr)
-    return f"{esc(name)}<br>{esc(short)}" if name else esc(short)
+    return f"{esc(name)}<br>{esc(short)}" if name else f"<b>{esc(short)}</b>"
 
 
 def _host_tooltip(h: dict) -> str:
@@ -145,7 +181,8 @@ def render(model: dict, title_block: dict | None = None,
         for vd in dev["vdoms"]:
             nets = vd["networks"]
             band_h = BAND_HEAD + GAP + max(1, len(nets)) * BAR_GAP
-            band_w = max(HOST_W * 8, LABEL_W + 2 * GAP) + LABEL_W + 2 * GAP
+            widest = max((len(_drawn_hosts(n)) for n in nets), default=1)
+            band_w = max(widest, 4) * HOST_W + LABEL_W + 4 * GAP
             band = doc.vertex(f"{esc(dev['device'])} / {esc(vd['vdom'])}", BAND,
                               x0, y, band_w, band_h,
                               tooltip=f"{vd['id']} · {vd['network_count']} Netze")
@@ -161,31 +198,41 @@ def render(model: dict, title_block: dict | None = None,
                 hidden_switches += len(net["hosts"]) - len(hosts)
                 grouped = len(hosts) > max_hosts
                 cells = _group(hosts) if grouped else [(h, 1) for h in hosts]
+                prefix = "" if grouped else common_prefix([h.get("name") or "" for h in hosts])
                 bar_w = max(len(cells) * HOST_W + GAP, 420)
+                bar_y = by + HOST_BLOCK
 
                 bar = doc.vertex("", BAR.format(fill=fill, line=line),
-                                 GAP, by + HOST_H + 18, bar_w, BAR_H, parent=band,
+                                 GAP, bar_y, bar_w, BAR_H, parent=band,
                                  tooltip=_bar_label(net).replace(" · ", "\n"))
-                doc.vertex(_bar_label(net), BAR_LABEL.format(line=line),
-                           GAP + bar_w + 8, by + HOST_H + 8, LABEL_W, 34, parent=band)
+                label = _bar_label(net)
+                if prefix:
+                    label += (f" <span style='font-weight:normal;color:#666'>"
+                              f"· Namen ohne {esc(prefix)}</span>")
+                doc.vertex(label, BAR_LABEL.format(line=line),
+                           GAP + bar_w + 8, bar_y - 12, LABEL_W, 40, parent=band)
 
                 for i, (item, count) in enumerate(cells):
-                    hx = GAP + i * HOST_W + (HOST_W - ICON) / 2
+                    # Gerade Positionen oben, ungerade tiefer — versetzte Reihen.
+                    hy = by + (0 if i % 2 == 0 else STAGGER)
+                    frac = (i * HOST_W + HOST_W / 2) / bar_w
+                    drop = DROP.format(line=line, frac=min(0.999, max(0.001, frac)))
                     if count == 1:
-                        cid = doc.vertex(_host_label(item, net["cidr"]),
+                        cid = doc.vertex(_host_label(item, net["cidr"], prefix),
                                          HOST.format(stencil=STENCILS[host_class(item)],
                                                      line=line),
-                                         hx, by, ICON, ICON, parent=band,
+                                         GAP + i * HOST_W + (HOST_W - ICON) / 2, hy,
+                                         ICON, ICON, parent=band,
                                          tooltip=_host_tooltip(item))
                     else:
-                        label = (f"{count} × {CLASS_LABEL[item]}<br>"
-                                 f"<span style='font-size:8px'>Tabelle {esc(net['cidr'])}</span>")
-                        cid = doc.vertex(label, GROUPED.format(fill=fill, line=line),
-                                         GAP + i * HOST_W, by, HOST_W - 10, HOST_H,
+                        text = (f"{count} × {CLASS_LABEL[item]}<br>"
+                                f"<span style='font-size:8px'>Tabelle {esc(net['cidr'])}</span>")
+                        cid = doc.vertex(text, GROUPED.format(fill=fill, line=line),
+                                         GAP + i * HOST_W + 6, hy, HOST_W - 16, HOST_H,
                                          parent=band,
                                          tooltip=f"{count} Geräte — siehe Tabellenseite "
                                                  f"{net['cidr']}")
-                    doc.edge(cid, bar, "", DROP.format(line=line), parent=band)
+                    doc.edge(cid, bar, "", drop, parent=band)
                 if grouped:
                     tables.append((f"{dev['device']}/{vd['vdom']}", net, hosts))
                 by += BAR_GAP

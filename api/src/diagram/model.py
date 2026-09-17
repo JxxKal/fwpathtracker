@@ -21,6 +21,7 @@ Vier Scopes, von innen nach außen:
 """
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import logging
 from collections.abc import Awaitable, Callable
@@ -37,6 +38,12 @@ SCOPES = ("vdom", "firewall", "site", "global")
 NO_SITE = "ohne Standort"
 
 ArpLookup = Callable[[str], Awaitable[list[dict]]]
+DnsLookup = Callable[[str], Awaitable[str | None]]
+
+# Reverse-DNS ist die letzte Namensquelle und die einzige, die auch Geräte
+# kennt, die niemand im iTop gepflegt hat. Sie kostet aber eine Anfrage je
+# Adresse, deshalb gedeckelt und nur für Hosts OHNE Namen.
+DNS_MAX, DNS_CONCURRENCY = 400, 16
 
 
 def vdom_key(device: str, vdom: str) -> str:
@@ -339,6 +346,39 @@ async def _collect_hosts(net: dict, inv: Inventory, itop_hosts: list[dict],
     return sorted(hosts.values(), key=lambda h: ipaddress.IPv4Address(h["ip"]))
 
 
+async def _resolve_names(nets: list[dict], dns: DnsLookup | None,
+                         budget: list[int]) -> int:
+    """Namenlose Hosts per Reverse-DNS nachziehen — in einem Rutsch für alle
+    Netze, damit das Budget global gilt und nicht je Netz.
+
+    Ohne diesen Schritt trägt ein Gerät, das nur in der ARP-Historie steht,
+    im Plan bloß seine IP. Genau die sind aber die interessanten: gepflegt ist
+    im iTop meist das, was man ohnehin kennt.
+    """
+    if dns is None:
+        return 0
+    todo = [h for net in nets for h in net["hosts"] if not h.get("name")]
+    todo = todo[:max(0, budget[0])]
+    if not todo:
+        return 0
+    budget[0] -= len(todo)
+    sem = asyncio.Semaphore(DNS_CONCURRENCY)
+
+    async def one(host: dict) -> bool:
+        async with sem:
+            try:
+                name = await dns(host["ip"])
+            except Exception:
+                return False
+        if name:
+            host["name"] = name
+            host["sources"] = host.get("sources", []) + ["dns"]
+            return True
+        return False
+
+    return sum(await asyncio.gather(*(one(h) for h in todo)))
+
+
 async def _switches(devices: list[str], librenms, librenms_cfg: dict | None) -> list[dict]:
     """Switches, die per LLDP an diesen Firewalls hängen (LibreNMS-Links, bei
     denen der Nachbar so heißt wie ein FMG-Gerät im Scope)."""
@@ -378,6 +418,7 @@ async def build(inv: Inventory, prefixes: PrefixTable, *, scope: str,
                 link_status: dict | None = None,
                 itop_subnets: list[dict] | None = None, itop_hosts: list[dict] | None = None,
                 itop_addresses: dict[str, dict] | None = None, arp: ArpLookup | None = None,
+                dns: DnsLookup | None = None,
                 librenms=None, librenms_cfg: dict | None = None,
                 librenms_devices: dict[str, dict] | None = None,
                 max_hosts: int = MAX_HOSTS) -> dict:
@@ -405,7 +446,7 @@ async def build(inv: Inventory, prefixes: PrefixTable, *, scope: str,
         edges.extend(_neighbors(inv, prefixes, d, v, in_scope))
 
     # Hosts einsammeln, dann je nach Modus (und Menge) ausdünnen.
-    total = 0
+    total, resolved = 0, 0
     if mode != "none":
         for vd in vdoms:
             for net in vd["networks"]:
@@ -419,6 +460,8 @@ async def build(inv: Inventory, prefixes: PrefixTable, *, scope: str,
             for vd in vdoms:
                 for net in vd["networks"]:
                     net["hosts"] = [h for h in net["hosts"] if _is_netdev(h)]
+        resolved = await _resolve_names([n for vd in vdoms for n in vd["networks"]],
+                                        dns, [DNS_MAX])
     shown = 0
     for vd in vdoms:
         for net in vd["networks"]:
@@ -477,7 +520,7 @@ async def build(inv: Inventory, prefixes: PrefixTable, *, scope: str,
                   "networks": sum(vd["network_count"] for vd in vdoms),
                   "networks_off": sum(vd["networks_off"] for vd in vdoms),
                   "networks_link_down": sum(vd["networks_link_down"] for vd in vdoms),
-                  "hosts_found": total, "hosts_shown": shown, "neighbors": len(neighbors),
+                  "hosts_found": total, "hosts_shown": shown, "names_from_dns": resolved, "neighbors": len(neighbors),
                   "switches": len(switches), "sites": len([g for g in site_groups if g["name"]]),
                   "ha_clusters": sum(1 for d in devices if d.get("ha")),
                   "hosts_reduced": hosts == "auto" and mode == "netdev"},
