@@ -56,7 +56,11 @@ export default function FreeSubnet() {
             <select className="fwpt-input w-40" value=""
               onChange={(e) => { const s = sites.find((x) => x.cidr === e.target.value); if (s) setSupernet(s.cidr); }}>
               <option value="">{de.freesubnet.pick}</option>
-              {sites.map((s) => <option key={s.cidr} value={s.cidr}>{s.name} ({s.cidr})</option>)}
+              {sites.map((s) => (
+                <option key={s.cidr} value={s.cidr} title={s.description || undefined}>
+                  {s.name} ({s.cidr})
+                </option>
+              ))}
             </select>
           </label>
         )}

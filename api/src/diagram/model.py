@@ -433,7 +433,10 @@ async def build(inv: Inventory, prefixes: PrefixTable, *, scope: str,
     grouped: dict[str, list[dict]] = {}
     for d in devices:
         grouped.setdefault(d["site"] or NO_SITE, []).append(d)
-    site_groups = [{"name": name, "devices": devs} for name, devs in sorted(grouped.items())]
+    described = {str(s.get("name")): str(s.get("description") or "").strip()
+                 for s in (sites or [])}
+    site_groups = [{"name": name, "description": described.get(name) or None, "devices": devs}
+                   for name, devs in sorted(grouped.items())]
     # Ein einzelner namenloser Standort ist keine Gruppe, sondern Rauschen.
     if len(site_groups) == 1 and site_groups[0]["name"] == NO_SITE:
         site_groups[0]["name"] = None

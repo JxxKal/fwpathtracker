@@ -32,7 +32,11 @@ DEFAULT_SITE_SUPERNETS = [
 def _normalize_sites(sites: list) -> list[dict]:
     """Gespeicherte Supernetze robust einlesen: Alt-Feld 'label' als Name
     akzeptieren, leere Namen aus den Defaults per CIDR nachfüllen. Verhindert
-    leere Beschreibungsfelder im Panel bei Alt-/Teil-Configs."""
+    leere Beschreibungsfelder im Panel bei Alt-/Teil-Configs.
+
+    'description' ist frei: der Name ist die Identität des Standorts (er steht
+    im Netzplan und entscheidet die Zuordnung), der Bezeichner erklärt ihn —
+    etwa welche Stationen in einem Bereich wirklich hängen."""
     by_cidr = {s["cidr"]: s["name"] for s in DEFAULT_SITE_SUPERNETS}
     out: list[dict] = []
     for s in sites:
@@ -44,7 +48,8 @@ def _normalize_sites(sites: list) -> list[dict]:
         name = str(s.get("name") or s.get("label") or "").strip()
         if not name:
             name = by_cidr.get(cidr, "")
-        out.append({"name": name, "cidr": cidr})
+        out.append({"name": name, "cidr": cidr,
+                    "description": str(s.get("description") or "").strip()})
     return out
 
 
@@ -52,9 +57,12 @@ def _normalize_sites(sites: list) -> list[dict]:
 async def site_supernets(_user: dict = Depends(get_current_user)) -> dict:
     cfg = await read_config("site_supernets")
     sites = cfg.get("sites")
+    # 'source' mitgeben: die Defaults sind Platzhalter aus dem Code. Wer eine
+    # Standortzuordnung prüft, muss sehen können, ob er echte Bereiche vor sich
+    # hat oder nie konfigurierte Beispielwerte.
     if isinstance(sites, list) and sites:
-        return {"sites": _normalize_sites(sites)}
-    return {"sites": DEFAULT_SITE_SUPERNETS}
+        return {"sites": _normalize_sites(sites), "source": "config"}
+    return {"sites": _normalize_sites(DEFAULT_SITE_SUPERNETS), "source": "default"}
 
 
 @router.post("/test")

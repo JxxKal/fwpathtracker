@@ -142,8 +142,10 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   eingeklappt, jeder Knoten trägt einen Tooltip mit den Quellen — die Zeichnung ist damit
   gleichzeitig der Abgleich von FMG, iTop und LibreNMS. Herunterladen oder
   direkt in der eigenen draw.io-Instanz öffnen (s.u.).
-  Der **Standort** ergibt sich aus den Standort-Supernetzen (Einstellungen,
-  dieselbe Quelle wie der Free-Subnet-Finder): eine Firewall gehört dorthin, wo
+  Der **Standort** ergibt sich aus den Standort-Supernetzen (*Einstellungen →
+  Standort-Supernetze*, dieselbe Liste wie im Free-Subnet-Finder; der **Name**
+  ist die Identität des Standorts und steht so in der Zeichnung, der
+  **Bezeichner** daneben erklärt ihn nur): eine Firewall gehört dorthin, wo
   die **Mehrheit** der Netze liegt, die sie lokal routet — über alle ihre VDOMs
   gezählt. Nicht der erste oder engste Treffer, denn einzelne Netze zeigen
   woandershin (Management-Adresse aus einem zentralen Bereich, Transfernetz zum
@@ -152,6 +154,10 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   Einstellungen schlägt alles. Die Geräteauswahl im Werkzeug zeigt die
   Begründung als Tooltip („Gas Nord · 7 von 8 Netzen · auch Hamburg (1)"),
   damit eine falsche Zuordnung auffällt statt still zu bleiben.
+  Wird es doch einmal unklar, zeigt `scripts/standort-diagnose.sh` auf dem
+  Docker-Host in einem Rutsch die Supernetze (samt Hinweis, wenn es noch die
+  Beispielwerte aus dem Code sind), die Overrides und je Gerät die Netze, die
+  die Zuordnung tragen.
   Der **Gesamtplan** zeichnet Firewalls nach Standort gruppiert und ihre
   Kopplungen — ohne Netze und Hosts, weil bei Dutzenden Geräten nur die Frage
   „wer redet mit wem" lesbar bleibt.

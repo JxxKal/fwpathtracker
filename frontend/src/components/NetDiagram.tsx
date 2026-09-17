@@ -103,7 +103,10 @@ export default function NetDiagram() {
             <span className="text-[11px] text-slate-500">{de.diagram.site}</span>
             <select className="fwpt-input w-52" value={site} onChange={(e) => setSite(e.target.value)}>
               {(scopes?.sites ?? []).map((s) => (
-                <option key={s.name} value={s.name}>{s.name} ({s.devices.length})</option>
+                <option key={s.name} value={s.name}
+                  title={[s.cidr, s.description].filter(Boolean).join(' · ')}>
+                  {s.name} ({s.devices.length})
+                </option>
               ))}
             </select>
           </label>

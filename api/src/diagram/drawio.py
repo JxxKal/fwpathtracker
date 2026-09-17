@@ -405,9 +405,11 @@ def render(model: dict, collapse: bool = True, title_block: dict | None = None) 
     for group, (px, py), (size, devs) in zip(model["sites"], pos, measured):
         gx, gy = x0 + px, y0 + py
         if group["name"]:
+            tip = f"Standort {group['name']} · {len(group['devices'])} Firewalls"
+            if group.get("description"):
+                tip += f"\n{group['description']}"
             parent = doc.vertex(_esc(group["name"]), STYLE["site"], gx, gy, size[0], size[1],
-                                tooltip=f"Standort {group['name']} · "
-                                        f"{len(group['devices'])} Firewalls")
+                                tooltip=tip)
             cell_of[f"site:{group['name']}"] = parent
             ox, oy = 0.0, 0.0
         else:

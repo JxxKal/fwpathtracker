@@ -20,6 +20,37 @@ log = logging.getLogger("routers.diagram")
 router = APIRouter(prefix="/api/diagram", tags=["diagram"])
 
 
+@router.get("/site-evidence")
+async def site_evidence(request: Request, _admin: dict = Depends(require_admin)) -> dict:
+    """Woraus die Standortzuordnung folgt — je Gerät die connected Netze mit
+    dem Standort, dem sie zufallen. Ohne diese Liste ist eine falsche
+    Zuordnung nicht zu reparieren: man sieht das Ergebnis, aber nicht, welcher
+    Adressbereich es verursacht."""
+    import ipaddress as _ip
+    state = request.app.state
+    inv, prefixes = state.inventory, state.prefixes
+    sites = await _sites()
+    supernets = diagram_model._supernets(sites)
+    out = []
+    for dev, info in sorted(inv.devices.items()):
+        vdoms = list(info["vdoms"] or ["root"])
+        nets = [n for v in vdoms for n, _ in inv.connected_networks(dev, v)]
+        by_site: dict[str, list[str]] = {}
+        for net in sorted(set(nets)):
+            hit = max((s for _n, s in supernets if net.subnet_of(s)),
+                      key=lambda s: s.prefixlen, default=None)
+            name = next((n for n, s in supernets if s == hit), None) if hit else None
+            by_site.setdefault(name or "", []).append(str(net))
+        out.append({
+            "device": dev,
+            "site": diagram_model.site_of_device(inv, prefixes, dev, supernets),
+            "override": diagram_model._override(prefixes, dev, vdoms),
+            "scores": diagram_model.site_scores(inv, dev, vdoms, supernets),
+            "networks_by_site": by_site,
+        })
+    return {"devices": out, "sites": sites}
+
+
 class DiagramRequest(BaseModel):
     scope: str = Field(pattern="^(vdom|firewall|site|global)$")
     device: str | None = Field(default=None, max_length=128)
@@ -82,6 +113,7 @@ async def scopes(request: Request, _user: dict = Depends(get_current_user)) -> d
     # Auswahl, die dann 422 wirft, ist keine Auswahl.
     used = {d["site"] for d in devices if d["site"]}
     site_list = [{"name": s["name"], "cidr": s["cidr"],
+                  "description": s.get("description") or None,
                   "devices": sorted(d["device"] for d in devices if d["site"] == s["name"])}
                  for s in sites if s["name"] in used]
     return {"devices": devices, "sites": site_list, "max_hosts": diagram_model.MAX_HOSTS,

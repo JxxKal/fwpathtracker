@@ -28,17 +28,18 @@ export default function SiteSupernetsPanel() {
   return (
     <div className="fwpt-card space-y-3">
       <h2 className="font-medium text-slate-100">{de.settings.siteSupernets}</h2>
-      <p className="text-xs text-slate-500">
-        Vorauswahl-Bereiche im „Freies Subnetz finden"-Tool (Standort → Supernet).
-        Reihenfolge = Anzeige.
-      </p>
+      <p className="text-xs text-slate-500">{de.settings.siteSupernetsHint}</p>
       <div className="space-y-2">
         {sites.map((s, i) => (
           <div key={i} className="flex items-center gap-2">
-            <input className="fwpt-input flex-1" value={s.name} placeholder="Standort"
+            <input className="fwpt-input w-44" value={s.name} placeholder={de.settings.siteName}
+              title={de.settings.siteNameHint}
               onChange={(e) => update(i, 'name', e.target.value)} />
             <input className="fwpt-input w-48 font-mono" value={s.cidr} placeholder="10.180.0.0/20"
               onChange={(e) => update(i, 'cidr', e.target.value)} />
+            <input className="fwpt-input flex-1" value={s.description ?? ''}
+              placeholder={de.settings.siteDescription} title={de.settings.siteDescriptionHint}
+              onChange={(e) => update(i, 'description', e.target.value)} />
             <button type="button" className="text-slate-500 hover:text-red-400"
               onClick={() => setSites((l) => l.filter((_, idx) => idx !== i))}>
               <Trash2 size={15} />
@@ -48,8 +49,8 @@ export default function SiteSupernetsPanel() {
       </div>
       <div className="flex items-center gap-2">
         <button type="button" className="fwpt-btn-ghost"
-          onClick={() => setSites((l) => [...l, { name: '', cidr: '' }])}>
-          <Plus size={14} /> Standort
+          onClick={() => setSites((l) => [...l, { name: '', cidr: '', description: '' }])}>
+          <Plus size={14} /> {de.settings.siteAdd}
         </button>
         <button type="button" className="fwpt-btn" onClick={save} disabled={busy}>{de.settings.save}</button>
         {status && <span className="text-sm text-slate-400">{status}</span>}

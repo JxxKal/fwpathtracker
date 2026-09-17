@@ -231,8 +231,8 @@ export async function updateCheckStatus(
   });
 }
 
-export interface SiteSupernet { name: string; cidr: string; }
-export async function siteSupernets(): Promise<{ sites: SiteSupernet[] }> {
+export interface SiteSupernet { name: string; cidr: string; description?: string; }
+export async function siteSupernets(): Promise<{ sites: SiteSupernet[]; source?: string }> {
   if (isDemoMode()) {
     return { sites: [
       { name: 'Holstein', cidr: '10.180.0.0/20' }, { name: 'Gas Nord', cidr: '10.180.16.0/20' },
@@ -323,7 +323,7 @@ export async function freeIps(cidr: string, want: number, start?: string, end?: 
 export interface DiagramScopes {
   devices: { device: string; adom: string; vdoms: string[]; site: string | null;
     site_detail: string | null }[];
-  sites: { name: string; cidr: string; devices: string[] }[];
+  sites: { name: string; cidr: string; description: string | null; devices: string[] }[];
   max_hosts: number; drawio_url: string | null;
 }
 export type DiagramHosts = 'auto' | 'all' | 'netdev' | 'none';
@@ -345,8 +345,8 @@ export async function diagramScopes(): Promise<DiagramScopes> {
           site_detail: 'Hamburg · 2 von 2 Netzen' },
       ],
       sites: [
-        { name: 'Holstein', cidr: '10.180.0.0/20', devices: ['fw-a'] },
-        { name: 'Hamburg', cidr: '10.180.32.0/20', devices: ['fw-b'] },
+        { name: 'Holstein', cidr: '10.180.0.0/20', description: 'Werk und Außenstationen', devices: ['fw-a'] },
+        { name: 'Hamburg', cidr: '10.180.32.0/20', description: null, devices: ['fw-b'] },
       ],
     };
   }

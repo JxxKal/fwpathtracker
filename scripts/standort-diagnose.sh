@@ -58,8 +58,12 @@ def get(path):
 
 def main():
     print("=== Standort-Supernetze")
-    for s in get("/api/itop/site-supernets")["sites"]:
-        print("  %-20s %s" % (s["cidr"], s["name"]))
+    sup = get("/api/itop/site-supernets")
+    if sup.get("source") == "default":
+        print("  (!) nie konfiguriert — das sind die Beispielwerte aus dem Code.")
+        print("      Einstellungen -> Standort-Supernetze")
+    for s in sup["sites"]:
+        print("  %-20s %-16s %s" % (s["cidr"], s["name"], s.get("description") or ""))
 
     print()
     print("=== Site-Overrides (schlagen jede Berechnung)")
@@ -82,6 +86,18 @@ def main():
         print()
     for x in devs:
         print("  %-30s %-14s %s" % (x["device"], x["site"], x.get("site_detail") or ""))
+
+    print()
+    print("=== Welche Netze die Zuordnung tragen")
+    for x in get("/api/diagram/site-evidence")["devices"]:
+        print("  %s" % x["device"])
+        if x.get("override"):
+            print("      Override aus den Einstellungen -> %s" % x["override"])
+        for site, nets in sorted(x["networks_by_site"].items()):
+            shown = ", ".join(nets[:6]) + (" … (+%d)" % (len(nets) - 6) if len(nets) > 6 else "")
+            print("      %-14s %s" % (site or "(kein Standort)", shown))
+        if not x["networks_by_site"]:
+            print("      (keine connected Netze)")
 
 
 main()
