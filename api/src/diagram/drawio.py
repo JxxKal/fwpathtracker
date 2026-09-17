@@ -18,11 +18,8 @@ Zeichnung ist damit gleichzeitig der Abgleich von FMG, iTop und LibreNMS.
 """
 from __future__ import annotations
 
-import html
-import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
-
 from diagram import titleblock
+from diagram.mx import Doc as _Doc, esc as _esc
 
 NET_W, NET_HEAD = 240, 48
 HOST_H, HOST_W = 30, 216
@@ -96,10 +93,6 @@ STYLE: dict[str, str] = {
 }
 
 
-def _esc(s) -> str:
-    return html.escape(str(s if s is not None else ""), quote=False)
-
-
 # Symbol → (Stencil, Malstil). Die Network-Bibliothek ist flächig (nur Füllung);
 # der Cisco-Switch ist ein Linien-Piktogramm und braucht Füllung + weiße Linien.
 SHAPES = {
@@ -135,54 +128,6 @@ def host_style(h: dict) -> str:
 def icon_style(shape: str) -> str:
     stencil, paint = SHAPES[shape]
     return STYLE["icon-base"].format(stencil=stencil, paint=paint)
-
-
-class _Doc:
-    def __init__(self, name: str) -> None:
-        self.mxfile = ET.Element("mxfile", host="A38", modified=datetime.now(timezone.utc).isoformat())
-        diagram = ET.SubElement(self.mxfile, "diagram", name=name, id="a38-netplan")
-        model = ET.SubElement(diagram, "mxGraphModel", grid="1", gridSize="10", guides="1",
-                              tooltips="1", connect="1", arrows="1", fold="1", page="1",
-                              pageScale="1", pageWidth="1654", pageHeight="1169")
-        self.root = ET.SubElement(model, "root")
-        ET.SubElement(self.root, "mxCell", id="0")
-        ET.SubElement(self.root, "mxCell", id="1", parent="0")
-        self._n = 1
-
-    def _id(self) -> str:
-        self._n += 1
-        return f"c{self._n}"
-
-    def vertex(self, label: str, style: str, x: float, y: float, w: float, h: float,
-               parent: str = "1", tooltip: str | None = None, collapsed: bool = False,
-               alt: tuple[float, float] | None = None) -> str:
-        cid = self._id()
-        obj = ET.SubElement(self.root, "object", id=cid, label=label)
-        if tooltip:
-            obj.set("tooltip", tooltip)
-        cell = ET.SubElement(obj, "mxCell", style=style, vertex="1", parent=parent)
-        if collapsed:
-            cell.set("collapsed", "1")
-        geo = ET.SubElement(cell, "mxGeometry", x=str(int(x)), y=str(int(y)),
-                            width=str(int(w)), height=str(int(h)))
-        geo.set("as", "geometry")
-        if alt:
-            r = ET.SubElement(geo, "mxRectangle", x=str(int(x)), y=str(int(y)),
-                              width=str(int(alt[0])), height=str(int(alt[1])))
-            r.set("as", "alternateBounds")
-        return cid
-
-    def edge(self, src: str, dst: str, label: str, kind: str, parent: str = "1") -> str:
-        cid = self._id()
-        style = STYLE["edge"] + STYLE.get(f"edge-{kind}", "")
-        cell = ET.SubElement(self.root, "mxCell", id=cid, style=style, edge="1", parent=parent,
-                             source=src, target=dst, value=label)
-        geo = ET.SubElement(cell, "mxGeometry", relative="1")
-        geo.set("as", "geometry")
-        return cid
-
-    def to_xml(self) -> str:
-        return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(self.mxfile, encoding="unicode")
 
 
 def _net_label(net: dict) -> str:

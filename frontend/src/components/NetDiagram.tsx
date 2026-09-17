@@ -1,6 +1,6 @@
 import { Download, ExternalLink, Map, Play } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { buildDiagram, diagramScopes, type DiagramHosts, type DiagramResult, type DiagramScope, type DiagramScopes } from '../api';
+import { buildDiagram, diagramScopes, type DiagramHosts, type DiagramResult, type DiagramScope, type DiagramScopes, type DiagramView } from '../api';
 import { de } from '../i18n/de';
 
 // Netzplan als draw.io: Scope wählen, Datei bauen lassen, herunterladen.
@@ -31,6 +31,7 @@ export default function NetDiagram() {
   const [site, setSite] = useState('');
   const [hosts, setHosts] = useState<DiagramHosts>('auto');
   const [expand, setExpand] = useState(false);
+  const [view, setView] = useState<DiagramView>('struktur');
   const [res, setRes] = useState<DiagramResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -51,7 +52,7 @@ export default function NetDiagram() {
     try {
       setRes(await buildDiagram(
         scope, scope === 'vdom' || scope === 'firewall' ? device : null,
-        scope === 'vdom' ? vdom : null, scope === 'site' ? site : null, hosts, expand));
+        scope === 'vdom' ? vdom : null, scope === 'site' ? site : null, hosts, expand, view));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally { setBusy(false); }
@@ -69,6 +70,14 @@ export default function NetDiagram() {
       {scopes && scopes.devices.length === 0 && <p className="text-sm text-amber-400">{de.diagram.noDevices}</p>}
 
       <div className="flex flex-wrap items-end gap-2">
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] text-slate-500">{de.diagram.view}</span>
+          <select className="fwpt-input w-56" value={view}
+            onChange={(e) => setView(e.target.value as DiagramView)}>
+            <option value="struktur">{de.diagram.viewStruktur}</option>
+            <option value="logisch">{de.diagram.viewLogisch}</option>
+          </select>
+        </label>
         <label className="flex flex-col gap-1">
           <span className="text-[11px] text-slate-500">{de.diagram.scope}</span>
           <select className="fwpt-input w-52" value={scope} onChange={(e) => setScope(e.target.value as DiagramScope)}>
@@ -131,7 +140,8 @@ export default function NetDiagram() {
         </button>
       </div>
       <p className="text-[11px] text-slate-600">
-        {scope === 'global' ? de.diagram.globalHint
+        {view === 'logisch' ? de.diagram.viewLogischHint
+          : scope === 'global' ? de.diagram.globalHint
           : de.diagram.hostsHint.replace('{n}', String(scopes?.max_hosts ?? 1500))}
       </p>
       {scope === 'site' && scopes?.sites.length === 0 && (

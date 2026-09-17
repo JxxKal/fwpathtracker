@@ -129,8 +129,16 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   *zweifelhaft* (DNS oder ARP kennen sie), *belegt* (antwortet), *nicht
   prüfbar* (kein Ping im Container). Geprüft wird in Wellen, bis die gewünschte
   Anzahl freier Adressen beisammen ist.
-- **Netzplan (draw.io)** — VDOM, Firewall, **Standort** oder **alle Standorte**
-  als `.drawio`-Datei: Netze je
+- **Netzplan (draw.io)** — zwei Darstellungen zur Wahl. **Struktur** (Default):
+  Container für Firewall, VDOM und Netz mit Kopplungen und Switchen. **Logisch**
+  nach der Hausvorgabe für die OT-Dokumentation: Netze als farbige Busleisten
+  mit VLAN-ID, Endgeräte mit auf die signifikanten Stellen gekürzter IP
+  (`.73` im /24, `.58.73` im /16), **ohne Switche und Ports** — ausgeblendete
+  Switche werden im Schriftfeld gezählt. Wird eine Geräteliste zu lang, steht
+  je Geräteklasse ein Symbol mit Anzahl und Verweis auf eine **Tabellenseite**
+  in derselben Datei. Druckformat DIN A3 quer.
+  Beide Darstellungen teilen Scope und Schriftfeld: VDOM, Firewall, **Standort**
+  oder **alle Standorte**; Netze je
   Interface (VLAN, CIDR, Zone, iTop-Name), VDOM-Links, Routen zu fremden VDOMs
   als Nachbarn (Overlay/Transit — die WAN-Seite), Default-Route, Switches per
   LLDP (LibreNMS). Detailstufe wählbar: *nur Netze* (Netzverbindungsplan),

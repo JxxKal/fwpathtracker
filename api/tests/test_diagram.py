@@ -1,6 +1,8 @@
 """Netzplan: Modell aus dem Lab-Inventar, Detailstufen, draw.io-Ausgabe."""
 from __future__ import annotations
 
+import re
+
 import xml.etree.ElementTree as ET
 
 import pytest
@@ -533,3 +535,78 @@ def test_link_status_parsing_handles_both_fortios_shapes():
     assert linkstatus.parse([{"name": "x", "link": "vielleicht"}])["x"]["link"] is None
     assert linkstatus.parse([{"name": "y"}])["y"]["link"] is None
     assert linkstatus.parse(None) == {}
+
+
+# ── Logische Netzdokumentation (Hausvorgabe) ─────────────────────────────────
+
+def test_ip_is_shortened_to_the_significant_part():
+    """„bei Endgeräten abgekürzt auf die signifikanten Anteile" — im /24 bleibt
+    das letzte Oktett, im /16 die letzten zwei."""
+    from diagram.logical import short_ip
+    assert short_ip("10.124.58.73", "10.124.58.0/24") == ".73"
+    assert short_ip("10.124.58.73", "10.124.0.0/16") == ".58.73"
+    assert short_ip("10.124.58.73", "10.0.0.0/8") == ".124.58.73"
+    assert short_ip("10.124.58.73", "10.124.58.64/26") == ".73"
+    assert short_ip("10.124.58.73", "kaputt") == "10.124.58.73"
+
+
+async def test_logical_view_draws_buses_with_vlan_and_colours(inventory, prefixes):
+    from diagram import logical
+    m = await _build(inventory, prefixes, scope="firewall", device="fw-a", vdom=None)
+    root = ET.fromstring(logical.render(m))
+    labels = [o.get("label", "") for o in root.findall(".//object")]
+    assert any("10.1.1.0/24" in l for l in labels)
+    assert any(l.startswith("VLAN ") or "10.1.2.0/24" in l for l in labels)
+    # Je Netz eine eigene Farbe: mindestens zwei verschiedene Leistenfarben.
+    bars = [c.get("style") for c in root.findall(".//mxCell")
+            if "rounded=1" in (c.get("style") or "") and "fontSize=0" in (c.get("style") or "")]
+    fills = {s.split("fillColor=")[1].split(";")[0] for s in bars}
+    assert len(bars) >= 3 and len(fills) >= 3
+    # DIN A3 quer.
+    model_el = root.find(".//mxGraphModel")
+    assert (model_el.get("pageWidth"), model_el.get("pageHeight")) == ("1169", "826")
+
+
+async def test_logical_view_leaves_out_switches_and_says_so(inventory, prefixes):
+    """„Switche und einzelne Netzwerkports werden hier nicht dargestellt" — aber
+    stillschweigend verschwinden darf auch nichts."""
+    from diagram import logical, titleblock
+    hosts = [{"name": "srv-1", "ip": "10.1.1.10", "description": "", "kind": "Server"},
+             {"name": "sw-core", "ip": "10.1.1.2", "description": "", "kind": "NetworkDevice"}]
+    m = await _build(inventory, prefixes, itop_hosts=hosts, itop_addresses={})
+    tb = titleblock.info_from(TB, title="T", subtitle="S", author="a", drawing_no="N")
+    root = ET.fromstring(logical.render(m, title_block=tb))
+    labels = " ".join(o.get("label", "") for o in root.findall(".//object"))
+    assert "srv-1" in labels and "sw-core" not in labels
+    assert "Switche nicht dargestellt" in labels
+
+
+async def test_too_many_hosts_become_one_symbol_per_class_plus_a_table(inventory, prefixes):
+    """„…können die Endgeräte tabellarisch erfasst werden und nur jeweils ein
+    Symbol wird in der Grafik für die jeweilige Geräteklasse verwendet, mit
+    einer Beschriftung, die einen Verweis auf die entsprechende Tabelle enthält."""
+    from diagram import logical
+    hosts = [{"name": f"plc-{i}", "ip": f"10.1.1.{i}", "description": "", "kind": "Server"}
+             for i in range(10, 40)]
+    hosts.append({"name": "hmi", "ip": "10.1.1.90", "description": "Panel", "kind": None})
+    m = await _build(inventory, prefixes, itop_hosts=hosts, itop_addresses={})
+    root = ET.fromstring(logical.render(m, max_hosts=18))
+    pages = [d.get("name") for d in root.findall("diagram")]
+    assert "Tabelle 10.1.1.0/24" in pages
+    labels = [o.get("label", "") for o in root.findall(".//object")]
+    assert any(l.startswith("30 × Server") and "Tabelle 10.1.1.0/24" in l for l in labels)
+    assert any(re.match(r"^\d+ × Endgerät", l) for l in labels)
+    # Die Tabelle nennt jedes Gerät mit voller IP.
+    assert any("10.1.1.39" == l for l in labels) and any(l == "plc-39" for l in labels)
+
+
+async def test_few_hosts_stay_individual_symbols(inventory, prefixes):
+    from diagram import logical
+    hosts = [{"name": f"plc-{i}", "ip": f"10.1.1.{i}", "description": "", "kind": "Server"}
+             for i in range(10, 14)]
+    m = await _build(inventory, prefixes, itop_hosts=hosts, itop_addresses={})
+    root = ET.fromstring(logical.render(m, max_hosts=18))
+    assert [d.get("name") for d in root.findall("diagram")] == ["Netzplan fw-a/root"]
+    labels = [o.get("label", "") for o in root.findall(".//object")]
+    assert any(l.startswith("plc-13") and ".13" in l for l in labels)
+    assert not any("×" in l for l in labels)

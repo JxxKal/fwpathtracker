@@ -328,6 +328,7 @@ export interface DiagramScopes {
 }
 export type DiagramHosts = 'auto' | 'all' | 'netdev' | 'none';
 export type DiagramScope = 'vdom' | 'firewall' | 'site' | 'global';
+export type DiagramView = 'struktur' | 'logisch';
 export interface DiagramResult {
   filename: string; xml: string; hosts_mode: DiagramHosts; warnings: string[];
   stats: { devices: number; vdoms: number; networks: number; hosts_found: number;
@@ -358,14 +359,15 @@ export async function drawioTest(): Promise<DrawioTest> {
   return request('/api/diagram/drawio/test', { method: 'POST' });
 }
 export async function buildDiagram(scope: DiagramScope, device: string | null, vdom: string | null,
-  site: string | null, hosts: DiagramHosts, expandHosts = false): Promise<DiagramResult> {
+  site: string | null, hosts: DiagramHosts, expandHosts = false,
+  view: DiagramView = 'struktur'): Promise<DiagramResult> {
   if (isDemoMode()) {
     const xml = '<?xml version="1.0" encoding="UTF-8"?>\n<mxfile host="A38"><diagram name="Demo" id="demo"><mxGraphModel><root>'
       + '<mxCell id="0"/><mxCell id="1" parent="0"/>'
       + '<object id="c2" label="fw-a"><mxCell style="swimlane" vertex="1" parent="1"><mxGeometry x="40" y="40" width="300" height="200" as="geometry"/></mxCell></object>'
       + '</root></mxGraphModel></diagram></mxfile>';
-    const stem = scope === 'global' ? 'gesamt' : scope === 'site' ? site
-      : scope === 'firewall' ? device : `${device}_${vdom}`;
+    const stem = (view === 'logisch' ? 'logisch_' : '') + (scope === 'global' ? 'gesamt'
+      : scope === 'site' ? site : scope === 'firewall' ? device : `${device}_${vdom}`);
     const mode: DiagramHosts = scope === 'global' ? 'none' : hosts === 'auto' ? 'all' : hosts;
     return {
       filename: `A38_Netzplan_${stem}.drawio`, xml, hosts_mode: mode,
@@ -377,7 +379,7 @@ export async function buildDiagram(scope: DiagramScope, device: string | null, v
   }
   return request('/api/diagram', {
     method: 'POST',
-    body: JSON.stringify({ scope, device, vdom, site, hosts, expand_hosts: expandHosts }),
+    body: JSON.stringify({ scope, device, vdom, site, hosts, expand_hosts: expandHosts, view }),
   });
 }
 

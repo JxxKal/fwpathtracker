@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 import httpx
 
 from deps import get_current_user, require_admin
-from diagram import drawio, linkstatus, model as diagram_model, titleblock
+from diagram import drawio, linkstatus, logical, model as diagram_model, titleblock
 from netguard import guard_egress_url
 from routers.config import read_config
 
@@ -58,6 +58,9 @@ class DiagramRequest(BaseModel):
     site: str | None = Field(default=None, max_length=128)
     hosts: str = Field(default="auto", pattern="^(auto|all|netdev|none)$")
     expand_hosts: bool = False
+    # struktur = Container-Sicht (VDOMs, Kopplungen, Switche);
+    # logisch   = Busleisten-Sicht nach der Hausvorgabe (ohne Switche, DIN A3 quer)
+    view: str = Field(default="struktur", pattern="^(struktur|logisch)$")
 
 
 def _site_detail(site: str | None, scores: dict[str, int]) -> str | None:
@@ -262,6 +265,9 @@ async def build(body: DiagramRequest, request: Request,
             f"{mdl['stats']['hosts_found']} Hosts gefunden — mehr als {diagram_model.MAX_HOSTS}. "
             "Gezeichnet sind nur Netzwerkgeräte; für alle Hosts 'alle Hosts' wählen oder "
             "den Scope auf einen VDOM verkleinern.")
+    if body.view == "logisch" and body.scope == "global":
+        warnings.append("Die logische Sicht zeichnet Netze und Endgeräte — im "
+                        "Gesamtplan gibt es beides nicht. Standort oder Firewall wählen.")
     if body.scope == "global":
         warnings.append("Gesamtplan: gezeichnet werden die Kopplungen der Firewalls, "
                         "nicht ihre Netze und Hosts — dafür einen Standort oder eine "
@@ -269,7 +275,12 @@ async def build(body: DiagramRequest, request: Request,
     raw = {"global": "gesamt", "site": body.site or "", "firewall": body.device or "",
            "vdom": f"{body.device}_{body.vdom}"}[body.scope]
     stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw).strip("_") or "netzplan"
-    xml = drawio.render(mdl, collapse=not body.expand_hosts,
-                        title_block=await _title_block(mdl, stem, user))
+    if body.view == "logisch":
+        stem = f"logisch_{stem}"
+    tb = await _title_block(mdl, stem, user)
+    if body.view == "logisch":
+        xml = logical.render(mdl, title_block=tb)
+    else:
+        xml = drawio.render(mdl, collapse=not body.expand_hosts, title_block=tb)
     return {"filename": f"A38_Netzplan_{stem}.drawio", "xml": xml,
             "stats": mdl["stats"], "hosts_mode": mdl["hosts_mode"], "warnings": warnings}
