@@ -301,8 +301,12 @@ async def _physical(body: DiagramRequest, request: Request, user: dict) -> dict:
         def render(m, tb):
             return physical.render_infra(m, tb, rules=shapes)
     else:
-        if not body.switch_id:
-            raise HTTPException(422, "Für die Switch-Ansicht bitte ein Gerät wählen.")
+        # Genau EINE Auswahl bestimmt den Umfang: ein Standort, eine
+        # Gerätegruppe ODER ein einzelner Switch. Bei Standort/Gruppe wird je
+        # Switch ein Panel gezeichnet.
+        if allow is None and not body.switch_id:
+            raise HTTPException(422, "Bitte einen Standort, eine Gerätegruppe oder "
+                                     "einen Switch wählen.")
 
         async def arp_by_mac(macs: list[str]) -> dict:
             try:
@@ -317,19 +321,61 @@ async def _physical(body: DiagramRequest, request: Request, user: dict) -> dict:
             hit = await dns_source.resolve_ip(dns_cfg, ip, timeout_s=1.5)
             return hit["name"] if hit else None
 
-        mdl = await physical.switch_model(
-            client, cfg, body.switch_id, arp_by_mac, warnings,
-            dns=dns if (dns_cfg.get("resolvers") or dns_cfg.get("search_domains")) else None)
-        name = mdl["device"].get("sysName") or mdl["device"].get("hostname") or body.switch_id
-        attached = sum(len(p["hosts"]) for p in mdl["ports"])
-        title = f"Netzwerk physisch · {name}"
-        subtitle = f"{len(mdl['ports'])} Ports · {attached} angeschlossene Geräte"
-        stem = f"physisch_{name}"
-        stats = {"ports": len(mdl["ports"]), "hosts": attached,
-                 "uplinks": sum(1 for p in mdl["ports"] if p["uplink"]),
-                 "logical": mdl.get("logical", 0)}
-        def render(m, tb):
-            return physical.render_switch(m, tb, rules=shapes)
+        use_dns = dns if (dns_cfg.get("resolvers") or dns_cfg.get("search_domains")) else None
+        if allow is not None:
+            try:
+                index = await client.device_index(cfg)
+            except Exception as exc:
+                raise HTTPException(502, f"LibreNMS nicht abrufbar: {exc}") from exc
+            picked, seen = [], set()
+            for dev in index.values():
+                did = str(dev.get("device_id") or "")
+                if did and did in allow and did not in seen:
+                    seen.add(did)
+                    picked.append((did, str(dev.get("sysName") or dev.get("hostname") or did)))
+            picked.sort(key=lambda p: p[1].lower())
+            if not picked:
+                raise HTTPException(422, "Zu dieser Auswahl gibt es kein überwachtes Gerät.")
+            if len(picked) > MAX_PANELS:
+                warnings.append(f"{len(picked)} Geräte in der Auswahl — gezeichnet werden "
+                                f"die ersten {MAX_PANELS}. Enger wählen; der Standort ist "
+                                "bei uns teils raumscharf gepflegt.")
+                picked = picked[:MAX_PANELS]
+        else:
+            picked = [(body.switch_id, body.switch_id)]
+
+        mdls = [await physical.switch_model(client, cfg, did, arp_by_mac, warnings,
+                                            dns=use_dns) for did, _n in picked]
+        names = [m["device"].get("sysName") or m["device"].get("hostname") or did
+                 for m, (did, _n) in zip(mdls, picked)]
+        attached = sum(len(p["hosts"]) for m in mdls for p in m["ports"])
+        ports_total = sum(len(m["ports"]) for m in mdls)
+        title = "Netzwerk physisch · " + (scope_note or names[0])
+        subtitle = (f"{len(mdls)} Switch{'es' if len(mdls) != 1 else ''} · "
+                    f"{ports_total} Ports · {attached} angeschlossene Geräte")
+        stem = f"physisch_{scope_note or names[0]}"
+        stats = {"switches": len(mdls), "ports": ports_total, "hosts": attached,
+                 "uplinks": sum(1 for m in mdls for p in m["ports"] if p["uplink"]),
+                 "logical": sum(m.get("logical", 0) for m in mdls)}
+        mdl = {"devices_for_shapes": [m["device"] for m in mdls]}
+
+        def render(_m, tb):
+            return physical.render_switches(mdls, tb, rules=shapes, name=title)
+
+    # Ob die Shape-Bibliothek gegriffen hat, sieht man der Zeichnung sonst nur
+    # an — und „nur generische Symbole" ist genau die Frage, die dann aufkommt.
+    devs = (list(mdl["nodes"].values()) if body.view == "physisch-l1"
+            else mdl.get("devices_for_shapes", []))
+    matched = sum(1 for d in devs if physical.match_rule(d, shapes))
+    stats["shapes_matched"] = matched
+    stats["shapes_rules"] = len(shapes)
+    if not shapes:
+        warnings.append("Shape-Bibliothek ist leer — gezeichnet wird mit generischen "
+                        "Klassensymbolen. Modellbilder unter Einstellungen → "
+                        "Shape-Bibliothek hinterlegen.")
+    elif devs and not matched:
+        warnings.append(f"Keine der {len(shapes)} Shape-Regeln passt auf die Geräte "
+                        "dieser Zeichnung — Muster gegen Hardware/sysDescr prüfen.")
 
     stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", stem).strip("_") or "physisch"
     cfg_tb = await read_config("titleblock")
