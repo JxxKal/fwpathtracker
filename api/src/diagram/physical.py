@@ -317,14 +317,15 @@ def _attached_label(host: dict) -> str:
     return "<br>".join(lines)
 
 
-def render_switch(model: dict, title_block: dict | None = None,
-                  rules: list[dict] | None = None) -> str:
+def _draw_panel(doc: Doc, model: dict, x0: float, y_top: float,
+                rules: list[dict] | None) -> tuple[float, float]:
+    """Ein Switch-Panel samt angeschlossener Geräte. Gibt (Unterkante, Breite)
+    zurück, damit mehrere Panels gestapelt werden können."""
     dev = model["device"]
-    doc = Doc(f"Netzwerk physisch · {_name(dev)}", page=A3_LANDSCAPE)
     ports = model["ports"]
 
     # Portnamen um ihr gemeinsames Präfix kürzen: aus
-    # „Ten-GigabitEthernet1/0/24" wird „1/0/24", das Präfix steht am Panel.
+    # „Ten-GigabitEthernet1/0/24" wird „24", das Präfix steht am Panel.
     prefix = common_prefix([p["name"] for p in ports])
     rows = max(1, -(-len(ports) // PORTS_PER_ROW))
     cols = min(PORTS_PER_ROW, max(1, len(ports)))
@@ -335,16 +336,13 @@ def render_switch(model: dict, title_block: dict | None = None,
     # Plätze verteilt statt an die Port-Position geklebt — nebeneinander
     # liegende Ports sind 62 px auseinander, eine Beschriftung braucht 150.
     attached = [(p, h) for p in ports for h in p["hosts"][:4]]
-    above = attached[0::2]
-    below = attached[1::2]
+    above, below = attached[0::2], attached[1::2]
 
     def rows_needed(items: list) -> int:
         per_row = max(1, int(panel_w // HOST_SLOT))
         return max(1, -(-len(items) // per_row)) if items else 0
 
-    top_rows = rows_needed(above)
-    x0, y0 = 60, 60
-    panel_y = y0 + top_rows * HOST_ROW + 30
+    panel_y = y_top + rows_needed(above) * HOST_ROW + 30
 
     rule = match_rule(dev, rules)
     head = (f"{esc(_name(dev))} &#160; {esc(dev.get('ip') or '')} &#160; "
@@ -356,7 +354,7 @@ def render_switch(model: dict, title_block: dict | None = None,
                  f"+ {model['logical']} logische Interfaces</span>")
     tip = "\n".join(f"{k}: {v}" for k, v in (
         ("Gerät", _name(dev)), ("IP", dev.get("ip")), ("Hardware", dev.get("hardware")),
-        ("OS", dev.get("os"))) if v)
+        ("Standort", dev.get("location")), ("OS", dev.get("os"))) if v)
     panel = doc.vertex(head, PANEL, x0, panel_y, panel_w, panel_h, tooltip=tip)
     # Hinterlegtes Modellbild bekommt mehr Platz als ein Klassensymbol — es ist
     # die Frontblende, die man wiedererkennen soll.
@@ -398,9 +396,30 @@ def render_switch(model: dict, title_block: dict | None = None,
 
     draw(above, True)
     draw(below, False)
+    bottom = panel_y + panel_h + rows_needed(below) * HOST_ROW + 40
+    return bottom, panel_w
 
+
+def render_switch(model: dict, title_block: dict | None = None,
+                  rules: list[dict] | None = None) -> str:
+    return render_switches([model], title_block, rules)
+
+
+def render_switches(models: list[dict], title_block: dict | None = None,
+                    rules: list[dict] | None = None, name: str | None = None) -> str:
+    """Ein Panel je Switch, untereinander — für „alle Switches an Standort X".
+    Ein Standort ist bei uns teils raumscharf gepflegt, dann ist das genau der
+    Schrank, den jemand vor sich hat."""
+    title = name or (f"Netzwerk physisch · {_name(models[0]['device'])}"
+                     if models else "Netzwerk physisch")
+    doc = Doc(title, page=A3_LANDSCAPE)
+    x0, y = 60, 60
+    widest = 0.0
+    for model in models:
+        y, w = _draw_panel(doc, model, x0, y, rules)
+        widest = max(widest, w)
+        y += 60
     if title_block:
-        bottom = panel_y + panel_h + rows_needed(below) * HOST_ROW + 60
-        titleblock.draw(doc, x0 + panel_w + 80, max(y0, bottom - titleblock.HEIGHT),
-                        title_block)
+        titleblock.draw(doc, x0 + widest + 80,
+                        max(60.0, y - titleblock.HEIGHT), title_block)
     return doc.to_xml()

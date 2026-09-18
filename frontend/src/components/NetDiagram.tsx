@@ -34,6 +34,10 @@ export default function NetDiagram() {
   const [view, setView] = useState<DiagramView>('struktur');
   const [switches, setSwitches] = useState<SwitchEntry[]>([]);
   const [switchId, setSwitchId] = useState('');
+  // Standort, Gerätegruppe und einzelner Switch sind Alternativen, keine
+  // Filterkette: eine Zeichnung zeigt einen Standort ODER eine Gruppe ODER
+  // ein Gerät. Deshalb schließen sie sich gegenseitig aus.
+  const [pickedSwitch, setPickedSwitch] = useState(false);
   const [filters, setFilters] = useState<PhysicalFilters | null>(null);
   const [location, setLocation] = useState('');
   const [group, setGroup] = useState('');
@@ -80,7 +84,7 @@ export default function NetDiagram() {
       setRes(await buildDiagram(
         scope, scope === 'vdom' || scope === 'firewall' ? device : null,
         scope === 'vdom' ? vdom : null, scope === 'site' ? site : null, hosts, expand, view,
-        view === 'physisch-l2' ? switchId : null,
+        view === 'physisch-l2' && pickedSwitch ? switchId : null,
         physical ? location || null : null, physical ? group || null : null));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -155,16 +159,18 @@ export default function NetDiagram() {
           <>
             <label className="flex flex-col gap-1">
               <span className="text-[11px] text-slate-500">{de.diagram.location}</span>
-              <select className="fwpt-input w-60" value={location}
-                onChange={(e) => setLocation(e.target.value)}>
+              <select className="fwpt-input w-60 disabled:opacity-40" value={location}
+                disabled={!!group || !!pickedSwitch}
+                onChange={(e) => { setLocation(e.target.value); setGroup(''); setPickedSwitch(false); }}>
                 <option value="">{de.diagram.filterAll}</option>
                 {(filters?.locations ?? []).map((l) => <option key={l} value={l}>{l}</option>)}
               </select>
             </label>
             <label className="flex flex-col gap-1">
               <span className="text-[11px] text-slate-500">{de.diagram.group}</span>
-              <select className="fwpt-input w-52" value={group}
-                onChange={(e) => setGroup(e.target.value)}>
+              <select className="fwpt-input w-52 disabled:opacity-40" value={group}
+                disabled={!!location || !!pickedSwitch}
+                onChange={(e) => { setGroup(e.target.value); setLocation(''); setPickedSwitch(false); }}>
                 <option value="">{de.diagram.filterAll}</option>
                 {(filters?.groups ?? []).map((g) => (
                   <option key={g.name} value={g.name} title={g.desc ?? undefined}>{g.name}</option>
@@ -176,8 +182,11 @@ export default function NetDiagram() {
         {view === 'physisch-l2' && (
           <label className="flex flex-col gap-1">
             <span className="text-[11px] text-slate-500">{de.diagram.switchPick}</span>
-            <select className="fwpt-input w-64 font-mono" value={switchId}
-              onChange={(e) => setSwitchId(e.target.value)}>
+            <select className="fwpt-input w-64 font-mono disabled:opacity-40"
+              value={pickedSwitch ? switchId : ''}
+              disabled={!!location || !!group}
+              onChange={(e) => { setSwitchId(e.target.value); setPickedSwitch(!!e.target.value); }}>
+              <option value="">{de.diagram.switchAll}</option>
               {switches.map((s) => (
                 <option key={s.device_id} value={s.device_id}
                   title={[s.hardware, s.location].filter(Boolean).join(' · ') || undefined}>
@@ -202,7 +211,7 @@ export default function NetDiagram() {
           {de.diagram.expand}
         </label>
         <button type="button" className="fwpt-btn" onClick={build}
-          disabled={busy || (view === 'physisch-l2' ? !switchId
+          disabled={busy || (view === 'physisch-l2' ? !(pickedSwitch || location || group)
             : physical ? false : scope === 'site' ? !site : scope !== 'global' && !device)}>
           <Play size={14} /> {busy ? de.diagram.building : de.diagram.build}
         </button>

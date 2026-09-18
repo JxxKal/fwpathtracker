@@ -922,3 +922,24 @@ async def test_switch_panel_uses_the_stored_model_picture(inventory, prefixes):
     plain = ET.fromstring(physical.render_switch(m))
     assert not any("shape=image" in (o.find("mxCell").get("style") or "")
                    for o in plain.findall(".//object"))
+
+
+async def test_several_switch_panels_are_stacked_without_overlap(inventory, prefixes):
+    """Standort oder Gruppe statt Einzelgerät: dann gehört je Switch ein Panel
+    in die Zeichnung, untereinander und ohne Überschneidung."""
+    from diagram import physical
+
+    async def arp(macs):
+        return {}
+
+    m = await physical.switch_model(FakeLnms(), {}, 4, arp, [])
+    second = {**m, "device": {**m["device"], "sysName": "acc-2"}}
+    xml = physical.render_switches([m, second], name="Netzwerk physisch · Haus 1 OG")
+    root = ET.fromstring(xml)
+    assert root.find("diagram").get("name") == "Netzwerk physisch · Haus 1 OG"
+    panels = [(o.get("label"), _geo(o.find("mxCell"))) for o in root.findall(".//object")
+              if "fillColor=#d9d9d9" in (o.find("mxCell").get("style") or "")]
+    assert len(panels) == 2
+    (_l1, g1), (_l2, g2) = sorted(panels, key=lambda p: p[1][1])
+    assert g2[1] >= g1[1] + g1[3]
+    assert any("acc-2" in (l or "") for l, _g in panels)

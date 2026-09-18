@@ -161,6 +161,10 @@ async def _title_block(mdl: dict, stem: str, user: dict) -> dict | None:
 _SCOPE_LABEL = {"vdom": "VDOM", "firewall": "Firewall", "site": "Standort",
                 "global": "gesamt"}
 
+# Mehr Panels passen auf kein Blatt und dauern zu lange — LibreNMS wird je
+# Gerät einmal nach Ports und FDB gefragt.
+MAX_PANELS = 10
+
 
 def _net_note(st: dict) -> str:
     bits = []

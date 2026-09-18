@@ -167,9 +167,11 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   enthalten teils nur EMF, das kein Browser darstellt; SVG und PNG bettet
   draw.io dagegen direkt und verlustfrei ein.
 
-  Beide physischen Sichten lassen sich auf einen **LibreNMS-Standort** (bei uns
-  teils raumscharf gepflegt) oder eine **Gerätegruppe** einschränken; beides
-  gesetzt heißt Schnittmenge. Gefiltert wird von LibreNMS selbst
+  Der Umfang einer physischen Zeichnung ist genau **eine** Auswahl:
+  **LibreNMS-Standort** (bei uns teils raumscharf gepflegt), **Gerätegruppe**
+  oder **ein einzelner Switch** — die drei schließen sich in der Oberfläche
+  gegenseitig aus. Bei Standort oder Gruppe zeichnet Ebene 2 **je Switch ein
+  Panel** untereinander (gedeckelt auf 10, sonst passt es auf kein Blatt). Gefiltert wird von LibreNMS selbst
   (`?type=location` bzw. `/devicegroups/:name`) — das Standortfeld heißt je
   nach Version anders, der Filter nicht. Der Filter wirkt auch auf die
   Switch-Auswahl: ein raumscharfer Standort macht aus 300 Geräten eine Handvoll.
