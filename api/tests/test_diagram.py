@@ -1100,3 +1100,118 @@ async def test_named_port_map_drives_the_image_panel(inventory, prefixes):
     # p4 ist nicht zugeordnet und steht deshalb unter dem Bild, nicht nirgends.
     labels = [o.get("label", "") for o in root.findall(".//object")]
     assert "1 Ports ohne zugeordnete Buchse" in labels and "p4" in labels
+
+
+# ── Stacks und Gerätemengen ──────────────────────────────────────────────────
+
+def test_stack_unit_is_read_from_the_name_and_normalised():
+    """Ein Stack ist mehrfach dasselbe Gerät: eingemessen wird EIN Blech, und
+    Einheit 2 sitzt an denselben Stellen wie Einheit 1."""
+    from diagram.physical import port_unit, unit_key
+    assert port_unit("Ten-GigabitEthernet2/0/17") == 2
+    assert unit_key("Ten-GigabitEthernet2/0/17") == "Ten-GigabitEthernet1/0/17"
+    assert unit_key("Ten-GigabitEthernet1/0/17") == "Ten-GigabitEthernet1/0/17"
+    # Zwei Zahlengruppen sind Slot/Port auf einem Einzelgerät, keine Einheit.
+    assert port_unit("GigabitEthernet0/1") == 1
+    assert unit_key("GigabitEthernet0/1") == "GigabitEthernet0/1"
+    assert port_unit("p25") == 1 and unit_key("p25") == "p25"
+
+
+class StackLnms(FakeLnms):
+    """Zwei-Einheiten-Stack wie im Feld, 8 Ports je Einheit."""
+
+    PORTS = {"4": [{"port_id": 1000 + u * 100 + i,
+                    "ifName": f"Ten-GigabitEthernet{u}/0/{i}", "ifAlias": "",
+                    "ifOperStatus": "up"}
+                   for u in (1, 2) for i in range(1, 9)]}
+    FDB = {"4": [{"port_id": 1000 + u * 100 + i, "mac_address": f"000c29{u}a00{i:02x}"}
+                 for u in (1, 2) for i in range(2, 5)]}
+
+    async def neighbours(self, cfg):
+        return {}
+
+
+STACK_RULE = [{
+    "hardware": "stacked", "image": "data:image/png;base64,AAAB",
+    "width": 400, "height": 60, "port_w": 12, "port_h": 14,
+    "ports": {f"Ten-GigabitEthernet1/0/{i}": {"x": 20 + i * 20, "y": 30}
+              for i in range(1, 9)},
+}]
+
+
+async def test_every_stack_unit_gets_its_own_faceplate(inventory, prefixes):
+    from diagram import physical
+
+    async def arp(macs):
+        return {}
+
+    m = await physical.switch_model(StackLnms(), {}, 4, arp, [])
+    m["device"] = {**m["device"], "hardware": "stacked"}
+    root = ET.fromstring(physical.render_switch(m, rules=STACK_RULE))
+    panels = [o for o in root.findall(".//object")
+              if "shape=image" in (o.find("mxCell").get("style") or "")]
+    assert len(panels) == 2, "je Einheit ein Blech"
+    heads = [o.get("label", "") for o in root.findall(".//object")]
+    assert any("Einheit 1" in h for h in heads) and any("Einheit 2" in h for h in heads)
+    # Jede Einheit trägt ihre 8 Buchsen — keine landet in der Restzeile.
+    for panel in panels:
+        kids = [o for o in root.findall(".//object")
+                if o.find("mxCell").get("parent") == panel.get("id")]
+        assert len(kids) == 8
+    assert not any("ohne zugeordnete Buchse" in h for h in heads)
+    # Und die Bleche liegen untereinander, nicht übereinander.
+    (y1, h1), (y2, _h2) = sorted((_geo(p.find("mxCell"))[1], _geo(p.find("mxCell"))[3])
+                                 for p in panels)
+    assert y2 >= y1 + h1
+
+
+async def test_many_devices_go_to_a_table_instead_of_the_drawing(inventory, prefixes):
+    """70 Geräte an einem Blech ergaben 14 Reihen und Leitungen quer über alles.
+    Die Hausvorgabe sieht für lange Listen ohnehin eine Tabelle vor."""
+    from diagram import physical
+
+    async def arp(macs):
+        return {}
+
+    class Busy(FakeLnms):
+        PORTS = {"4": [{"port_id": 400 + i, "ifName": f"p{i}", "ifOperStatus": "up"}
+                       for i in range(1, 41)]}
+        FDB = {"4": [{"port_id": 400 + i, "mac_address": f"000c29aa{i:04x}"}
+                     for i in range(1, 41)]}
+
+        async def neighbours(self, cfg):
+            return {}
+
+    m = await physical.switch_model(Busy(), {}, 4, arp, [])
+    root = ET.fromstring(physical.render_switch(m))
+    assert any(d.get("name", "").startswith("Geräte ") for d in root.findall("diagram"))
+    head = next(o.get("label") for o in root.findall(".//object")
+                if "fillColor=#d9d9d9" in (o.find("mxCell").get("style") or ""))
+    assert "40 Geräte — siehe Tabellenseite" in head
+    # In der Zeichnung selbst hängt dann kein Gerät mehr.
+    assert not any("mxgraph.networks.pc" in (o.find("mxCell").get("style") or "")
+                   for o in root.findall(".//object"))
+
+
+async def test_few_devices_stay_in_at_most_two_rows(inventory, prefixes):
+    from diagram import physical
+
+    async def arp(macs):
+        return {}
+
+    class Some(FakeLnms):
+        PORTS = {"4": [{"port_id": 400 + i, "ifName": f"p{i}", "ifOperStatus": "up"}
+                       for i in range(1, 13)]}
+        FDB = {"4": [{"port_id": 400 + i, "mac_address": f"000c29bb{i:04x}"}
+                     for i in range(1, 13)]}
+
+        async def neighbours(self, cfg):
+            return {}
+
+    m = await physical.switch_model(Some(), {}, 4, arp, [])
+    root = ET.fromstring(physical.render_switch(m))
+    icons = [_geo(o.find("mxCell")) for o in root.findall(".//object")
+             if "mxgraph.networks" in (o.find("mxCell").get("style") or "")
+             and (o.get("tooltip") or "").startswith("MAC")]
+    assert len(icons) == 12
+    assert len({g[1] for g in icons}) <= 4     # höchstens zwei Reihen je Seite

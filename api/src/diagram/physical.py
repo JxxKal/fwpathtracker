@@ -69,6 +69,11 @@ PORT_FREE, PORT_USED, PORT_UPLINK = "#ffffff", "#d5e8d4", "#e1d5e7"
 ATTACHED = ("shape={stencil};html=1;aspect=fixed;fillColor={color};strokeColor=none;"
             "verticalLabelPosition=bottom;verticalAlign=top;fontSize=9;whiteSpace=wrap;")
 WIRE = "html=1;endArrow=none;strokeColor=#888888;"
+TABLE_ROW_H = 20
+TABLE_HEAD = ("rounded=0;html=1;fillColor=#e8e8e8;strokeColor=#666666;fontStyle=1;"
+              "fontSize=10;align=left;spacingLeft=6;")
+TABLE_CELL = ("rounded=0;html=1;fillColor=#ffffff;strokeColor=#bbbbbb;fontSize=10;"
+              "align=left;spacingLeft=6;")
 
 # ── Kalibriertes Modellbild ──────────────────────────────────────────────────
 # Ein Bild allein trägt keine Information: die Leitung muss an der richtigen
@@ -86,6 +91,30 @@ PORT_OVERLAY = ("rounded=0;html=1;fillColor={fill};strokeColor={line};strokeWidt
 OVERLAY_COLORS = {"used": ("#d5e8d4", "#2e8b57", 70),
                   "uplink": ("#e1d5e7", "#6a4c93", 70),
                   "free": ("none", "#999999", 45)}
+
+
+# Stack-Namen: <Name><Einheit>/<Slot>/<Port>. Nur bei DREI Zahlengruppen ist
+# die erste die Stack-Einheit — `Gi0/1` ist Slot/Port auf einem Einzelgerät.
+UNIT_RE = re.compile(r"^(\D*)(\d+)/(\d+)/(\d+)$")
+MAX_DEVICES_DRAWN = 24      # darüber: Geräte in die Tabelle statt an die Buchse
+
+
+def port_unit(name: str) -> int:
+    """Stack-Einheit eines Ports; 1, wenn der Name keine trägt."""
+    m = UNIT_RE.match(name or "")
+    return int(m.group(2)) if m else 1
+
+
+def unit_key(name: str) -> str:
+    """Portname auf Einheit 1 normiert — der Schlüssel der Buchsenzuordnung.
+
+    Ein Stack ist mehrfach dasselbe Gerät: eingemessen wird EIN Blech, und
+    `Ten-GigabitEthernet2/0/1` sitzt darauf an derselben Stelle wie
+    `Ten-GigabitEthernet1/0/1`. Ohne diese Normierung fällt jede weitere
+    Einheit durch die Zuordnung und landet in der Restzeile.
+    """
+    m = UNIT_RE.match(name or "")
+    return f"{m.group(1)}1/{m.group(3)}/{m.group(4)}" if m else name
 
 
 def port_number(name: str) -> int | None:
@@ -180,6 +209,8 @@ def port_places(rule: dict | None):
 
         def by_name(name: str) -> dict | None:
             spot = places.get(name)
+            if not isinstance(spot, dict):
+                spot = places.get(unit_key(name))
             if not isinstance(spot, dict):
                 return None
             return {"x": float(spot.get("x", 0)), "y": float(spot.get("y", 0)),
@@ -421,13 +452,65 @@ def _attached_label(host: dict) -> str:
     return "<br>".join(lines)
 
 
-def _draw_image_panel(doc: Doc, model: dict, rule: dict, place,
-                      x0: float, y_top: float) -> tuple[float, float]:
-    """Kalibriertes Modellbild als Panel: das Bild ist die Fläche, die Buchsen
-    liegen als durchsichtige Felder darüber. So landet die Leitung dort, wo im
-    echten Gerät das Kabel steckt."""
-    dev = model["device"]
-    ports = model["ports"]
+def _device_rows(items: list, width: float) -> int:
+    """Geräte je Seite auf höchstens zwei Reihen — sonst wächst die Zeichnung
+    nach oben und unten weg und die Leitungen laufen quer über alles. Breiter
+    darf sie werden: ein Switchplan ist nun einmal breit."""
+    if not items:
+        return 0
+    return 1 if len(items) * HOST_SLOT <= width else 2
+
+
+def _draw_devices(doc: Doc, items: list, cell: dict, x0: float, width: float,
+                  top: float, bottom: float, upward: bool) -> float:
+    """Geräte über bzw. unter dem Blech. Gibt die belegte Höhe zurück."""
+    rows = _device_rows(items, width)
+    if not rows:
+        return 0.0
+    per_row = -(-len(items) // rows)
+    band = max(width, per_row * HOST_SLOT)
+    slot = band / per_row
+    left = x0 + (width - band) / 2
+    for n, (port, host) in enumerate(items):
+        col, row = n % per_row, n // per_row
+        hx = left + col * slot + (slot - HOST_ICON) / 2
+        hy = (top - 30 - (rows - row) * HOST_ROW if upward
+              else bottom + 30 + row * HOST_ROW)
+        stc, clr = _attached_style(host)
+        htip = "\n".join(f"{k}: {v}" for k, v in (
+            ("MAC", host["mac_readable"]), ("IP", host.get("ip")),
+            ("Name", host.get("name")), ("Port", port["name"]),
+            ("zuletzt gesehen", host.get("last_seen"))) if v)
+        hid = doc.vertex(_attached_label(host), ATTACHED.format(stencil=stc, color=clr),
+                         hx, hy, HOST_ICON, HOST_ICON, tooltip=htip)
+        doc.edge(hid, cell[port["port_id"]], "", WIRE)
+    return rows * HOST_ROW + 30
+
+
+def _device_table(doc: Doc, title: str, items: list) -> None:
+    """Zu viele Geräte für die Zeichnung: dann in eine Tabelle, wie es die
+    Hausvorgabe für lange Gerätelisten ohnehin vorsieht."""
+    doc.page(f"Geräte {title}"[:50])
+    cols = [("Port", 180), ("MAC", 150), ("IP", 140), ("Name", 260)]
+    x, y = 40, 60
+    doc.vertex(esc(title), "text;html=1;fontSize=14;fontStyle=1;align=left;",
+               x, y - 28, sum(w for _c, w in cols), 24)
+    cx = x
+    for name, w in cols:
+        doc.vertex(esc(name), TABLE_HEAD, cx, y, w, TABLE_ROW_H)
+        cx += w
+    for i, (port, host) in enumerate(items, 1):
+        cx = x
+        values = [port["name"], host["mac_readable"], host.get("ip") or "",
+                  host.get("name") or ""]
+        for (_n, w), value in zip(cols, values):
+            doc.vertex(esc(value), TABLE_CELL, cx, y + i * TABLE_ROW_H, w, TABLE_ROW_H)
+            cx += w
+
+
+def _draw_unit(doc: Doc, dev: dict, rule: dict, place, ports: list[dict],
+               x0: float, y_top: float, unit: int, units: int) -> tuple[float, float]:
+    """Ein Blech: das Modellbild mit seinen Buchsen und den Geräten daran."""
     img_w = float(rule.get("width") or 800)
     img_h = float(rule.get("height") or 120)
 
@@ -437,20 +520,23 @@ def _draw_image_panel(doc: Doc, model: dict, rule: dict, place,
         spot = place(p["name"])
         (placed.append((p, spot)) if spot else rest.append(p))
 
-    attached = [(p, h) for p, _spot in placed for h in p["hosts"][:4]]
+    attached = [(p, h) for p, _s in placed for h in p["hosts"][:4]]
     attached += [(p, h) for p in rest for h in p["hosts"][:4]]
-    above, below = attached[0::2], attached[1::2]
-    per_row = max(1, int(img_w // HOST_SLOT))
+    too_many = len(attached) > MAX_DEVICES_DRAWN
+    above, below = ([], []) if too_many else (attached[0::2], attached[1::2])
 
-    def rows_needed(items: list) -> int:
-        return max(1, -(-len(items) // per_row)) if items else 0
-
-    img_y = y_top + rows_needed(above) * HOST_ROW + 46
+    img_y = y_top + _device_rows(above, img_w) * HOST_ROW + (30 if above else 0) + 26
+    head = (f"{esc(_name(dev))} &#160; {esc(dev.get('ip') or '')}"
+            + (f" &#160; Einheit {unit}" if units > 1 else "")
+            + f" &#160; {len(ports)} Ports")
+    if too_many:
+        head += (f" &#160; <span style='font-weight:normal;font-size:10px'>"
+                 f"{len(attached)} Geräte — siehe Tabellenseite</span>")
     tip = "\n".join(f"{k}: {v}" for k, v in (
         ("Gerät", _name(dev)), ("IP", dev.get("ip")), ("Modell", rule.get("label")),
+        ("Stack-Einheit", unit if units > 1 else None),
         ("Hardware", dev.get("hardware")), ("Standort", dev.get("location"))) if v)
-    doc.vertex(f"{esc(_name(dev))} &#160; {esc(dev.get('ip') or '')} &#160; "
-               f"{len(ports)} Ports", PANEL_TITLE, x0, img_y - 26, img_w, 22)
+    doc.vertex(head, PANEL_TITLE, x0, img_y - 24, img_w, 22)
     image = str(rule["image"]).replace(";base64,", ",", 1)
     panel = doc.vertex("", IMAGE_PANEL.format(image=image), x0, img_y, img_w, img_h,
                        tooltip=tip)
@@ -458,7 +544,6 @@ def _draw_image_panel(doc: Doc, model: dict, rule: dict, place,
     cell: dict[str, str] = {}
     for p, spot in placed:
         w, h = spot["w"], spot["h"]
-        px, py = spot["x"], spot["y"]
         kind = "uplink" if p["uplink"] else "used" if p["hosts"] else "free"
         fill, line, opacity = OVERLAY_COLORS[kind]
         ptip = "\n".join(str(t) for t in (
@@ -467,15 +552,13 @@ def _draw_image_panel(doc: Doc, model: dict, rule: dict, place,
             "up" if p["up"] else "down") if t)
         cell[p["port_id"]] = doc.vertex(
             "", PORT_OVERLAY.format(fill=fill, line=line, opacity=opacity),
-            px - w / 2, py - h / 2, w, h, parent=panel, tooltip=ptip)
+            spot["x"] - w / 2, spot["y"] - h / 2, w, h, parent=panel, tooltip=ptip)
 
-    # Ports, die in kein Raster passen (Module, SFP ohne Block), verschwinden
-    # nicht — sie stehen als Kästchenreihe unter dem Bild.
     bottom = img_y + img_h
     if rest:
         doc.vertex(f"{len(rest)} Ports ohne zugeordnete Buchse",
                    "text;html=1;fontSize=9;align=left;fontColor=#888888;",
-                   x0, bottom + 6, 220, 16)
+                   x0, bottom + 6, 260, 16)
         for i, p in enumerate(rest):
             fill = PORT_UPLINK if p["uplink"] else PORT_USED if p["hosts"] else PORT_FREE
             cell[p["port_id"]] = doc.vertex(
@@ -485,26 +568,29 @@ def _draw_image_panel(doc: Doc, model: dict, rule: dict, place,
                 PORT_W - 3, PORT_H - 3, tooltip=f"Port {p['name']}")
         bottom += 24 + (-(-len(rest) // PORTS_PER_ROW)) * PORT_H
 
-    def draw(items: list, upward: bool) -> None:
-        slot = img_w / max(1, min(len(items), per_row))
-        for n, (port, host) in enumerate(items):
-            col, row = n % per_row, n // per_row
-            hx = x0 + col * slot + (slot - HOST_ICON) / 2
-            hy = (img_y - 46 - (row + 1) * HOST_ROW if upward
-                  else bottom + 30 + row * HOST_ROW)
-            stc, clr = _attached_style(host)
-            htip = "\n".join(f"{k}: {v}" for k, v in (
-                ("MAC", host["mac_readable"]), ("IP", host.get("ip")),
-                ("Name", host.get("name")), ("Port", port["name"]),
-                ("zuletzt gesehen", host.get("last_seen"))) if v)
-            hid = doc.vertex(_attached_label(host),
-                             ATTACHED.format(stencil=stc, color=clr),
-                             hx, hy, HOST_ICON, HOST_ICON, tooltip=htip)
-            doc.edge(hid, cell[port["port_id"]], "", WIRE)
+    _draw_devices(doc, above, cell, x0, img_w, img_y, bottom, True)
+    used = _draw_devices(doc, below, cell, x0, img_w, img_y, bottom, False)
+    if too_many:
+        name = _name(dev) + (f" Einheit {unit}" if units > 1 else "")
+        _device_table(doc, name, attached)
+    return bottom + used + 40, img_w
 
-    draw(above, True)
-    draw(below, False)
-    return bottom + rows_needed(below) * HOST_ROW + 40, img_w
+
+def _draw_image_panel(doc: Doc, model: dict, rule: dict, place,
+                      x0: float, y_top: float) -> tuple[float, float]:
+    """Kalibriertes Modellbild als Blech. Ein Stack ist mehrfach dasselbe
+    Gerät — je Einheit ein Blech, alle mit derselben Zuordnung."""
+    dev = model["device"]
+    by_unit: dict[int, list[dict]] = {}
+    for p in model["ports"]:
+        by_unit.setdefault(port_unit(p["name"]), []).append(p)
+    units = sorted(by_unit)
+    y, width = y_top, 0.0
+    for unit in units:
+        y, w = _draw_unit(doc, dev, rule, place, by_unit[unit], x0, y, unit, len(units))
+        width = max(width, w)
+        y += 30
+    return y, width
 
 
 def _draw_panel(doc: Doc, model: dict, x0: float, y_top: float,
@@ -530,13 +616,9 @@ def _draw_panel(doc: Doc, model: dict, x0: float, y_top: float,
     # Plätze verteilt statt an die Port-Position geklebt — nebeneinander
     # liegende Ports sind 62 px auseinander, eine Beschriftung braucht 150.
     attached = [(p, h) for p in ports for h in p["hosts"][:4]]
-    above, below = attached[0::2], attached[1::2]
-
-    def rows_needed(items: list) -> int:
-        per_row = max(1, int(panel_w // HOST_SLOT))
-        return max(1, -(-len(items) // per_row)) if items else 0
-
-    panel_y = y_top + rows_needed(above) * HOST_ROW + 30
+    too_many = len(attached) > MAX_DEVICES_DRAWN
+    above, below = ([], []) if too_many else (attached[0::2], attached[1::2])
+    panel_y = y_top + _device_rows(above, panel_w) * HOST_ROW + (30 if above else 0)
 
     head = (f"{esc(_name(dev))} &#160; {esc(dev.get('ip') or '')} &#160; "
             f"{len(ports)} Ports")
@@ -545,6 +627,9 @@ def _draw_panel(doc: Doc, model: dict, x0: float, y_top: float,
     if model.get("logical"):
         head += (f" &#160; <span style='font-weight:normal;font-size:10px'>"
                  f"+ {model['logical']} logische Interfaces</span>")
+    if too_many:
+        head += (f" &#160; <span style='font-weight:normal;font-size:10px'>"
+                 f"{len(attached)} Geräte — siehe Tabellenseite</span>")
     tip = "\n".join(f"{k}: {v}" for k, v in (
         ("Gerät", _name(dev)), ("IP", dev.get("ip")), ("Hardware", dev.get("hardware")),
         ("Standort", dev.get("location")), ("OS", dev.get("os"))) if v)
@@ -569,28 +654,11 @@ def _draw_panel(doc: Doc, model: dict, x0: float, y_top: float,
             PANEL_PAD + col * PORT_W, PANEL_HEAD + PANEL_PAD + row * PORT_H,
             PORT_W - 3, PORT_H - 3, parent=panel, tooltip=ptip)
 
-    def draw(items: list, upward: bool) -> None:
-        per_row = max(1, int(panel_w // HOST_SLOT))
-        slot = panel_w / max(1, min(len(items), per_row))
-        for n, (port, host) in enumerate(items):
-            col, row = n % per_row, n // per_row
-            hx = x0 + col * slot + (slot - HOST_ICON) / 2
-            hy = (panel_y - 30 - (row + 1) * HOST_ROW if upward
-                  else panel_y + panel_h + 30 + row * HOST_ROW)
-            stc, clr = _attached_style(host)
-            htip = "\n".join(f"{k}: {v}" for k, v in (
-                ("MAC", host["mac_readable"]), ("IP", host.get("ip")),
-                ("Name", host.get("name")), ("Port", port["name"]),
-                ("zuletzt gesehen", host.get("last_seen"))) if v)
-            hid = doc.vertex(_attached_label(host),
-                             ATTACHED.format(stencil=stc, color=clr),
-                             hx, hy, HOST_ICON, HOST_ICON, tooltip=htip)
-            doc.edge(hid, cell[port["port_id"]], "", WIRE)
-
-    draw(above, True)
-    draw(below, False)
-    bottom = panel_y + panel_h + rows_needed(below) * HOST_ROW + 40
-    return bottom, panel_w
+    _draw_devices(doc, above, cell, x0, panel_w, panel_y, panel_y + panel_h, True)
+    used = _draw_devices(doc, below, cell, x0, panel_w, panel_y, panel_y + panel_h, False)
+    if too_many:
+        _device_table(doc, _name(dev), attached)
+    return panel_y + panel_h + used + 40, panel_w
 
 
 def render_switch(model: dict, title_block: dict | None = None,

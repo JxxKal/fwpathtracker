@@ -178,6 +178,14 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   Zuordnung verschwinden nicht, sie stehen als Kästchenreihe unter dem Bild.
   Ohne Zuordnung bleibt das Bild ein Erkennungszeichen und die Geräte hängen am
   schematischen Panel — die Rückfallebene für alles Unbekannte.
+  Ein **Stack** ist mehrfach dasselbe Gerät: eingemessen wird EIN Blech, und
+  die Zuordnung gilt für jede Einheit (`Ten-GigabitEthernet2/0/17` sitzt dort,
+  wo `…1/0/17` sitzt). Gezeichnet wird je Einheit ein Blech untereinander.
+  Angeschlossene Geräte stehen in **höchstens zwei Reihen** je Seite; die
+  Zeichnung darf dafür breiter werden, denn ein Switchplan ist breit. Ab 24
+  Geräten je Blech wandern sie in eine **Tabellenseite**, wie es die
+  Hausvorgabe für lange Gerätelisten vorsieht — vorher ergaben 70 Geräte
+  vierzehn Reihen und Leitungen quer über die ganze Zeichnung.
 
   Bewusst ein **Upload** statt eines Visio-Konverters: Hersteller-Stencils sind
   teils altes Binärformat (`.vss`), liegen teils hinter Abo-Portalen und
