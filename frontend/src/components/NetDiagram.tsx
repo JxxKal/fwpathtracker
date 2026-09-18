@@ -215,6 +215,13 @@ export default function NetDiagram() {
           : scope === 'global' ? de.diagram.globalHint
           : de.diagram.hostsHint.replace('{n}', String(scopes?.max_hosts ?? 1500))}
       </p>
+      {physical && (filters?.warnings ?? []).map((w) => (
+        <p key={w} className="text-sm text-amber-400">{w}</p>
+      ))}
+      {physical && filters && filters.locations.length === 0
+        && filters.groups.length === 0 && filters.warnings.length === 0 && (
+        <p className="text-xs text-slate-600">{de.diagram.noFilters}</p>
+      )}
       {view === 'physisch-l2' && switches.length === 0 && !err && (
         <p className="text-sm text-amber-400">{de.diagram.noSwitches}</p>
       )}

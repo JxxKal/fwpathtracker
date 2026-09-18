@@ -351,3 +351,19 @@ def test_mac_normalisation_accepts_every_notation():
     assert normalize_mac("keine mac") is None
     assert normalize_mac(None) is None
     assert readable_mac(MAC) == "00:0c:29:11:89:1a"
+
+
+def test_every_cache_the_client_uses_is_initialised():
+    """Ein Cache, den nur eine Methode kennt, fliegt erst im Betrieb auf: die
+    Abfrage scheitert still, und 'Cache aktualisieren' quittiert mit 500.
+    Deshalb hier beides — alle Attribute da, und invalidate() läuft durch."""
+    import re
+    from pathlib import Path
+    from librenms.client import LibrenmsClient
+
+    client = LibrenmsClient()
+    src = (Path(__file__).resolve().parent.parent / "src" / "librenms" / "client.py").read_text()
+    used = set(re.findall(r"self\.(_[a-z_]+)\b", src))
+    missing = [name for name in used if not hasattr(client, name)]
+    assert not missing, f"nicht initialisiert: {missing}"
+    client.invalidate()

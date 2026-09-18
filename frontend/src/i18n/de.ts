@@ -189,6 +189,7 @@ export const de = {
     location: 'Standort (LibreNMS)',
     group: 'Gerätegruppe (LibreNMS)',
     filterAll: '— alle —',
+    noFilters: 'LibreNMS meldet weder Standorte noch Gerätegruppen — dort zuerst pflegen.',
     filterHint: 'Schränkt die physische Sicht auf einen LibreNMS-Standort oder eine Gerätegruppe ein. Beides gesetzt heißt: Schnittmenge.',
     noSwitches: 'Keine überwachten Geräte aus LibreNMS — Verbindung in den Einstellungen prüfen.',
     viewLogischHint: 'Logische Netzdokumentation nach Hausvorgabe: Netze als farbige Busleisten mit VLAN-ID, Endgeräte mit gekürzter IP, ohne Switche. Zu lange Gerätelisten werden je Klasse zusammengefasst und auf einer Tabellenseite geführt.',

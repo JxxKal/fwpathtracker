@@ -72,6 +72,8 @@ class LibrenmsClient:
         self._port_vlans: TTLCache = TTLCache(maxsize=4096, ttl=ttl_s)
         # Kürzer: Basis der MAC-Zählung je Port, ändert sich mit jeder Discovery.
         self._device_fdb: TTLCache = TTLCache(maxsize=512, ttl=fdb_ttl_s)
+        # Standorte und Gerätegruppen — Stammdaten, ändern sich kaum.
+        self._misc: TTLCache = TTLCache(maxsize=8, ttl=ttl_s)
 
     # ── HTTP ────────────────────────────────────────────────────────────────
 
