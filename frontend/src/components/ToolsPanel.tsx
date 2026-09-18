@@ -10,6 +10,7 @@ import IpCalc from './IpCalc';
 import LocateHost from './LocateHost';
 import NetDiagram from './NetDiagram';
 import NetOwnership from './NetOwnership';
+import SwitchView from './SwitchView';
 import VlanList from './VlanList';
 
 // Werkzeugkasten: links die Liste nach Aufgabe gruppiert, rechts EIN Werkzeug
@@ -18,7 +19,8 @@ import VlanList from './VlanList';
 // Bildschirmbreite, und neben einer 700px-Karte stand 600px Leerraum.
 
 export type ToolId =
-  | 'netz' | 'switchport' | 'ports' | 'vlans' | 'netzplan' | 'subnetz' | 'freieip' | 'ipcalc';
+  | 'netz' | 'switchport' | 'ports' | 'switchview' | 'vlans' | 'netzplan' | 'subnetz'
+  | 'freieip' | 'ipcalc';
 
 // `label` ist der kurze Name in der Seitenleiste, nicht der Titel der Karte:
 // „Martin Lehmann, wo hängt das Gerät?" ist ein guter Kartentitel und eine
@@ -40,6 +42,7 @@ export const TOOL_GROUPS: Group[] = [
     id: 'bestand',
     label: de.tools.groupInventory,
     tools: [
+      { id: 'switchview', label: de.tools.navSwitchView, hint: de.tools.hintSwitchView, render: () => <SwitchView /> },
       { id: 'vlans', label: de.tools.navVlans, hint: de.tools.hintVlans, render: () => <VlanList /> },
       { id: 'netzplan', label: de.tools.navDiagram, hint: de.tools.hintDiagram, render: () => <NetDiagram /> },
     ],

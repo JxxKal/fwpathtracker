@@ -129,6 +129,14 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   *zweifelhaft* (DNS oder ARP kennen sie), *belegt* (antwortet), *nicht
   prüfbar* (kein Ping im Container). Geprüft wird in Wellen, bis die gewünschte
   Anzahl freier Adressen beisammen ist.
+- **Switch-Ansicht** — was hängt an welchem Port? Switch wählen (mit Filter auf
+  LibreNMS-Standort oder Gerätegruppe), Buchse anklicken, Belegung lesen: MAC,
+  IP, Name, Alter des Eintrags. Dieselbe Quelle wie die physische Zeichnung —
+  Ports und FDB aus LibreNMS, IP↔MAC aus der Historie, Namen aus Reverse-DNS —
+  aber zum Klicken statt zum Drucken. Ist für das Modell ein Blech mit
+  zugeordneten Buchsen hinterlegt, steht es hier genauso wie im Plan; sonst ein
+  Raster. Stacks zeigen je Einheit ein Blech. Die Zeichnung bleibt für den Weg
+  aufs Papier, die Hausvorgabe verlangt beides.
 - **Netzplan (draw.io)** — zwei Darstellungen zur Wahl. **Struktur** (Default):
   Container für Firewall, VDOM und Netz mit Kopplungen und Switchen. **Logisch**
   nach der Hausvorgabe für die OT-Dokumentation: Netze als farbige Busleisten
@@ -297,6 +305,10 @@ ist zugleich eine Aussage über den Pflegestand im iTop.
 
 FMG-Objekte → **iTop** (TeemIP) → **DNS**, mit Provenance-Anzeige in beide
 Richtungen. Autocomplete für Quelle/Ziel.
+
+Die **Einstellungen** tragen dieselbe Seitenleiste wie Tracker und Network
+Tools, gruppiert nach *Datenquellen · Zeichnungen · Standorte · Zugang* —
+zwölf Panels untereinander waren eine Scrollstrecke.
 
 ### ⚙️ Betrieb
 

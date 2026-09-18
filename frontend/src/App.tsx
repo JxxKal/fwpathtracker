@@ -12,18 +12,7 @@ import ResultDrawer from './components/ResultDrawer';
 import SideNav, { type NavGroup } from './components/SideNav';
 import ToolsPanel, { isToolId, type ToolId } from './components/ToolsPanel';
 import TraceForm, { type TraceMode } from './components/TraceForm';
-import DnsPanel from './components/settings/DnsPanel';
-import DrawioPanel from './components/settings/DrawioPanel';
-import FmgPanel from './components/settings/FmgPanel';
-import ItopPanel from './components/settings/ItopPanel';
-import LibrenmsPanel from './components/settings/LibrenmsPanel';
-import SamlPanel from './components/settings/SamlPanel';
-import SiteSupernetsPanel from './components/settings/SiteSupernetsPanel';
-import SitesPanel from './components/settings/SitesPanel';
-import ShapesPanel from './components/settings/ShapesPanel';
-import SslPanel from './components/settings/SslPanel';
-import TitleBlockPanel from './components/settings/TitleBlockPanel';
-import UsersPanel from './components/settings/UsersPanel';
+import SettingsPanel from './components/settings/SettingsPanel';
 import { readCheckLink } from './checkLink';
 import { de } from './i18n/de';
 import type { Hop, PortTraceResult, Session, TraceRequest, TraceResult } from './types';
@@ -271,22 +260,7 @@ export default function App() {
 
         {tab === 'tools' && <ToolsPanel initial={toolLink} />}
 
-        {tab === 'einstellungen' && session.role === 'admin' && (
-          <>
-            <FmgPanel />
-            <ItopPanel />
-            <LibrenmsPanel />
-            <DrawioPanel />
-            <TitleBlockPanel />
-            <ShapesPanel />
-            <DnsPanel />
-            <SitesPanel />
-            <SiteSupernetsPanel />
-            <UsersPanel />
-            <SslPanel />
-            <SamlPanel />
-          </>
-        )}
+        {tab === 'einstellungen' && session.role === 'admin' && <SettingsPanel />}
       </main>
     </div>
   );

@@ -29,7 +29,7 @@ from resolver.chain import ResolverChain
 from routers import auth as auth_router
 from routers import config as config_router
 from routers import (checks, diagram, fmg_admin, itop_admin, librenms_admin, locate,
-                     saml, search, ssl, trace, users, vlans)
+                     saml, search, ssl, switchview, trace, users, vlans)
 from routers.auth import hash_password
 from routers.config import read_config
 
@@ -176,6 +176,7 @@ app.include_router(search.router)
 app.include_router(locate.router)  # Switchport-Suche + Netzwerkport-Check (LibreNMS-FDB)
 app.include_router(vlans.router)   # VLAN-Übersicht (LibreNMS + FMG-Inventar)
 app.include_router(diagram.router) # Netzplan als draw.io (FMG + iTop + ARP + LibreNMS)
+app.include_router(switchview.router)  # Switch-Ansicht: was hängt an welchem Port
 app.include_router(trace.router)
 app.include_router(checks.router)  # Check-Gruppen (Batch-Regressions-Checks)
 app.include_router(ssl.router)     # SSL/TLS-Cert + Hostname (Endpoints admin-gated)

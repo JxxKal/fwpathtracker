@@ -258,6 +258,25 @@ def device_shape(dev: dict) -> tuple[str, str]:
     return DEFAULT_SHAPE
 
 
+async def allowed_devices(client, cfg: dict, location: str | None,
+                          group: str | None) -> set[str] | None:
+    """Erlaubte LibreNMS-Geräte-Ids für Standort bzw. Gruppe — None heißt: alle.
+
+    Gefiltert wird von LibreNMS selbst: das Standortfeld heißt je nach Version
+    anders, der Filter nicht. Sind beide gesetzt, gilt der Schnitt.
+    """
+    sets: list[set[str]] = []
+    if location:
+        rows = await client.devices_by_location(cfg, location)
+        sets.append({str(d.get("device_id")) for d in rows if d.get("device_id")})
+    if group:
+        rows = await client.devices_in_group(cfg, group)
+        sets.append({str(d.get("device_id")) for d in rows if d.get("device_id")})
+    if not sets:
+        return None
+    return set.intersection(*sets)
+
+
 # ── Ebene 1: Infrastruktur ───────────────────────────────────────────────────
 
 async def infra_model(client, cfg: dict, warnings: list[str],

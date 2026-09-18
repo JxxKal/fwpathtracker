@@ -393,6 +393,65 @@ export async function diagramDevicePorts(deviceId: string):
   return request(`/api/diagram/device-ports?device_id=${encodeURIComponent(deviceId)}`);
 }
 
+// ── Switch-Ansicht (interaktiv) ──────────────────────────────────────────────
+
+export interface SwitchHost {
+  mac: string; mac_readable: string; ip?: string | null; name?: string | null;
+  last_seen?: string | null; age_s?: number | null;
+}
+export interface SwitchPort {
+  port_id: string; name: string; alias: string | null; up: boolean;
+  mac_count: number; uplink: boolean; neighbour: string | null; unit: number;
+  spot: { x: number; y: number; w: number; h: number } | null;
+  hosts: SwitchHost[];
+}
+export interface SwitchViewResult {
+  device: { device_id: string; name: string; ip: string | null; hardware: string | null;
+    os: string | null; location: string | null };
+  ports: SwitchPort[]; logical: number; units: number[];
+  shape: { image: string; width: number; height: number; label: string | null } | null;
+  warnings: string[];
+}
+
+function demoPorts(): SwitchPort[] {
+  return Array.from({ length: 12 }, (_v, i) => ({
+    port_id: String(400 + i), name: `GigabitEthernet1/0/${i + 1}`,
+    alias: i === 0 ? 'Uplink core-01' : i < 4 ? `Anlage ${i}` : null,
+    up: i < 9, mac_count: i === 0 ? 180 : i < 5 ? 1 : 0, uplink: i === 0,
+    neighbour: i === 0 ? 'core-01 / Gi1/0/1' : null, unit: 1, spot: null,
+    hosts: i > 0 && i < 5
+      ? [{ mac: `000c29aa000${i}`, mac_readable: `00:0c:29:aa:00:0${i}`,
+        ip: `10.124.58.${70 + i}`, name: `sps-${i}.op-tech.com`, age_s: 900 * i }]
+      : [],
+  }));
+}
+
+export async function switchViewFilters(): Promise<PhysicalFilters> {
+  if (isDemoMode()) return diagramFilters();
+  return request('/api/switch-view/filters');
+}
+export async function switchViewDevices(location?: string, group?: string):
+  Promise<{ devices: SwitchEntry[] }> {
+  if (isDemoMode()) {
+    const r = await diagramSwitches(location, group);
+    return { devices: r.switches };
+  }
+  const q = new URLSearchParams();
+  if (location) q.set('location', location);
+  if (group) q.set('group', group);
+  return request(`/api/switch-view/devices${q.toString() ? `?${q}` : ''}`);
+}
+export async function switchViewLoad(deviceId: string): Promise<SwitchViewResult> {
+  if (isDemoMode()) {
+    return {
+      device: { device_id: deviceId, name: 'moxa-iks', ip: '10.0.0.4',
+        hardware: 'MOXA IKS-6728A-4GTXSFP-T', os: 'moxa', location: 'Werk 1 / Schrank 3' },
+      ports: demoPorts(), logical: 3, units: [1], shape: null, warnings: [],
+    };
+  }
+  return request(`/api/switch-view?device_id=${encodeURIComponent(deviceId)}`);
+}
+
 export interface PhysicalFilters {
   locations: string[]; groups: { name: string; desc: string | null }[]; warnings: string[];
 }
