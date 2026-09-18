@@ -70,6 +70,63 @@ ATTACHED = ("shape={stencil};html=1;aspect=fixed;fillColor={color};strokeColor=n
             "verticalLabelPosition=bottom;verticalAlign=top;fontSize=9;whiteSpace=wrap;")
 WIRE = "html=1;endArrow=none;strokeColor=#888888;"
 
+# ── Kalibriertes Modellbild ──────────────────────────────────────────────────
+# Ein Bild allein trägt keine Information: die Leitung muss an der richtigen
+# Buchse landen. Dafür bekommt eine Shape-Regel optional Blöcke mit dem
+# Buchsenraster im Bild — Mittelpunkt der ersten Buchse, Abstand, Spalten,
+# Reihen und die Zählrichtung. Die Zuordnung läuft über die PORTNUMMER aus dem
+# Namen, nicht über die Reihenfolge der LibreNMS-Liste: die Liste darf sich
+# sortieren, wie sie will, die Buchse bleibt dieselbe.
+IMAGE_PANEL = ("shape=image;html=1;imageAspect=0;image={image};container=1;"
+               "collapsible=0;movable=1;resizable=0;")
+PANEL_TITLE = ("text;html=1;align=left;verticalAlign=middle;fontSize=12;fontStyle=1;"
+               "spacingLeft=2;")
+PORT_OVERLAY = ("rounded=0;html=1;fillColor={fill};strokeColor={line};strokeWidth=2;"
+                "opacity={opacity};fontSize=0;")
+OVERLAY_COLORS = {"used": ("#d5e8d4", "#2e8b57", 70),
+                  "uplink": ("#e1d5e7", "#6a4c93", 70),
+                  "free": ("none", "#999999", 45)}
+
+
+def port_number(name: str) -> int | None:
+    """Portnummer aus dem Namen — die letzte Zahlengruppe.
+
+    `Ten-GigabitEthernet1/0/24` → 24, `p25` → 25, `Gi1/0/1` → 1. Modul und
+    Slot stehen davor und interessieren das Raster nicht; gibt es mehrere
+    Module, bekommt jedes seinen eigenen Block.
+    """
+    groups = re.findall(r"\d+", name or "")
+    return int(groups[-1]) if groups else None
+
+
+def _blocks(rule: dict | None) -> list[dict]:
+    if not rule or not rule.get("image"):
+        return []
+    blocks = rule.get("blocks")
+    return [b for b in blocks if isinstance(b, dict)] if isinstance(blocks, list) else []
+
+
+def port_position(number: int | None, blocks: list[dict]) -> tuple[float, float, dict] | None:
+    """Mittelpunkt der Buchse im Bild — oder None, wenn die Nummer in keinem
+    Block liegt. Solche Ports fallen nicht weg, sie kommen unter das Bild."""
+    if number is None:
+        return None
+    for block in blocks:
+        cols = max(1, int(block.get("cols") or 1))
+        rows = max(1, int(block.get("rows") or 1))
+        start = int(block.get("start") or 1)
+        idx = number - start
+        if idx < 0 or idx >= cols * rows:
+            continue
+        if str(block.get("order") or "rowwise") == "zigzag":
+            col, row = idx // rows, idx % rows      # oben ungerade, unten gerade
+        else:
+            col, row = idx % cols, idx // cols
+        x = float(block.get("x") or 0) + col * float(block.get("dx") or 0)
+        y = float(block.get("y") or 0) + row * float(block.get("dy") or 0)
+        return x, y, block
+    return None
+
 
 def _name(dev: dict) -> str:
     return str(dev.get("sysName") or dev.get("hostname") or dev.get("device_id") or "?")
@@ -317,12 +374,102 @@ def _attached_label(host: dict) -> str:
     return "<br>".join(lines)
 
 
+def _draw_image_panel(doc: Doc, model: dict, rule: dict, blocks: list[dict],
+                      x0: float, y_top: float) -> tuple[float, float]:
+    """Kalibriertes Modellbild als Panel: das Bild ist die Fläche, die Buchsen
+    liegen als durchsichtige Felder darüber. So landet die Leitung dort, wo im
+    echten Gerät das Kabel steckt."""
+    dev = model["device"]
+    ports = model["ports"]
+    img_w = float(rule.get("width") or 800)
+    img_h = float(rule.get("height") or 120)
+
+    placed: list[tuple[dict, float, float, dict]] = []
+    rest: list[dict] = []
+    for p in ports:
+        hit = port_position(port_number(p["name"]), blocks)
+        (placed.append((p, hit[0], hit[1], hit[2])) if hit else rest.append(p))
+
+    attached = [(p, h) for p, _x, _y, _b in placed for h in p["hosts"][:4]]
+    attached += [(p, h) for p in rest for h in p["hosts"][:4]]
+    above, below = attached[0::2], attached[1::2]
+    per_row = max(1, int(img_w // HOST_SLOT))
+
+    def rows_needed(items: list) -> int:
+        return max(1, -(-len(items) // per_row)) if items else 0
+
+    img_y = y_top + rows_needed(above) * HOST_ROW + 46
+    tip = "\n".join(f"{k}: {v}" for k, v in (
+        ("Gerät", _name(dev)), ("IP", dev.get("ip")), ("Modell", rule.get("label")),
+        ("Hardware", dev.get("hardware")), ("Standort", dev.get("location"))) if v)
+    doc.vertex(f"{esc(_name(dev))} &#160; {esc(dev.get('ip') or '')} &#160; "
+               f"{len(ports)} Ports", PANEL_TITLE, x0, img_y - 26, img_w, 22)
+    image = str(rule["image"]).replace(";base64,", ",", 1)
+    panel = doc.vertex("", IMAGE_PANEL.format(image=image), x0, img_y, img_w, img_h,
+                       tooltip=tip)
+
+    cell: dict[str, str] = {}
+    for p, px, py, block in placed:
+        w = float(block.get("w") or 20)
+        h = float(block.get("h") or 20)
+        kind = "uplink" if p["uplink"] else "used" if p["hosts"] else "free"
+        fill, line, opacity = OVERLAY_COLORS[kind]
+        ptip = "\n".join(str(t) for t in (
+            f"Port {p['name']}", p["alias"], f"{p['mac_count']} MACs",
+            "Uplink zu " + str(p["neighbour"]) if p["uplink"] else None,
+            "up" if p["up"] else "down") if t)
+        cell[p["port_id"]] = doc.vertex(
+            "", PORT_OVERLAY.format(fill=fill, line=line, opacity=opacity),
+            px - w / 2, py - h / 2, w, h, parent=panel, tooltip=ptip)
+
+    # Ports, die in kein Raster passen (Module, SFP ohne Block), verschwinden
+    # nicht — sie stehen als Kästchenreihe unter dem Bild.
+    bottom = img_y + img_h
+    if rest:
+        doc.vertex(f"{len(rest)} Ports ohne Rasterplatz",
+                   "text;html=1;fontSize=9;align=left;fontColor=#888888;",
+                   x0, bottom + 6, 220, 16)
+        for i, p in enumerate(rest):
+            fill = PORT_UPLINK if p["uplink"] else PORT_USED if p["hosts"] else PORT_FREE
+            cell[p["port_id"]] = doc.vertex(
+                esc(p["name"]), PORT.format(fill=fill),
+                x0 + (i % PORTS_PER_ROW) * PORT_W,
+                bottom + 24 + (i // PORTS_PER_ROW) * PORT_H,
+                PORT_W - 3, PORT_H - 3, tooltip=f"Port {p['name']}")
+        bottom += 24 + (-(-len(rest) // PORTS_PER_ROW)) * PORT_H
+
+    def draw(items: list, upward: bool) -> None:
+        slot = img_w / max(1, min(len(items), per_row))
+        for n, (port, host) in enumerate(items):
+            col, row = n % per_row, n // per_row
+            hx = x0 + col * slot + (slot - HOST_ICON) / 2
+            hy = (img_y - 46 - (row + 1) * HOST_ROW if upward
+                  else bottom + 30 + row * HOST_ROW)
+            stc, clr = _attached_style(host)
+            htip = "\n".join(f"{k}: {v}" for k, v in (
+                ("MAC", host["mac_readable"]), ("IP", host.get("ip")),
+                ("Name", host.get("name")), ("Port", port["name"]),
+                ("zuletzt gesehen", host.get("last_seen"))) if v)
+            hid = doc.vertex(_attached_label(host),
+                             ATTACHED.format(stencil=stc, color=clr),
+                             hx, hy, HOST_ICON, HOST_ICON, tooltip=htip)
+            doc.edge(hid, cell[port["port_id"]], "", WIRE)
+
+    draw(above, True)
+    draw(below, False)
+    return bottom + rows_needed(below) * HOST_ROW + 40, img_w
+
+
 def _draw_panel(doc: Doc, model: dict, x0: float, y_top: float,
                 rules: list[dict] | None) -> tuple[float, float]:
     """Ein Switch-Panel samt angeschlossener Geräte. Gibt (Unterkante, Breite)
     zurück, damit mehrere Panels gestapelt werden können."""
     dev = model["device"]
     ports = model["ports"]
+    rule = match_rule(dev, rules)
+    blocks = _blocks(rule)
+    if blocks:
+        return _draw_image_panel(doc, model, rule, blocks, x0, y_top)
 
     # Portnamen um ihr gemeinsames Präfix kürzen: aus
     # „Ten-GigabitEthernet1/0/24" wird „24", das Präfix steht am Panel.
@@ -344,7 +491,6 @@ def _draw_panel(doc: Doc, model: dict, x0: float, y_top: float,
 
     panel_y = y_top + rows_needed(above) * HOST_ROW + 30
 
-    rule = match_rule(dev, rules)
     head = (f"{esc(_name(dev))} &#160; {esc(dev.get('ip') or '')} &#160; "
             f"{len(ports)} Ports")
     if prefix:

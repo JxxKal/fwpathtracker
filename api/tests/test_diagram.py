@@ -943,3 +943,94 @@ async def test_several_switch_panels_are_stacked_without_overlap(inventory, pref
     (_l1, g1), (_l2, g2) = sorted(panels, key=lambda p: p[1][1])
     assert g2[1] >= g1[1] + g1[3]
     assert any("acc-2" in (l or "") for l, _g in panels)
+
+
+# ── Kalibriertes Modellbild: Buchsen statt Kästchen ──────────────────────────
+
+CALIBRATED = [{
+    "match": "acc-1", "label": "MOXA IKS-6728A",
+    "image": "data:image/png;base64,AAAB", "width": 800, "height": 120,
+    # 4 Buchsen, zwei Reihen, oben ungerade / unten gerade
+    "blocks": [{"cols": 2, "rows": 2, "order": "zigzag", "start": 1,
+                "x": 100, "y": 40, "dx": 60, "dy": 40, "w": 24, "h": 24}],
+}]
+
+
+def test_port_number_comes_from_the_name_not_the_list_order():
+    """Die LibreNMS-Liste darf sich sortieren, wie sie will — die Buchse bleibt
+    dieselbe. Maßgeblich ist die letzte Zahlengruppe im Portnamen."""
+    from diagram.physical import port_number
+    assert port_number("Ten-GigabitEthernet1/0/24") == 24
+    assert port_number("Gi1/0/1") == 1
+    assert port_number("p25") == 25
+    assert port_number("port-channel") is None
+    assert port_number("") is None
+
+
+def test_port_grid_maps_numbers_to_places_in_both_orders():
+    from diagram.physical import port_position
+    rowwise = [{"cols": 2, "rows": 2, "order": "rowwise", "start": 1,
+                "x": 10, "y": 100, "dx": 50, "dy": 40}]
+    # 1 2 / 3 4
+    assert port_position(1, rowwise)[:2] == (10, 100)
+    assert port_position(2, rowwise)[:2] == (60, 100)
+    assert port_position(3, rowwise)[:2] == (10, 140)
+    zig = [{"cols": 2, "rows": 2, "order": "zigzag", "start": 1,
+            "x": 10, "y": 100, "dx": 50, "dy": 40}]
+    # 1 3 oben / 2 4 unten
+    assert port_position(1, zig)[:2] == (10, 100)
+    assert port_position(2, zig)[:2] == (10, 140)
+    assert port_position(3, zig)[:2] == (60, 100)
+    assert port_position(5, zig) is None and port_position(None, zig) is None
+    # Zweiter Block für abgesetzte SFP-Buchsen.
+    two = zig + [{"cols": 2, "rows": 1, "start": 25, "x": 400, "y": 100, "dx": 30}]
+    assert port_position(26, two)[:2] == (430, 100)
+
+
+async def test_calibrated_image_replaces_the_schematic_panel(inventory, prefixes):
+    from diagram import physical
+
+    async def arp(macs):
+        return {}
+
+    m = await physical.switch_model(FakeLnms(), {}, 4, arp, [])
+    root = ET.fromstring(physical.render_switch(m, rules=CALIBRATED))
+    cells = [o.find("mxCell") for o in root.findall(".//object")]
+    panel = next(c for c in cells if "shape=image" in (c.get("style") or ""))
+    assert "data:image/png,AAAB" in panel.get("style") and "container=1" in panel.get("style")
+    assert _geo(panel)[2:] == (800, 120)
+    # Kein schematisches Panel mehr.
+    assert not any("fillColor=#d9d9d9" in (c.get("style") or "") for c in cells)
+
+    # Buchsen liegen im Bild, gemessen an der Kalibrierung.
+    pid = next(o.get("id") for o in root.findall(".//object")
+               if o.find("mxCell") is panel)
+    kids = [(o.get("tooltip", ""), _geo(o.find("mxCell")))
+            for o in root.findall(".//object") if o.find("mxCell").get("parent") == pid]
+    assert len(kids) == 4
+    p1 = next(g for t, g in kids if t.startswith("Port p1"))
+    assert (p1[0] + p1[2] / 2, p1[1] + p1[3] / 2) == (100, 40)     # Buchse 1 oben links
+    p2 = next(g for t, g in kids if t.startswith("Port p2"))
+    assert (p2[0] + p2[2] / 2, p2[1] + p2[3] / 2) == (100, 80)     # Buchse 2 darunter
+    # Uplink und belegte Buchse sind unterschiedlich markiert.
+    styles = {o.get("tooltip", "").split("\n")[0]: o.find("mxCell").get("style")
+              for o in root.findall(".//object") if o.find("mxCell").get("parent") == pid}
+    assert "#6a4c93" in styles["Port p1"] and "#2e8b57" in styles["Port p2"]
+
+
+async def test_ports_outside_the_grid_are_kept_below_the_picture(inventory, prefixes):
+    """Ein Port ohne Rasterplatz darf nicht verschwinden — sonst behauptet die
+    Zeichnung, es gäbe ihn nicht."""
+    from diagram import physical
+
+    async def arp(macs):
+        return {}
+
+    narrow = [{**CALIBRATED[0],
+               "blocks": [{"cols": 1, "rows": 1, "start": 1,
+                           "x": 100, "y": 40, "dx": 0, "dy": 0, "w": 20, "h": 20}]}]
+    m = await physical.switch_model(FakeLnms(), {}, 4, arp, [])
+    root = ET.fromstring(physical.render_switch(m, rules=narrow))
+    labels = [o.get("label", "") for o in root.findall(".//object")]
+    assert "3 Ports ohne Rasterplatz" in labels
+    assert {"p2", "p3", "p4"} <= set(labels)

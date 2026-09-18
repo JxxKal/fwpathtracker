@@ -1,7 +1,8 @@
-import { Plus, Trash2, Upload } from 'lucide-react';
+import { Crosshair, Plus, Trash2, Upload } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { getConfig, patchConfig } from '../../api';
 import { de } from '../../i18n/de';
+import PortCalibrator, { type Block } from './PortCalibrator';
 
 // Shape-Bibliothek: je Muster ein Modellbild für die physischen Netzpläne.
 // Bewusst als Upload statt als Konverter — Visio-Stencils der Hersteller sind
@@ -9,13 +10,17 @@ import { de } from '../../i18n/de';
 // dagegen direkt und verlustfrei ein.
 const MAX_BYTES = 512_000;
 
-interface Rule { match: string; label?: string; image?: string }
+interface Rule {
+  match: string; label?: string; image?: string;
+  width?: number; height?: number; blocks?: Block[];
+}
 
 export default function ShapesPanel() {
   const [rules, setRules] = useState<Rule[]>([]);
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const pickFor = useRef<number | null>(null);
+  const [calibrate, setCalibrate] = useState<number | null>(null);
   const file = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -84,6 +89,16 @@ export default function ShapesPanel() {
               onClick={() => { pickFor.current = i; file.current?.click(); }}>
               <Upload size={14} /> {de.settings.tbLogoPick}
             </button>
+            <button type="button" className="fwpt-btn-ghost shrink-0" disabled={!r.image}
+              title={de.settings.calHint} onClick={() => setCalibrate(i)}>
+              <Crosshair size={14} /> {de.settings.shapesCalibrate}
+            </button>
+            <span className="w-28 shrink-0 text-[11px] text-slate-500">
+              {r.blocks?.length
+                ? de.settings.shapesCalibrated(
+                  r.blocks.reduce((n, b) => n + b.cols * b.rows, 0))
+                : de.settings.shapesNotCalibrated}
+            </span>
             <button type="button" className="shrink-0 text-slate-500 hover:text-red-400"
               onClick={() => setRules((l) => l.filter((_x, idx) => idx !== i))}>
               <Trash2 size={15} />
@@ -91,6 +106,18 @@ export default function ShapesPanel() {
           </div>
         ))}
       </div>
+
+      {calibrate !== null && rules[calibrate]?.image && (
+        <PortCalibrator
+          image={rules[calibrate].image as string}
+          initial={rules[calibrate].blocks ?? []}
+          onClose={() => setCalibrate(null)}
+          onSave={(blocks, size) => {
+            setRules((l) => l.map((r, idx) => (idx === calibrate
+              ? { ...r, blocks, width: size.width, height: size.height } : r)));
+            setCalibrate(null);
+          }} />
+      )}
 
       <div className="flex items-center gap-2">
         <button type="button" className="fwpt-btn-ghost"

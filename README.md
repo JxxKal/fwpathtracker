@@ -162,6 +162,18 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   je Muster (`IKS-6728A`, `5130-48G`) ein Bild, gematcht gegen Hardware,
   sysDescr, OS und Namen aus LibreNMS, erste Regel gewinnt. Ohne Treffer bleibt
   es beim Klassensymbol — ein unbekanntes Gerät fällt nie aus der Zeichnung.
+  Ein Bild allein trägt allerdings keine Information — die Leitung muss an der
+  richtigen Buchse landen. Dafür lässt sich je Regel das **Buchsenraster
+  einmessen**: erste und letzte Buchse eines Blocks im Bild anklicken, Spalten,
+  Reihen und Zählrichtung angeben (`oben ungerade / unten gerade` oder
+  `reihenweise`), den Abstand rechnet A38 daraus. Abgesetzte SFP-Buchsen
+  bekommen einen zweiten Block. Ist ein Raster hinterlegt, wird das Bild zur
+  Panelfläche und die Buchsen liegen als Felder darüber; die Zuordnung läuft
+  über die **Portnummer aus dem Namen** (`Ten-GigabitEthernet1/0/24` → 24), nicht
+  über die Reihenfolge der LibreNMS-Liste. Ports ohne Rasterplatz verschwinden
+  nicht, sie stehen als Kästchenreihe unter dem Bild. Ohne Kalibrierung bleibt
+  das Bild ein Erkennungszeichen und die Geräte hängen am schematischen Panel —
+  das ist auch die Rückfallebene für Chassis mit gemischten Modulen.
   Bewusst ein **Upload** statt eines Visio-Konverters: Hersteller-Stencils sind
   teils altes Binärformat (`.vss`), liegen teils hinter Abo-Portalen und
   enthalten teils nur EMF, das kein Browser darstellt; SVG und PNG bettet
