@@ -11,6 +11,7 @@ from deps import get_current_user, require_admin
 from ipam import free_ip, ping as ping_probe, tree as ipam_tree
 from locate import arp_fortigate
 from resolver import dns_source
+from resolver.dns_cache import build_reverse
 from routers.config import read_config
 
 log = logging.getLogger("routers.itop")
@@ -245,12 +246,12 @@ async def free_ips(body: FreeIpRequest, request: Request,
     if not ping_probe.available():
         warnings.append("Ping ist auf dem Server nicht verfügbar — Erreichbarkeit nicht prüfbar.")
 
+    reverse = await build_reverse(state, dns_cfg)
+
     async def dns(ip: str) -> str | None:
-        try:
-            hit = await dns_source.resolve_ip(dns_cfg, ip, timeout_s=1.5)
-        except Exception:
+        if reverse is None:
             return None
-        return hit["name"] if hit else None
+        return await reverse(ip)
 
     async def arp(ip: str) -> dict | None:
         try:
@@ -263,11 +264,19 @@ async def free_ips(body: FreeIpRequest, request: Request,
         return {"mac": r["mac"], "device": r["device"], "vdom": r["vdom"],
                 "last_seen": r["last_seen"], "age_s": r["age_s"]}
 
+    # Alles, was der Cache schon weiß, in EINER Abfrage holen — sonst kostet
+    # jede Adresse eine Zeile.
+    if reverse is not None:
+        await reverse.prime([str(a) for a in free_ip.host_addresses(
+            net, body.start, body.end)][:2000])
+
     found = await free_ip.find_free(
         net, itop_addresses=addresses, ci_hosts=ci_hosts, fw_ips=_fw_ips(state.inventory, net),
         dhcp_ranges=dhcp, gateway=gateway, ping=ping_probe.ping, dns=dns, arp=arp,
         want=body.want, start=body.start, end=body.end,
     )
+    if reverse is not None:
+        await reverse.flush()
     domains = [d for d in (dns_cfg.get("search_domains") or []) if d]
     return {
         "cidr": str(net), "start": body.start, "end": body.end, "want": body.want,

@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from deps import get_current_user
 from diagram import physical
-from resolver import dns_source
+from resolver.dns_cache import build_reverse
 from routers.config import read_config
 
 router = APIRouter(prefix="/api/switch-view", tags=["switchview"])
@@ -86,15 +86,11 @@ async def switch_view(request: Request, device_id: str,
             warnings.append(f"IP↔MAC-Historie nicht lesbar: {exc}")
             return {}
 
-    dns_cfg = await read_config("dns")
-
-    async def dns(ip: str) -> str | None:
-        hit = await dns_source.resolve_ip(dns_cfg, ip, timeout_s=1.5)
-        return hit["name"] if hit else None
-
-    use_dns = dns if (dns_cfg.get("resolvers") or dns_cfg.get("search_domains")) else None
+    reverse = await build_reverse(state, await read_config("dns"))
     model = await physical.switch_model(state.locate.librenms, cfg, device_id,
-                                        arp_by_mac, warnings, dns=use_dns)
+                                        arp_by_mac, warnings, dns=reverse)
+    if reverse is not None:
+        await reverse.flush()
     dev = model["device"]
     rules = (await read_config("shapes")).get("rules") or []
     rule = physical.match_rule(dev, rules)

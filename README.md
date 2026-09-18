@@ -306,6 +306,36 @@ ist zugleich eine Aussage über den Pflegestand im iTop.
 FMG-Objekte → **iTop** (TeemIP) → **DNS**, mit Provenance-Anzeige in beide
 Richtungen. Autocomplete für Quelle/Ziel.
 
+#### Reverse-DNS-Cache
+
+Eine Zeichnung fragt bis zu 400 Adressen rückwärts ab, die Switch-Ansicht 300,
+der Free-IP-Finder 256 — und beim nächsten Aufruf dieselben wieder. Namen
+ändern sich selten, also merkt A38 sie sich in einer eigenen Tabelle
+(`dns_cache`, IP als Schlüssel).
+
+Festgehalten wird auch die **Fehlanzeige**, und zwar gerade deshalb, weil sie
+das Teure ist: eine Adresse ohne PTR-Eintrag läuft jedes Mal in die volle
+Zeitüberschreitung, während ein Treffer sofort zurückkommt. Sie gilt nur
+kürzer, denn eine leere Adresse bekommt eher einen Eintrag, als dass ein
+bestehender Name sich ändert.
+
+| Einstellung (**Einstellungen → DNS**) | Default | Bedeutung |
+|---|---|---|
+| `cache_hit_days` | 7 | wie lange ein gefundener Name ohne Nachfrage gilt |
+| `cache_miss_hours` | 24 | wie lange eine Fehlanzeige gilt |
+| `cache_retention_days` | 180 | ab wann ungeprüfte Zeilen gelöscht werden |
+
+Beide Gültigkeiten auf 0 schalten den Cache ab; die Auflösung selbst läuft
+weiter. Bestand, gesparte Abfragen und zwei Aufräum-Knöpfe stehen im selben
+Panel — *Cache leeren* ist nach einem Resolver-Wechsel das Richtige, wenn die
+gespeicherten Namen aus der falschen Zone stammen.
+
+Gecacht wird **nur rückwärts**. Ein veralteter Name an einer Adresse
+beschriftet falsch, mehr nicht; eine veraltete Adresse zu einem Namen würde den
+Tracker den falschen Pfad prüfen lassen, ohne dass es auffiele. Ein Ausfall der
+Tabelle kostet nie mehr als den Cache-Vorteil: gelesen und geschrieben wird
+fehlertolerant, gefragt wird dann eben wieder direkt.
+
 Die **Einstellungen** tragen dieselbe Seitenleiste wie Tracker und Network
 Tools, gruppiert nach *Datenquellen · Zeichnungen · Standorte · Zugang* —
 zwölf Panels untereinander waren eine Scrollstrecke.

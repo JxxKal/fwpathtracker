@@ -16,6 +16,7 @@ from diagram import (drawio, linkstatus, logical, model as diagram_model,
                      physical, titleblock)
 from netguard import guard_egress_url
 from resolver import dns_source
+from resolver.dns_cache import build_reverse
 from routers.config import read_config
 
 log = logging.getLogger("routers.diagram")
@@ -350,13 +351,7 @@ async def _physical(body: DiagramRequest, request: Request, user: dict) -> dict:
                 warnings.append(f"IP↔MAC-Historie nicht lesbar: {exc}")
                 return {}
 
-        dns_cfg = await read_config("dns")
-
-        async def dns(ip: str) -> str | None:
-            hit = await dns_source.resolve_ip(dns_cfg, ip, timeout_s=1.5)
-            return hit["name"] if hit else None
-
-        use_dns = dns if (dns_cfg.get("resolvers") or dns_cfg.get("search_domains")) else None
+        use_dns = await build_reverse(state, await read_config("dns"))
         if allow is not None:
             try:
                 index = await client.device_index(cfg)
@@ -381,6 +376,8 @@ async def _physical(body: DiagramRequest, request: Request, user: dict) -> dict:
 
         mdls = [await physical.switch_model(client, cfg, did, arp_by_mac, warnings,
                                             dns=use_dns) for did, _n in picked]
+        if use_dns is not None:
+            await use_dns.flush()
         names = [m["device"].get("sysName") or m["device"].get("hostname") or did
                  for m, (did, _n) in zip(mdls, picked)]
         attached = sum(len(p["hosts"]) for m in mdls for p in m["ports"])
@@ -481,13 +478,7 @@ async def build(body: DiagramRequest, request: Request,
     # niemand im iTop gepflegt hat — und das sind erfahrungsgemäß genau die,
     # bei denen im Plan sonst nur eine nackte IP steht.
     dns_cfg = await read_config("dns")
-
-    async def dns(ip: str) -> str | None:
-        hit = await dns_source.resolve_ip(dns_cfg, ip, timeout_s=1.5)
-        return hit["name"] if hit else None
-
-    use_dns = dns if wants_hosts and (dns_cfg.get("resolvers")
-                                      or dns_cfg.get("search_domains")) else None
+    reverse = await build_reverse(state, dns_cfg) if wants_hosts else None
 
     # Link-Status live holen, solange Netze gezeichnet werden. Der Gesamtplan
     # zeigt keine Netze — dort wäre es nur Last ohne Nutzen.
@@ -504,12 +495,17 @@ async def build(body: DiagramRequest, request: Request,
             inv, prefixes, scope=body.scope, device=body.device, vdom=body.vdom,
             site=body.site, hosts=body.hosts, sites=sites, link_status=links,
             itop_subnets=itop_subnets,
-            itop_hosts=itop_hosts, itop_addresses=itop_addresses, arp=arp, dns=use_dns,
+            itop_hosts=itop_hosts, itop_addresses=itop_addresses, arp=arp, dns=reverse,
             librenms=librenms,
             librenms_cfg=librenms_cfg if librenms else None, librenms_devices=librenms_devices,
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    if reverse is not None:
+        await reverse.flush()
+        if reverse.stats["cached"]:
+            warnings.append(f"{reverse.stats['cached']} Namen kamen aus dem DNS-Cache, "
+                            f"{reverse.stats['asked']} wurden neu erfragt.")
     if mdl["stats"].get("names_from_dns"):
         warnings.append(f"{mdl['stats']['names_from_dns']} Gerätenamen kamen aus dem "
                         "Reverse-DNS — im iTop sind sie nicht gepflegt.")

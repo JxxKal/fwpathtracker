@@ -26,10 +26,11 @@ from locate.arp_store import ArpStore
 from locate.arp_sweep import ArpSweeper
 from locate.chain import LocateChain
 from resolver.chain import ResolverChain
+from resolver.dns_cache import DnsCache
 from routers import auth as auth_router
 from routers import config as config_router
-from routers import (checks, diagram, fmg_admin, itop_admin, librenms_admin, locate,
-                     saml, search, ssl, switchview, trace, users, vlans)
+from routers import (checks, diagram, dns_admin, fmg_admin, itop_admin, librenms_admin,
+                     locate, saml, search, ssl, switchview, trace, users, vlans)
 from routers.auth import hash_password
 from routers.config import read_config
 
@@ -116,6 +117,25 @@ async def _periodic_arp_sweep(app: FastAPI) -> None:
             log.warning("Periodischer ARP-Sweep fehlgeschlagen: %s", exc)
 
 
+async def _periodic_dns_purge(app: FastAPI) -> None:
+    """Alte Cache-Zeilen wegräumen (DNS-Einstellung cache_retention_days,
+    Default 180). <= 0 → aus. Läuft selten, die Tabelle wächst langsam."""
+    while True:
+        await asyncio.sleep(6 * 3600)
+        try:
+            days = int((await read_config("dns")).get("cache_retention_days", 180))
+        except (TypeError, ValueError):
+            days = 180
+        if days <= 0:
+            continue
+        try:
+            gone = await app.state.dns_cache.purge(days)
+            if gone:
+                log.info("DNS-Cache: %d veraltete Einträge entfernt.", gone)
+        except Exception as exc:
+            log.warning("DNS-Cache-Aufräumen fehlgeschlagen: %s", exc)
+
+
 async def _periodic_itop_refresh(app: FastAPI) -> None:
     """Täglicher Refresh des iTop-Namens-Index (itop_refresh_interval_s, Default
     täglich). <= 0 → aus. iTop ist nur Namensauflösung, kein Trace-Inventory."""
@@ -147,6 +167,7 @@ async def lifespan(app: FastAPI):
     app.state.sync_manager = SyncManager()
     app.state.resolver = ResolverChain()
     app.state.arp_store = ArpStore(pool)
+    app.state.dns_cache = DnsCache(pool)
     app.state.arp_sweeper = ArpSweeper()
     app.state.locate = LocateChain(store=app.state.arp_store)
     app.state.set_inventory = lambda inv: _rebuild_state(app, inv)
@@ -155,12 +176,14 @@ async def lifespan(app: FastAPI):
     sync_task = asyncio.create_task(_periodic_sync(app))
     itop_task = asyncio.create_task(_periodic_itop_refresh(app))
     arp_task = asyncio.create_task(_periodic_arp_sweep(app))
+    dns_task = asyncio.create_task(_periodic_dns_purge(app))
     try:
         yield
     finally:
         sync_task.cancel()
         itop_task.cancel()
         arp_task.cancel()
+        dns_task.cancel()
         await database.close_pool()
 
 
@@ -172,6 +195,7 @@ app.include_router(users.router)
 app.include_router(fmg_admin.router)
 app.include_router(itop_admin.router)
 app.include_router(librenms_admin.router)
+app.include_router(dns_admin.router)  # Stand des Reverse-DNS-Caches
 app.include_router(search.router)
 app.include_router(locate.router)  # Switchport-Suche + Netzwerkport-Check (LibreNMS-FDB)
 app.include_router(vlans.router)   # VLAN-Übersicht (LibreNMS + FMG-Inventar)

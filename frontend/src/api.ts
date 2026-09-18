@@ -848,6 +848,28 @@ export async function librenmsRefresh(): Promise<{ ok: boolean }> {
   return request('/api/librenms/refresh', { method: 'POST' });
 }
 
+// ── Reverse-DNS-Cache ─────────────────────────────────────────────────────────
+
+export interface DnsCacheStats {
+  total: number; named: number; misses: number; hits: number;
+  oldest: string | null; retention_days: number;
+}
+
+export async function dnsCacheStats(): Promise<DnsCacheStats> {
+  if (isDemoMode()) {
+    return { total: 1842, named: 1310, misses: 532, hits: 9471,
+      oldest: '2026-03-02T08:14:00+00:00', retention_days: 180 };
+  }
+  return request('/api/dns/cache');
+}
+
+/** `days = 0` leert den Cache ganz — nach einem Resolver-Wechsel. */
+export async function dnsCachePurge(days?: number): Promise<{ removed: number }> {
+  if (isDemoMode()) return { removed: days === 0 ? 1842 : 96 };
+  const q = days === undefined ? '' : `?days=${days}`;
+  return request(`/api/dns/cache/purge${q}`, { method: 'POST' });
+}
+
 // ── Users ─────────────────────────────────────────────────────────────────────
 
 export async function fetchUsers(): Promise<UserEntry[]> {
