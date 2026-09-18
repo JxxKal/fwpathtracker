@@ -1032,5 +1032,71 @@ async def test_ports_outside_the_grid_are_kept_below_the_picture(inventory, pref
     m = await physical.switch_model(FakeLnms(), {}, 4, arp, [])
     root = ET.fromstring(physical.render_switch(m, rules=narrow))
     labels = [o.get("label", "") for o in root.findall(".//object")]
-    assert "3 Ports ohne Rasterplatz" in labels
+    assert "3 Ports ohne zugeordnete Buchse" in labels
     assert {"p2", "p3", "p4"} <= set(labels)
+
+
+BY_NAME = [{
+    "hardware": "MOXA IKS-6728A-4GTXSFP-T", "label": "MOXA IKS-6728A",
+    "image": "data:image/png;base64,AAAB", "width": 721, "height": 81,
+    "port_w": 14, "port_h": 16,
+    "ports": {
+        "p1": {"x": 40, "y": 24},
+        "p2": {"x": 40, "y": 56},
+        # Sonderbuchse: breiter als RJ45, weil 40G.
+        "p3": {"x": 300, "y": 40, "w": 34, "h": 22},
+    },
+}]
+
+
+def test_rules_match_the_exact_hardware_string_from_librenms():
+    """Freitext taugt als Schlüssel nicht — ein Tippfehler fällt erst auf, wenn
+    die Zeichnung fertig ist. Deshalb exakt auf das, was LibreNMS meldet."""
+    from diagram.physical import match_rule
+    dev = {"hardware": "MOXA IKS-6728A-4GTXSFP-T"}
+    assert match_rule(dev, BY_NAME)["label"] == "MOXA IKS-6728A"
+    # Groß-/Kleinschreibung egal, Teiltreffer aber nicht.
+    assert match_rule({"hardware": "moxa iks-6728a-4gtxsfp-t"}, BY_NAME) is not None
+    assert match_rule({"hardware": "MOXA IKS-6728A"}, BY_NAME) is None
+    # Alt-Regeln mit Teilstring greifen weiterhin.
+    legacy = [{"match": "IKS-6728A", "image": "data:image/png;base64,X"}]
+    assert match_rule({"hardware": "MOXA IKS-6728A-4GTXSFP-T"}, legacy) is not None
+
+
+def test_ports_are_placed_by_name_not_by_number():
+    """`HundredGigE1/0/1` und `GigabitEthernet1/0/1` tragen dieselbe Nummer und
+    sind verschiedene Buchsen."""
+    from diagram.physical import port_places
+    place = port_places(BY_NAME[0])
+    assert place("p1") == {"x": 40, "y": 24, "w": 14, "h": 16}
+    assert place("p3")["w"] == 34 and place("p3")["h"] == 22   # Sondergröße
+    assert place("p9") is None
+    mixed = {"image": "x", "ports": {"GigabitEthernet1/0/1": {"x": 1, "y": 2},
+                                     "HundredGigE1/0/1": {"x": 500, "y": 40}}}
+    p = port_places(mixed)
+    assert p("GigabitEthernet1/0/1")["x"] == 1 and p("HundredGigE1/0/1")["x"] == 500
+    assert port_places({"image": "x"}) is None
+    assert port_places(None) is None
+
+
+async def test_named_port_map_drives_the_image_panel(inventory, prefixes):
+    from diagram import physical
+
+    async def arp(macs):
+        return {}
+
+    m = await physical.switch_model(FakeLnms(), {}, 4, arp, [])
+    m["device"] = {**m["device"], "hardware": "MOXA IKS-6728A-4GTXSFP-T"}
+    root = ET.fromstring(physical.render_switch(m, rules=BY_NAME))
+    panel = next(o for o in root.findall(".//object")
+                 if "shape=image" in (o.find("mxCell").get("style") or ""))
+    assert _geo(panel.find("mxCell"))[2:] == (721, 81)
+    kids = {o.get("tooltip", "").split("\n")[0]: _geo(o.find("mxCell"))
+            for o in root.findall(".//object")
+            if o.find("mxCell").get("parent") == panel.get("id")}
+    assert (kids["Port p1"][0] + kids["Port p1"][2] / 2,
+            kids["Port p1"][1] + kids["Port p1"][3] / 2) == (40, 24)
+    assert kids["Port p3"][2:] == (34, 22)
+    # p4 ist nicht zugeordnet und steht deshalb unter dem Bild, nicht nirgends.
+    labels = [o.get("label", "") for o in root.findall(".//object")]
+    assert "1 Ports ohne zugeordnete Buchse" in labels and "p4" in labels

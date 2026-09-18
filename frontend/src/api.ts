@@ -372,6 +372,27 @@ export async function diagramSwitches(location?: string, group?: string):
   return request(`/api/diagram/switches${q.toString() ? `?${q}` : ''}`);
 }
 
+export interface HardwareModel {
+  hardware: string; count: number; device_id: string; example: string | null; os: string | null;
+}
+export async function diagramHardware(): Promise<{ models: HardwareModel[] }> {
+  if (isDemoMode()) {
+    return { models: [
+      { hardware: 'MOXA IKS-6728A-4GTXSFP-T', count: 12, device_id: '4', example: 'moxa-iks', os: 'moxa' },
+      { hardware: 'HPE 5130-48G-PoE+ 4SFP+ EI', count: 3, device_id: '1', example: 'core-01', os: 'comware' },
+    ] };
+  }
+  return request('/api/diagram/hardware');
+}
+export async function diagramDevicePorts(deviceId: string):
+  Promise<{ ports: { name: string; alias: string | null }[] }> {
+  if (isDemoMode()) {
+    return { ports: Array.from({ length: 8 }, (_v, i) => (
+      { name: `GigabitEthernet1/0/${i + 1}`, alias: null })) };
+  }
+  return request(`/api/diagram/device-ports?device_id=${encodeURIComponent(deviceId)}`);
+}
+
 export interface PhysicalFilters {
   locations: string[]; groups: { name: string; desc: string | null }[]; warnings: string[];
 }

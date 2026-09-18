@@ -247,6 +247,60 @@ async def physical_filters(request: Request,
     return out
 
 
+@router.get("/hardware")
+async def hardware(request: Request, _user: dict = Depends(get_current_user)) -> dict:
+    """Die tatsächlich erkannten Gerätemodelle aus LibreNMS.
+
+    Freitext taugt als Schlüssel nicht: geschrieben wird jedes Modell anders,
+    und ein Tippfehler fällt erst auf, wenn die Zeichnung fertig ist und nichts
+    passt. Deshalb wird die Shape-Bibliothek aus DIESER Liste gefüllt.
+    """
+    cfg = await read_config("librenms")
+    if not cfg.get("base_url"):
+        raise HTTPException(400, "LibreNMS ist nicht konfiguriert.")
+    try:
+        index = await request.app.state.locate.librenms.device_index(cfg)
+    except Exception as exc:
+        raise HTTPException(502, f"LibreNMS nicht abrufbar: {exc}") from exc
+    models: dict[str, dict] = {}
+    seen: set[str] = set()
+    for dev in index.values():
+        did = str(dev.get("device_id") or "")
+        if not did or did in seen:
+            continue
+        seen.add(did)
+        hw = str(dev.get("hardware") or "").strip()
+        if not hw:
+            continue
+        slot = models.setdefault(hw, {"hardware": hw, "count": 0, "device_id": did,
+                                      "example": None, "os": dev.get("os")})
+        slot["count"] += 1
+        if slot["example"] is None:
+            slot["example"] = dev.get("sysName") or dev.get("hostname")
+    return {"models": sorted(models.values(), key=lambda m: (-m["count"], m["hardware"]))}
+
+
+@router.get("/device-ports")
+async def device_ports(request: Request, device_id: str,
+                       _user: dict = Depends(get_current_user)) -> dict:
+    """Physische Ports eines Geräts in LibreNMS-Reihenfolge — die Vorlage zum
+    Durchklicken. Logische Interfaces bleiben draußen, sie haben keine Buchse."""
+    cfg = await read_config("librenms")
+    if not cfg.get("base_url"):
+        raise HTTPException(400, "LibreNMS ist nicht konfiguriert.")
+    try:
+        rows = await request.app.state.locate.librenms.device_ports(cfg, device_id)
+    except Exception as exc:
+        raise HTTPException(502, f"LibreNMS nicht abrufbar: {exc}") from exc
+    out = []
+    for p in rows:
+        name = str(p.get("ifName") or p.get("ifDescr") or "").strip()
+        if not name or physical.LOGICAL_PORT.match(name):
+            continue
+        out.append({"name": name, "alias": p.get("ifAlias") or None})
+    return {"ports": out}
+
+
 @router.get("/switches")
 async def switches(request: Request, location: str | None = None,
                    group: str | None = None,

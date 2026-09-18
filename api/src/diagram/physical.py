@@ -139,18 +139,65 @@ def _haystack(dev: dict) -> str:
 
 
 def match_rule(dev: dict, rules: list[dict] | None) -> dict | None:
-    """Erste passende Regel der Shape-Bibliothek — Reihenfolge ist Priorität.
+    """Regel der Shape-Bibliothek zu einem Gerät.
 
-    Gematcht wird gegen Hardware, sysDescr, OS und Namen; so trifft eine Regel
-    `IKS-6728A` genauso wie `5130-48G-PoE+`. Ohne Treffer bleibt es beim
-    generischen Klassensymbol, damit ein unbekanntes Gerät nicht verschwindet.
+    Zuerst der EXAKTE Hardware-String aus LibreNMS: die Regeln werden aus der
+    Liste der tatsächlich erkannten Modelle angelegt, nicht von Hand getippt —
+    ein Tippfehler im Muster fällt sonst erst auf, wenn die Zeichnung fertig
+    ist und nichts passt. Danach der Teilstring-Weg für ältere Regeln.
     """
+    hardware = str(dev.get("hardware") or "").strip().lower()
+    if hardware:
+        for rule in rules or []:
+            key = str(rule.get("hardware") or "").strip().lower()
+            if key and key == hardware and rule.get("image"):
+                return rule
     text = _haystack(dev)
     for rule in rules or []:
         pattern = str(rule.get("match") or "").strip().lower()
         if pattern and pattern in text and rule.get("image"):
             return rule
     return None
+
+
+def port_places(rule: dict | None):
+    """Zuordnung Portname → Platz im Bild.
+
+    Gearbeitet wird über den NAMEN, nicht über die Nummer: `HundredGigE1/0/1`
+    und `GigabitEthernet1/0/1` tragen dieselbe Nummer und sind verschiedene
+    Buchsen. Der Name ist bei Geräten desselben Modells identisch, also trägt
+    eine einmal eingemessene Zuordnung für alle davon.
+
+    Rückgabe: Funktion name → {x, y, w, h} oder None; None heißt, dass es für
+    diese Regel keine Platzzuordnung gibt.
+    """
+    if not rule or not rule.get("image"):
+        return None
+    places = rule.get("ports")
+    if isinstance(places, dict) and places:
+        dw = float(rule.get("port_w") or 16)
+        dh = float(rule.get("port_h") or 16)
+
+        def by_name(name: str) -> dict | None:
+            spot = places.get(name)
+            if not isinstance(spot, dict):
+                return None
+            return {"x": float(spot.get("x", 0)), "y": float(spot.get("y", 0)),
+                    "w": float(spot.get("w") or dw), "h": float(spot.get("h") or dh)}
+        return by_name
+
+    blocks = _blocks(rule)          # Alt-Regeln mit Raster
+    if not blocks:
+        return None
+
+    def by_grid(name: str) -> dict | None:
+        hit = port_position(port_number(name), blocks)
+        if hit is None:
+            return None
+        x, y, block = hit
+        return {"x": x, "y": y, "w": float(block.get("w") or 20),
+                "h": float(block.get("h") or 20)}
+    return by_grid
 
 
 def device_style(dev: dict, rules: list[dict] | None = None,
@@ -374,7 +421,7 @@ def _attached_label(host: dict) -> str:
     return "<br>".join(lines)
 
 
-def _draw_image_panel(doc: Doc, model: dict, rule: dict, blocks: list[dict],
+def _draw_image_panel(doc: Doc, model: dict, rule: dict, place,
                       x0: float, y_top: float) -> tuple[float, float]:
     """Kalibriertes Modellbild als Panel: das Bild ist die Fläche, die Buchsen
     liegen als durchsichtige Felder darüber. So landet die Leitung dort, wo im
@@ -384,13 +431,13 @@ def _draw_image_panel(doc: Doc, model: dict, rule: dict, blocks: list[dict],
     img_w = float(rule.get("width") or 800)
     img_h = float(rule.get("height") or 120)
 
-    placed: list[tuple[dict, float, float, dict]] = []
+    placed: list[tuple[dict, dict]] = []
     rest: list[dict] = []
     for p in ports:
-        hit = port_position(port_number(p["name"]), blocks)
-        (placed.append((p, hit[0], hit[1], hit[2])) if hit else rest.append(p))
+        spot = place(p["name"])
+        (placed.append((p, spot)) if spot else rest.append(p))
 
-    attached = [(p, h) for p, _x, _y, _b in placed for h in p["hosts"][:4]]
+    attached = [(p, h) for p, _spot in placed for h in p["hosts"][:4]]
     attached += [(p, h) for p in rest for h in p["hosts"][:4]]
     above, below = attached[0::2], attached[1::2]
     per_row = max(1, int(img_w // HOST_SLOT))
@@ -409,9 +456,9 @@ def _draw_image_panel(doc: Doc, model: dict, rule: dict, blocks: list[dict],
                        tooltip=tip)
 
     cell: dict[str, str] = {}
-    for p, px, py, block in placed:
-        w = float(block.get("w") or 20)
-        h = float(block.get("h") or 20)
+    for p, spot in placed:
+        w, h = spot["w"], spot["h"]
+        px, py = spot["x"], spot["y"]
         kind = "uplink" if p["uplink"] else "used" if p["hosts"] else "free"
         fill, line, opacity = OVERLAY_COLORS[kind]
         ptip = "\n".join(str(t) for t in (
@@ -426,7 +473,7 @@ def _draw_image_panel(doc: Doc, model: dict, rule: dict, blocks: list[dict],
     # nicht — sie stehen als Kästchenreihe unter dem Bild.
     bottom = img_y + img_h
     if rest:
-        doc.vertex(f"{len(rest)} Ports ohne Rasterplatz",
+        doc.vertex(f"{len(rest)} Ports ohne zugeordnete Buchse",
                    "text;html=1;fontSize=9;align=left;fontColor=#888888;",
                    x0, bottom + 6, 220, 16)
         for i, p in enumerate(rest):
@@ -467,9 +514,9 @@ def _draw_panel(doc: Doc, model: dict, x0: float, y_top: float,
     dev = model["device"]
     ports = model["ports"]
     rule = match_rule(dev, rules)
-    blocks = _blocks(rule)
-    if blocks:
-        return _draw_image_panel(doc, model, rule, blocks, x0, y_top)
+    place = port_places(rule)
+    if place is not None:
+        return _draw_image_panel(doc, model, rule, place, x0, y_top)
 
     # Portnamen um ihr gemeinsames Präfix kürzen: aus
     # „Ten-GigabitEthernet1/0/24" wird „24", das Präfix steht am Panel.
