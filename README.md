@@ -158,22 +158,27 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   Port-Position; nebeneinander liegende Ports sind 62 px auseinander, eine
   Beschriftung braucht 150. Das Symbol richtet sich nach Hersteller und Rolle
   (Firewall, Layer-3-Switch, Access-Switch, Access Point). Wer die echte
-  Frontblende will, hinterlegt sie unter *Einstellungen → Shape-Bibliothek*:
-  je Muster (`IKS-6728A`, `5130-48G`) ein Bild, gematcht gegen Hardware,
-  sysDescr, OS und Namen aus LibreNMS, erste Regel gewinnt. Ohne Treffer bleibt
-  es beim Klassensymbol — ein unbekanntes Gerät fällt nie aus der Zeichnung.
+  Frontblende will, hinterlegt sie unter *Einstellungen → Shape-Bibliothek*.
+  Die Modellliste dort kommt aus **LibreNMS** (die tatsächlich erkannten
+  Hardware-Strings), nicht aus einem Freitextfeld: jedes Modell lässt sich auf
+  fünf Arten schreiben, und ein Tippfehler im Muster fällt erst auf, wenn die
+  Zeichnung fertig ist und nichts passt. Ohne hinterlegtes Bild bleibt es beim
+  Klassensymbol — ein unbekanntes Gerät fällt nie aus der Zeichnung.
+
   Ein Bild allein trägt allerdings keine Information — die Leitung muss an der
-  richtigen Buchse landen. Dafür lässt sich je Regel das **Buchsenraster
-  einmessen**: erste und letzte Buchse eines Blocks im Bild anklicken, Spalten,
-  Reihen und Zählrichtung angeben (`oben ungerade / unten gerade` oder
-  `reihenweise`), den Abstand rechnet A38 daraus. Abgesetzte SFP-Buchsen
-  bekommen einen zweiten Block. Ist ein Raster hinterlegt, wird das Bild zur
-  Panelfläche und die Buchsen liegen als Felder darüber; die Zuordnung läuft
-  über die **Portnummer aus dem Namen** (`Ten-GigabitEthernet1/0/24` → 24), nicht
-  über die Reihenfolge der LibreNMS-Liste. Ports ohne Rasterplatz verschwinden
-  nicht, sie stehen als Kästchenreihe unter dem Bild. Ohne Kalibrierung bleibt
-  das Bild ein Erkennungszeichen und die Geräte hängen am schematischen Panel —
-  das ist auch die Rückfallebene für Chassis mit gemischten Modulen.
+  richtigen Buchse landen. Dafür werden die Buchsen einmal je Modell
+  **zugeordnet**: die Portliste des Geräts wird der Reihe nach abgearbeitet,
+  der hervorgehobene Port landet dort, wo man klickt. Ein Raster taugt dafür
+  nicht — echte Frontblenden haben Lücken zwischen den Portgruppen,
+  Hutschienengeräte stehen hochkant, und 40/100-G-Buchsen sitzen abgesetzt und
+  sind größer (Sondergrößen je Buchse einstellbar). Zugeordnet wird über den
+  **Portnamen**, nicht über die Nummer: `HundredGigE1/0/1` und
+  `GigabitEthernet1/0/1` tragen dieselbe Nummer und sind verschiedene Buchsen,
+  während der Name bei allen Geräten desselben Modells gleich ist. Ports ohne
+  Zuordnung verschwinden nicht, sie stehen als Kästchenreihe unter dem Bild.
+  Ohne Zuordnung bleibt das Bild ein Erkennungszeichen und die Geräte hängen am
+  schematischen Panel — die Rückfallebene für alles Unbekannte.
+
   Bewusst ein **Upload** statt eines Visio-Konverters: Hersteller-Stencils sind
   teils altes Binärformat (`.vss`), liegen teils hinter Abo-Portalen und
   enthalten teils nur EMF, das kein Browser darstellt; SVG und PNG bettet
