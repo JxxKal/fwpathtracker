@@ -157,8 +157,22 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   liegen auf gleichmäßigen Plätzen über und unter dem Panel statt an der
   Port-Position; nebeneinander liegende Ports sind 62 px auseinander, eine
   Beschriftung braucht 150. Das Symbol richtet sich nach Hersteller und Rolle
-  (Firewall, Layer-3-Switch, Access-Switch, Access Point) — eine
-  Klassenaussage, kein modellgenaues Faceplate; das Modell steht daneben.
+  (Firewall, Layer-3-Switch, Access-Switch, Access Point). Wer die echte
+  Frontblende will, hinterlegt sie unter *Einstellungen → Shape-Bibliothek*:
+  je Muster (`IKS-6728A`, `5130-48G`) ein Bild, gematcht gegen Hardware,
+  sysDescr, OS und Namen aus LibreNMS, erste Regel gewinnt. Ohne Treffer bleibt
+  es beim Klassensymbol — ein unbekanntes Gerät fällt nie aus der Zeichnung.
+  Bewusst ein **Upload** statt eines Visio-Konverters: Hersteller-Stencils sind
+  teils altes Binärformat (`.vss`), liegen teils hinter Abo-Portalen und
+  enthalten teils nur EMF, das kein Browser darstellt; SVG und PNG bettet
+  draw.io dagegen direkt und verlustfrei ein.
+
+  Beide physischen Sichten lassen sich auf einen **LibreNMS-Standort** (bei uns
+  teils raumscharf gepflegt) oder eine **Gerätegruppe** einschränken; beides
+  gesetzt heißt Schnittmenge. Gefiltert wird von LibreNMS selbst
+  (`?type=location` bzw. `/devicegroups/:name`) — das Standortfeld heißt je
+  nach Version anders, der Filter nicht. Der Filter wirkt auch auf die
+  Switch-Auswahl: ein raumscharfer Standort macht aus 300 Geräten eine Handvoll.
   Struktur und Logisch teilen Scope und Schriftfeld: VDOM, Firewall, **Standort**
   oder **alle Standorte**; Netze je
   Interface (VLAN, CIDR, Zone, iTop-Name), VDOM-Links, Routen zu fremden VDOMs
