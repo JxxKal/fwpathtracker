@@ -5,6 +5,7 @@ import LoginPage from './components/LoginPage';
 import HistoryList from './components/HistoryList';
 import AddToChecks from './components/AddToChecks';
 import ChecksPanel from './components/ChecksPanel';
+import ErrorBoundary from './components/ErrorBoundary';
 import HopDetailPanel from './components/HopDetailPanel';
 import PathGraph from './components/PathGraph';
 import PortResult from './components/PortResult';
@@ -175,6 +176,9 @@ export default function App() {
       </header>
 
       <main className="mx-auto max-w-[1800px] space-y-4 p-4">
+        {/* Letzte Grenze: ein Fehler außerhalb der Werkzeuge darf die
+            Oberfläche nicht auf die Hintergrundfarbe reduzieren. */}
+        <ErrorBoundary label={tab}>
         {tab === 'tracker' && (
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
             <SideNav groups={TRACKER_NAV} active={view} label={de.tracker.pick}
@@ -261,6 +265,7 @@ export default function App() {
         {tab === 'tools' && <ToolsPanel initial={toolLink} />}
 
         {tab === 'einstellungen' && session.role === 'admin' && <SettingsPanel />}
+        </ErrorBoundary>
       </main>
     </div>
   );

@@ -2,6 +2,7 @@ import { Check, Link2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { copyText } from '../checkLink';
 import { de } from '../i18n/de';
+import ErrorBoundary from './ErrorBoundary';
 import SideNav, { type NavGroup } from './SideNav';
 import FreeIp from './FreeIp';
 import FreeSubnet from './FreeSubnet';
@@ -122,7 +123,9 @@ export default function ToolsPanel({ initial }: { initial?: ToolId | null }) {
       <SideNav groups={NAV} active={active} label={de.tools.pick}
         onSelect={(id) => setActive(id as ToolId)}
         footer={<CopyToolLink id={active} />} />
-      <div className="min-w-0 flex-1">{tool.render()}</div>
+      <div className="min-w-0 flex-1">
+        <ErrorBoundary key={tool.id} label={tool.label}>{tool.render()}</ErrorBoundary>
+      </div>
     </div>
   );
 }

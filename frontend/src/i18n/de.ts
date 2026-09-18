@@ -4,6 +4,11 @@ export const de = {
   tabs: { tracker: 'Tracker', tools: 'Network Tools', checks: 'Checks', history: 'Verlauf',
     settings: 'Einstellungen' },
   nav: { pick: 'Ansicht' },
+  errorBoundary: {
+    title: 'Diese Ansicht konnte nicht dargestellt werden',
+    hint: 'Der Rest von A38 läuft weiter. Bitte die folgende Meldung melden — sie sagt, was schiefging.',
+    retry: 'Erneut versuchen',
+  },
   settingsNav: {
     pick: 'Einstellung',
     groupSources: 'Datenquellen',

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { de } from '../../i18n/de';
+import ErrorBoundary from '../ErrorBoundary';
 import SideNav, { type NavGroup } from '../SideNav';
 import DnsPanel from './DnsPanel';
 import DrawioPanel from './DrawioPanel';
@@ -91,7 +92,9 @@ export default function SettingsPanel() {
     <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
       <SideNav groups={GROUPS} active={active} onSelect={setActive}
         label={de.settingsNav.pick} />
-      <div className="min-w-0 flex-1">{render()}</div>
+      <div className="min-w-0 flex-1">
+        <ErrorBoundary key={active}>{render()}</ErrorBoundary>
+      </div>
     </div>
   );
 }
