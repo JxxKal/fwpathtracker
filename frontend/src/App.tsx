@@ -20,6 +20,7 @@ import LibrenmsPanel from './components/settings/LibrenmsPanel';
 import SamlPanel from './components/settings/SamlPanel';
 import SiteSupernetsPanel from './components/settings/SiteSupernetsPanel';
 import SitesPanel from './components/settings/SitesPanel';
+import ShapesPanel from './components/settings/ShapesPanel';
 import SslPanel from './components/settings/SslPanel';
 import TitleBlockPanel from './components/settings/TitleBlockPanel';
 import UsersPanel from './components/settings/UsersPanel';
@@ -277,6 +278,7 @@ export default function App() {
             <LibrenmsPanel />
             <DrawioPanel />
             <TitleBlockPanel />
+            <ShapesPanel />
             <DnsPanel />
             <SitesPanel />
             <SiteSupernetsPanel />

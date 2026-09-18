@@ -354,15 +354,36 @@ export async function diagramScopes(): Promise<DiagramScopes> {
   return request('/api/diagram/scopes');
 }
 export interface DrawioTest { ok: boolean; checked: boolean; status: number | null; looks_like_drawio: boolean; hint: string | null }
-export interface SwitchEntry { device_id: string; name: string; ip: string | null; hardware: string | null }
-export async function diagramSwitches(): Promise<{ switches: SwitchEntry[] }> {
+export interface SwitchEntry {
+  device_id: string; name: string; ip: string | null; hardware: string | null;
+  location?: string | null;
+}
+export async function diagramSwitches(location?: string, group?: string):
+  Promise<{ switches: SwitchEntry[] }> {
   if (isDemoMode()) {
     return { switches: [
-      { device_id: '1', name: 'core-01', ip: '10.0.0.1', hardware: 'HP 5406' },
-      { device_id: '4', name: 'moxa-iks', ip: '10.0.0.4', hardware: 'MOXA IKS' },
+      { device_id: '1', name: 'core-01', ip: '10.0.0.1', hardware: 'HP 5406', location: 'Werk 1 / Raum 12' },
+      { device_id: '4', name: 'moxa-iks', ip: '10.0.0.4', hardware: 'MOXA IKS-6728A', location: 'Werk 1 / Schrank 3' },
     ] };
   }
-  return request('/api/diagram/switches');
+  const q = new URLSearchParams();
+  if (location) q.set('location', location);
+  if (group) q.set('group', group);
+  return request(`/api/diagram/switches${q.toString() ? `?${q}` : ''}`);
+}
+
+export interface PhysicalFilters {
+  locations: string[]; groups: { name: string; desc: string | null }[]; warnings: string[];
+}
+export async function diagramFilters(): Promise<PhysicalFilters> {
+  if (isDemoMode()) {
+    return {
+      locations: ['Werk 1 / Raum 12', 'Werk 1 / Schrank 3', 'Werk 2'],
+      groups: [{ name: 'OT-Switche', desc: 'alle Feld-Switche' }, { name: 'Core', desc: null }],
+      warnings: [],
+    };
+  }
+  return request('/api/diagram/physical-filters');
 }
 export async function drawioTest(): Promise<DrawioTest> {
   if (isDemoMode()) return { ok: true, checked: true, status: 200, looks_like_drawio: true, hint: null };
@@ -370,7 +391,8 @@ export async function drawioTest(): Promise<DrawioTest> {
 }
 export async function buildDiagram(scope: DiagramScope, device: string | null, vdom: string | null,
   site: string | null, hosts: DiagramHosts, expandHosts = false,
-  view: DiagramView = 'struktur', switchId: string | null = null): Promise<DiagramResult> {
+  view: DiagramView = 'struktur', switchId: string | null = null,
+  location: string | null = null, group: string | null = null): Promise<DiagramResult> {
   if (isDemoMode()) {
     const xml = '<?xml version="1.0" encoding="UTF-8"?>\n<mxfile host="A38"><diagram name="Demo" id="demo"><mxGraphModel><root>'
       + '<mxCell id="0"/><mxCell id="1" parent="0"/>'
@@ -392,7 +414,7 @@ export async function buildDiagram(scope: DiagramScope, device: string | null, v
   return request('/api/diagram', {
     method: 'POST',
     body: JSON.stringify({ scope, device, vdom, site, hosts, expand_hosts: expandHosts,
-      view, switch_id: switchId }),
+      view, switch_id: switchId, location, group }),
   });
 }
 

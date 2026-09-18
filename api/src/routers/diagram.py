@@ -67,6 +67,10 @@ class DiagramRequest(BaseModel):
     view: str = Field(default="struktur",
                       pattern="^(struktur|logisch|physisch-l1|physisch-l2)$")
     switch_id: str | None = Field(default=None, max_length=32)
+    # Nur für die physischen Sichten: Einschränkung auf einen LibreNMS-Standort
+    # (bei uns teils raumscharf) oder eine Gerätegruppe.
+    location: str | None = Field(default=None, max_length=200)
+    group: str | None = Field(default=None, max_length=200)
 
 
 def _site_detail(site: str | None, scores: dict[str, int]) -> str | None:
@@ -197,23 +201,70 @@ async def drawio_test(_admin: dict = Depends(require_admin)) -> dict:
             "looks_like_drawio": looks, "hint": None}
 
 
+async def _allowed_devices(client, cfg: dict, location: str | None,
+                           group: str | None) -> set[str] | None:
+    """Erlaubte LibreNMS-Geräte-Ids für Standort bzw. Gruppe — None heißt: alle.
+
+    Gefiltert wird von LibreNMS selbst: das Standortfeld heißt je nach Version
+    anders, der Filter nicht. Sind beide gesetzt, gilt der Schnitt.
+    """
+    sets: list[set[str]] = []
+    if location:
+        rows = await client.devices_by_location(cfg, location)
+        sets.append({str(d.get("device_id")) for d in rows if d.get("device_id")})
+    if group:
+        rows = await client.devices_in_group(cfg, group)
+        sets.append({str(d.get("device_id")) for d in rows if d.get("device_id")})
+    if not sets:
+        return None
+    return set.intersection(*sets)
+
+
+@router.get("/physical-filters")
+async def physical_filters(request: Request,
+                           _user: dict = Depends(get_current_user)) -> dict:
+    """Standorte und Gerätegruppen aus LibreNMS — Auswahl der physischen Sicht."""
+    cfg = await read_config("librenms")
+    if not cfg.get("base_url"):
+        raise HTTPException(400, "LibreNMS ist nicht konfiguriert.")
+    client = request.app.state.locate.librenms
+    out: dict = {"locations": [], "groups": [], "warnings": []}
+    try:
+        out["locations"] = sorted(
+            {str(r.get("location") or "").strip()
+             for r in await client.locations(cfg) if r.get("location")})
+    except Exception as exc:
+        out["warnings"].append(f"Standorte nicht abrufbar: {exc}")
+    try:
+        out["groups"] = [{"name": str(g.get("name")), "desc": g.get("desc") or None}
+                         for g in await client.device_groups(cfg) if g.get("name")]
+    except Exception as exc:
+        out["warnings"].append(f"Gerätegruppen nicht abrufbar: {exc}")
+    return out
+
+
 @router.get("/switches")
-async def switches(request: Request, _user: dict = Depends(get_current_user)) -> dict:
+async def switches(request: Request, location: str | None = None,
+                   group: str | None = None,
+                   _user: dict = Depends(get_current_user)) -> dict:
     """Überwachte Geräte aus LibreNMS — Auswahl für den Switch-Plan (Ebene 2)."""
     cfg = await read_config("librenms")
     if not cfg.get("base_url"):
         raise HTTPException(400, "LibreNMS ist nicht konfiguriert.")
+    client = request.app.state.locate.librenms
     try:
-        index = await request.app.state.locate.librenms.device_index(cfg)
+        index = await client.device_index(cfg)
+        allow = await _allowed_devices(client, cfg, location, group)
     except Exception as exc:
         raise HTTPException(502, f"LibreNMS nicht abrufbar: {exc}") from exc
     seen: dict[str, dict] = {}
     for dev in index.values():
         did = str(dev.get("device_id") or "")
-        if did and did not in seen:
+        if did and did not in seen and (allow is None or did in allow):
             seen[did] = {"device_id": did,
                          "name": dev.get("sysName") or dev.get("hostname") or did,
-                         "ip": dev.get("ip"), "hardware": dev.get("hardware")}
+                         "ip": dev.get("ip"), "hardware": dev.get("hardware"),
+                         "location": dev.get("location")}
     return {"switches": sorted(seen.values(), key=lambda d: d["name"].lower())}
 
 
@@ -227,13 +278,24 @@ async def _physical(body: DiagramRequest, request: Request, user: dict) -> dict:
     client = state.locate.librenms
     warnings: list[str] = []
 
+    shapes = (await read_config("shapes")).get("rules") or []
+    try:
+        allow = await _allowed_devices(client, cfg, body.location, body.group)
+    except Exception as exc:
+        warnings.append(f"Filter nicht anwendbar: {exc}")
+        allow = None
+    scope_note = " · ".join(p for p in (body.location, body.group) if p)
+
     if body.view == "physisch-l1":
-        mdl = await physical.infra_model(client, cfg, warnings)
+        mdl = await physical.infra_model(client, cfg, warnings, allow=allow)
         title = "Netzwerk physisch · Infrastruktur"
-        subtitle = (f"{len(mdl['nodes'])} Geräte · {len(mdl['edges'])} LLDP-Verbindungen")
-        stem, stats = "physisch_infrastruktur", {
-            "devices": len(mdl["nodes"]), "links": len(mdl["edges"])}
-        render = physical.render_infra
+        subtitle = (f"{len(mdl['nodes'])} Geräte · {len(mdl['edges'])} LLDP-Verbindungen"
+                    + (f" · {scope_note}" if scope_note else ""))
+        stem = "physisch_infrastruktur" + (f"_{scope_note}" if scope_note else "")
+        stats = {"devices": len(mdl["nodes"]), "links": len(mdl["edges"])}
+
+        def render(m, tb):
+            return physical.render_infra(m, tb, rules=shapes)
     else:
         if not body.switch_id:
             raise HTTPException(422, "Für die Switch-Ansicht bitte ein Gerät wählen.")
@@ -262,7 +324,8 @@ async def _physical(body: DiagramRequest, request: Request, user: dict) -> dict:
         stats = {"ports": len(mdl["ports"]), "hosts": attached,
                  "uplinks": sum(1 for p in mdl["ports"] if p["uplink"]),
                  "logical": mdl.get("logical", 0)}
-        render = physical.render_switch
+        def render(m, tb):
+            return physical.render_switch(m, tb, rules=shapes)
 
     stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", stem).strip("_") or "physisch"
     cfg_tb = await read_config("titleblock")

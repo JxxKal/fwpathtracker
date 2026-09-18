@@ -75,11 +75,48 @@ def _name(dev: dict) -> str:
     return str(dev.get("sysName") or dev.get("hostname") or dev.get("device_id") or "?")
 
 
+def _haystack(dev: dict) -> str:
+    return " ".join(str(dev.get(k) or "")
+                    for k in ("hardware", "sysDescr", "os", "type", "sysName",
+                              "hostname")).lower()
+
+
+def match_rule(dev: dict, rules: list[dict] | None) -> dict | None:
+    """Erste passende Regel der Shape-Bibliothek — Reihenfolge ist Priorität.
+
+    Gematcht wird gegen Hardware, sysDescr, OS und Namen; so trifft eine Regel
+    `IKS-6728A` genauso wie `5130-48G-PoE+`. Ohne Treffer bleibt es beim
+    generischen Klassensymbol, damit ein unbekanntes Gerät nicht verschwindet.
+    """
+    text = _haystack(dev)
+    for rule in rules or []:
+        pattern = str(rule.get("match") or "").strip().lower()
+        if pattern and pattern in text and rule.get("image"):
+            return rule
+    return None
+
+
+def device_style(dev: dict, rules: list[dict] | None = None,
+                 label_below: bool = True) -> str:
+    """Vollständiger draw.io-Style für ein Gerät: das hinterlegte Modellbild,
+    sonst das Klassensymbol."""
+    rule = match_rule(dev, rules)
+    if rule:
+        image = str(rule["image"]).replace(";base64,", ",", 1)
+        style = f"shape=image;html=1;imageAspect=1;image={image};"
+        return style + ("verticalLabelPosition=bottom;verticalAlign=top;"
+                        "fontSize=10;whiteSpace=wrap;" if label_below else "")
+    stencil, color = device_shape(dev)
+    style = NODE.format(stencil=stencil, color=color)
+    if not label_below:
+        style = style.replace("verticalLabelPosition=bottom;verticalAlign=top;", "")
+    return style
+
+
 def device_shape(dev: dict) -> tuple[str, str]:
     """(Stencil, Farbe) nach Hersteller/Hardware — eine Klassenaussage, kein
     modellgenaues Abbild. Das genaue Modell steht daneben."""
-    text = " ".join(str(dev.get(k) or "")
-                    for k in ("os", "type", "hardware", "sysDescr")).lower()
+    text = _haystack(dev)
     for words, stencil, color in VENDOR_SHAPES:
         if any(w in text for w in words):
             return stencil, color
@@ -88,7 +125,8 @@ def device_shape(dev: dict) -> tuple[str, str]:
 
 # ── Ebene 1: Infrastruktur ───────────────────────────────────────────────────
 
-async def infra_model(client, cfg: dict, warnings: list[str]) -> dict:
+async def infra_model(client, cfg: dict, warnings: list[str],
+                      allow: set[str] | None = None) -> dict:
     """Geräte und ihre LLDP-Nachbarschaften. Nur Kanten zwischen ÜBERWACHTEN
     Geräten: ein Nachbar ohne eigene Device-Id ist ein Endgerät, und Endgeräte
     gehören auf Ebene 2, nicht in die Infrastrukturansicht."""
@@ -101,8 +139,11 @@ async def infra_model(client, cfg: dict, warnings: list[str]) -> dict:
     by_id: dict[str, dict] = {}
     for dev in index.values():
         did = str(dev.get("device_id") or "")
-        if did:
+        if did and (allow is None or did in allow):
             by_id[did] = dev
+    if allow is not None and not by_id:
+        warnings.append("Kein überwachtes Gerät im gewählten Standort bzw. in der "
+                        "gewählten Gruppe.")
 
     edges: dict[tuple[str, str], dict] = {}
     for link in links:
@@ -154,7 +195,8 @@ def _layers(model: dict) -> list[list[str]]:
     return layers
 
 
-def render_infra(model: dict, title_block: dict | None = None) -> str:
+def render_infra(model: dict, title_block: dict | None = None,
+                 rules: list[dict] | None = None) -> str:
     doc = Doc("Netzwerk physisch · Infrastruktur", page=A3_LANDSCAPE)
     layers = _layers(model)
     width = max((len(l) for l in layers), default=1) * COL_GAP
@@ -170,9 +212,9 @@ def render_infra(model: dict, title_block: dict | None = None) -> str:
             tip = "\n".join(f"{k}: {v}" for k, v in (
                 ("Gerät", _name(dev)), ("IP", dev.get("ip")),
                 ("Hardware", dev.get("hardware")), ("OS", dev.get("os"))) if v)
-            stencil, color = device_shape(dev)
-            cell[did] = doc.vertex(label, NODE.format(stencil=stencil, color=color),
-                                   x + (NODE_W - 72) / 2, y, 72, ICON_H, tooltip=tip)
+            style = device_style(dev, rules)
+            cell[did] = doc.vertex(label, style, x + (NODE_W - 72) / 2, y, 72, ICON_H,
+                                   tooltip=tip)
     for e in model["edges"]:
         src, dst = cell.get(e["a"]), cell.get(e["b"])
         if not src or not dst:
@@ -275,7 +317,8 @@ def _attached_label(host: dict) -> str:
     return "<br>".join(lines)
 
 
-def render_switch(model: dict, title_block: dict | None = None) -> str:
+def render_switch(model: dict, title_block: dict | None = None,
+                  rules: list[dict] | None = None) -> str:
     dev = model["device"]
     doc = Doc(f"Netzwerk physisch · {_name(dev)}", page=A3_LANDSCAPE)
     ports = model["ports"]
@@ -303,7 +346,7 @@ def render_switch(model: dict, title_block: dict | None = None) -> str:
     x0, y0 = 60, 60
     panel_y = y0 + top_rows * HOST_ROW + 30
 
-    stencil, color = device_shape(dev)
+    rule = match_rule(dev, rules)
     head = (f"{esc(_name(dev))} &#160; {esc(dev.get('ip') or '')} &#160; "
             f"{len(ports)} Ports")
     if prefix:
@@ -315,9 +358,12 @@ def render_switch(model: dict, title_block: dict | None = None) -> str:
         ("Gerät", _name(dev)), ("IP", dev.get("ip")), ("Hardware", dev.get("hardware")),
         ("OS", dev.get("os"))) if v)
     panel = doc.vertex(head, PANEL, x0, panel_y, panel_w, panel_h, tooltip=tip)
-    doc.vertex("", NODE.format(stencil=stencil, color=color).replace(
-        "verticalLabelPosition=bottom;verticalAlign=top;", ""),
-        x0 - 78, panel_y + 4, 64, 34, tooltip=tip)
+    # Hinterlegtes Modellbild bekommt mehr Platz als ein Klassensymbol — es ist
+    # die Frontblende, die man wiedererkennen soll.
+    icon_w = 170 if rule else 64
+    doc.vertex("", device_style(dev, rules, label_below=False),
+               x0 - icon_w - 14, panel_y + 2, icon_w, 38,
+               tooltip=(rule.get("label") or tip) if rule else tip)
 
     cell: dict[str, str] = {}
     for i, p in enumerate(ports):

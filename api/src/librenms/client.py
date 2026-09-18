@@ -116,7 +116,7 @@ class LibrenmsClient:
         """Alle Caches leeren (Settings-Panel: 'Cache aktualisieren')."""
         for cache in (self._links, self._devices, self._ports,
                       self._port_by_id, self._device_fdb,
-                      self._vlans, self._device_vlans, self._port_vlans):
+                      self._vlans, self._device_vlans, self._port_vlans, self._misc):
             cache.clear()
 
     # ── Endpunkte ───────────────────────────────────────────────────────────
@@ -308,6 +308,36 @@ class LibrenmsClient:
                 "protocol": link.get("protocol"),
             })
         return out
+
+    async def locations(self, cfg: dict) -> list[dict]:
+        """/resources/locations — Standorte, bei uns teils raumscharf gepflegt."""
+        cached = self._misc.get("locations")
+        if cached is not None:
+            return cached
+        rows = _rows(await self._get(cfg, "resources/locations"), "locations")
+        self._misc["locations"] = rows
+        return rows
+
+    async def device_groups(self, cfg: dict) -> list[dict]:
+        """/devicegroups — die in LibreNMS gepflegten Gerätegruppen."""
+        cached = self._misc.get("groups")
+        if cached is not None:
+            return cached
+        rows = _rows(await self._get(cfg, "devicegroups"), "groups")
+        self._misc["groups"] = rows
+        return rows
+
+    async def devices_by_location(self, cfg: dict, location: str) -> list[dict]:
+        """Geräte eines Standorts — gefiltert von LibreNMS selbst, nicht von uns:
+        das Feld heißt je nach Version anders, der Filter nicht."""
+        body = await self._get(cfg, "devices", {"type": "location", "query": location})
+        return _rows(body, "devices")
+
+    async def devices_in_group(self, cfg: dict, group: str) -> list[dict]:
+        from urllib.parse import quote
+        body = await self._get(cfg, f"devicegroups/{quote(group, safe='')}",
+                               {"full": "1"})
+        return _rows(body, "devices")
 
     async def test(self, cfg: dict) -> dict:
         """Verbindungstest fürs Settings-Panel: Version + Gerätezahl."""

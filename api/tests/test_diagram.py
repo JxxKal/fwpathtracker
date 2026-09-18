@@ -862,3 +862,63 @@ async def test_infra_view_without_lldp_says_so(inventory, prefixes):
     m = await physical.infra_model(Empty(), {}, warn)
     assert m["nodes"] == {} and any("LLDP" in w for w in warn)
     ET.fromstring(physical.render_infra(m))     # darf trotzdem eine Datei liefern
+
+
+# ── Shape-Bibliothek und Standort-/Gruppenfilter ─────────────────────────────
+
+RULES = [
+    {"match": "IKS-6728A", "label": "MOXA IKS-6728A",
+     "image": "data:image/png;base64,AAAB"},
+    {"match": "5130", "label": "HPE 5130 EI", "image": "data:image/svg+xml;base64,BBBB"},
+    {"match": "ohne-bild", "label": "kaputt"},          # ohne image -> greift nicht
+]
+
+
+def test_shape_rules_match_on_hardware_and_beat_the_class_symbol():
+    """Erste passende Regel gewinnt; ohne Treffer bleibt es beim Klassensymbol,
+    damit ein unbekanntes Gerät nicht aus der Zeichnung fällt."""
+    from diagram.physical import device_style, match_rule
+    moxa = {"hardware": "MOXA IKS-6728A-4GTXSFP-T", "os": "moxa"}
+    assert match_rule(moxa, RULES)["label"] == "MOXA IKS-6728A"
+    style = device_style(moxa, RULES)
+    # ';base64,' würde den Style mitten im Bild zerschneiden.
+    assert "shape=image" in style and "data:image/png,AAAB" in style
+    assert ";base64," not in style
+    assert match_rule({"hardware": "HPE 5130-48G-PoE+ EI"}, RULES)["label"] == "HPE 5130 EI"
+    assert match_rule({"hardware": "ohne-bild 1"}, RULES) is None
+    assert match_rule({"hardware": "Unbekannt 9000"}, RULES) is None
+    assert "mxgraph" in device_style({"hardware": "Unbekannt 9000"}, RULES)
+    assert "mxgraph" in device_style({"hardware": "MOXA IKS-6728A"}, None)
+
+
+async def test_infra_view_can_be_limited_to_a_set_of_devices(inventory, prefixes):
+    """Standort oder Gerätegruppe schränken die Infrastruktursicht ein — bei
+    raumscharf gepflegten Standorten ist das der Unterschied zwischen einem
+    Schrank und dem ganzen Werk."""
+    from diagram import physical
+    warn: list[str] = []
+    m = await physical.infra_model(FakeLnms(), {}, warn, allow={"1", "2", "4"})
+    assert set(m["nodes"]) == {"1", "2", "4"}
+    assert all(e["a"] in m["nodes"] and e["b"] in m["nodes"] for e in m["edges"])
+    assert not warn
+
+    leer: list[str] = []
+    empty = await physical.infra_model(FakeLnms(), {}, leer, allow={"999"})
+    assert empty["nodes"] == {} and any("Standort" in w for w in leer)
+
+
+async def test_switch_panel_uses_the_stored_model_picture(inventory, prefixes):
+    from diagram import physical
+
+    async def arp(macs):
+        return {}
+
+    m = await physical.switch_model(FakeLnms(), {}, 4, arp, [])
+    m["device"] = {**m["device"], "hardware": "MOXA IKS-6728A-4GTXSFP-T"}
+    root = ET.fromstring(physical.render_switch(m, rules=RULES))
+    styles = [o.find("mxCell").get("style") for o in root.findall(".//object")]
+    assert any("data:image/png,AAAB" in s for s in styles)
+    # Ohne Bibliothek bleibt das Klassensymbol.
+    plain = ET.fromstring(physical.render_switch(m))
+    assert not any("shape=image" in (o.find("mxCell").get("style") or "")
+                   for o in plain.findall(".//object"))
