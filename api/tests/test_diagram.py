@@ -1251,3 +1251,16 @@ async def test_switch_view_resolves_names_in_parallel_not_one_by_one(inventory, 
     assert len(named) == 32
     assert peak > 1, "es wurde nacheinander aufgelöst"
     assert peak <= physical.DNS_CONCURRENCY
+
+
+def test_librenms_location_may_be_an_object_and_becomes_text():
+    """LibreNMS liefert das Standortfeld je nach Version als Text ODER als
+    eingebettetes Objekt. Ungeprüft durchgereicht landet das Objekt in der
+    Oberfläche, und React bricht die ganze Ansicht ab."""
+    from diagram.physical import location_name
+    assert location_name("Haus 1 OG") == "Haus 1 OG"
+    assert location_name({"id": 3, "location": "Haus 1 OG", "lat": "53.1",
+                          "lng": "8.7", "timestamp": "…",
+                          "fixed_coordinates": 0}) == "Haus 1 OG"
+    assert location_name({"id": 3, "location": ""}) is None
+    assert location_name(None) is None and location_name("  ") is None

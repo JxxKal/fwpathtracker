@@ -216,8 +216,8 @@ async def physical_filters(request: Request,
     out: dict = {"locations": [], "groups": [], "warnings": []}
     try:
         out["locations"] = sorted(
-            {str(r.get("location") or "").strip()
-             for r in await client.locations(cfg) if r.get("location")})
+            {n for n in (physical.location_name(r.get("location"))
+                         for r in await client.locations(cfg)) if n})
     except Exception as exc:
         out["warnings"].append(f"Standorte nicht abrufbar: {exc}")
     try:
@@ -303,7 +303,7 @@ async def switches(request: Request, location: str | None = None,
             seen[did] = {"device_id": did,
                          "name": dev.get("sysName") or dev.get("hostname") or did,
                          "ip": dev.get("ip"), "hardware": dev.get("hardware"),
-                         "location": dev.get("location")}
+                         "location": physical.location_name(dev.get("location"))}
     return {"switches": sorted(seen.values(), key=lambda d: d["name"].lower())}
 
 

@@ -37,8 +37,8 @@ async def filters(request: Request, _user: dict = Depends(get_current_user)) -> 
     out: dict = {"locations": [], "groups": [], "warnings": []}
     try:
         out["locations"] = sorted(
-            {str(r.get("location") or "").strip()
-             for r in await client.locations(cfg) if r.get("location")})
+            {n for n in (physical.location_name(r.get("location"))
+                         for r in await client.locations(cfg)) if n})
     except Exception as exc:
         out["warnings"].append(f"Standorte nicht abrufbar: {exc}")
     try:
@@ -66,7 +66,7 @@ async def devices(request: Request, location: str | None = None, group: str | No
             seen[did] = {"device_id": did,
                          "name": dev.get("sysName") or dev.get("hostname") or did,
                          "ip": dev.get("ip"), "hardware": dev.get("hardware"),
-                         "location": dev.get("location")}
+                         "location": physical.location_name(dev.get("location"))}
     return {"devices": sorted(seen.values(), key=lambda d: d["name"].lower())}
 
 
@@ -112,7 +112,8 @@ async def switch_view(request: Request, device_id: str,
         "device": {"device_id": str(device_id),
                    "name": dev.get("sysName") or dev.get("hostname") or str(device_id),
                    "ip": dev.get("ip"), "hardware": dev.get("hardware"),
-                   "os": dev.get("os"), "location": dev.get("location")},
+                   "os": dev.get("os"),
+                   "location": physical.location_name(dev.get("location"))},
         "ports": ports, "logical": model.get("logical", 0),
         "units": sorted({p["unit"] for p in ports}),
         "shape": shape, "warnings": warnings,

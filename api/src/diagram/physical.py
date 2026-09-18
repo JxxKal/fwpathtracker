@@ -158,6 +158,20 @@ def port_position(number: int | None, blocks: list[dict]) -> tuple[float, float,
     return None
 
 
+def location_name(value) -> str | None:
+    """Standort als Zeichenkette.
+
+    LibreNMS liefert das Feld je nach Version als Text ODER als eingebettetes
+    Objekt ({id, location, lat, lng, …}). Ungeprüft durchgereicht landet das
+    Objekt in der Oberfläche, und React bricht die Ansicht ab („Objects are
+    not valid as a React child"). Hier wird es zu dem, was es meint.
+    """
+    if isinstance(value, dict):
+        value = value.get("location")
+    text = str(value or "").strip()
+    return text or None
+
+
 def _name(dev: dict) -> str:
     return str(dev.get("sysName") or dev.get("hostname") or dev.get("device_id") or "?")
 
@@ -563,7 +577,7 @@ def _draw_unit(doc: Doc, dev: dict, rule: dict, place, ports: list[dict],
     tip = "\n".join(f"{k}: {v}" for k, v in (
         ("Gerät", _name(dev)), ("IP", dev.get("ip")), ("Modell", rule.get("label")),
         ("Stack-Einheit", unit if units > 1 else None),
-        ("Hardware", dev.get("hardware")), ("Standort", dev.get("location"))) if v)
+        ("Hardware", dev.get("hardware")), ("Standort", location_name(dev.get("location")))) if v)
     doc.vertex(head, PANEL_TITLE, x0, img_y - 24, img_w, 22)
     image = str(rule["image"]).replace(";base64,", ",", 1)
     panel = doc.vertex("", IMAGE_PANEL.format(image=image), x0, img_y, img_w, img_h,
@@ -660,7 +674,7 @@ def _draw_panel(doc: Doc, model: dict, x0: float, y_top: float,
                  f"{len(attached)} Geräte — siehe Tabellenseite</span>")
     tip = "\n".join(f"{k}: {v}" for k, v in (
         ("Gerät", _name(dev)), ("IP", dev.get("ip")), ("Hardware", dev.get("hardware")),
-        ("Standort", dev.get("location")), ("OS", dev.get("os"))) if v)
+        ("Standort", location_name(dev.get("location"))), ("OS", dev.get("os"))) if v)
     panel = doc.vertex(head, PANEL, x0, panel_y, panel_w, panel_h, tooltip=tip)
     # Hinterlegtes Modellbild bekommt mehr Platz als ein Klassensymbol — es ist
     # die Frontblende, die man wiedererkennen soll.
