@@ -14,8 +14,8 @@ Beides ist reine LibreNMS-Sicht: hier zählt das Kabel, nicht das Routing.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
-
 import re
 
 from diagram import titleblock
@@ -97,6 +97,7 @@ OVERLAY_COLORS = {"used": ("#d5e8d4", "#2e8b57", 70),
 # die erste die Stack-Einheit — `Gi0/1` ist Slot/Port auf einem Einzelgerät.
 UNIT_RE = re.compile(r"^(\D*)(\d+)/(\d+)/(\d+)$")
 MAX_DEVICES_DRAWN = 24      # darüber: Geräte in die Tabelle statt an die Buchse
+DNS_MAX, DNS_CONCURRENCY = 300, 16
 
 
 def port_unit(name: str) -> int:
@@ -434,14 +435,22 @@ async def switch_model(client, cfg: dict, device_id, arp_by_mac, warnings: list[
         })
 
     if dns is not None:
-        todo = [h for p in out for h in p["hosts"] if not h.get("name") and h.get("ip")]
-        for host in todo[:300]:
-            try:
-                name = await dns(host["ip"])
-            except Exception:
-                name = None
+        # Nacheinander wären das 300 × 1,5 s Zeitüberschreitung — über sieben
+        # Minuten, in denen die Ansicht scheinbar hängt. Also parallel und
+        # gedeckelt; ein fehlender Name kostet nur den Namen.
+        todo = [h for p in out for h in p["hosts"] if not h.get("name") and h.get("ip")][:DNS_MAX]
+        sem = asyncio.Semaphore(DNS_CONCURRENCY)
+
+        async def resolve(host: dict) -> None:
+            async with sem:
+                try:
+                    name = await dns(host["ip"])
+                except Exception:
+                    return
             if name:
                 host["name"] = name
+
+        await asyncio.gather(*(resolve(h) for h in todo))
     if not out:
         warnings.append("Keine physischen Ports zu diesem Gerät in LibreNMS.")
     return {"device": dev, "ports": out, "logical": logical}

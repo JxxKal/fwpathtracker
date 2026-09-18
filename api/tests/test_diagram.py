@@ -1215,3 +1215,39 @@ async def test_few_devices_stay_in_at_most_two_rows(inventory, prefixes):
              and (o.get("tooltip") or "").startswith("MAC")]
     assert len(icons) == 12
     assert len({g[1] for g in icons}) <= 4     # höchstens zwei Reihen je Seite
+
+
+async def test_switch_view_resolves_names_in_parallel_not_one_by_one(inventory, prefixes):
+    """300 Adressen nacheinander bei 1,5 s Zeitüberschreitung sind über sieben
+    Minuten, in denen die Ansicht scheinbar hängt."""
+    import asyncio
+    from diagram import physical
+
+    class Many(FakeLnms):
+        PORTS = {"4": [{"port_id": 400 + i, "ifName": f"p{i}", "ifOperStatus": "up"}
+                       for i in range(1, 33)]}
+        FDB = {"4": [{"port_id": 400 + i, "mac_address": f"000c29cc{i:04x}"}
+                     for i in range(1, 33)]}
+
+        async def neighbours(self, cfg):
+            return {}
+
+    async def arp(macs):
+        return {m: {"ip": f"10.1.1.{i}"} for i, m in enumerate(macs, 1)}
+
+    live = 0
+    peak = 0
+
+    async def dns(ip):
+        nonlocal live, peak
+        live += 1
+        peak = max(peak, live)
+        await asyncio.sleep(0.01)
+        live -= 1
+        return f"host-{ip.split('.')[-1]}.op-tech.com"
+
+    m = await physical.switch_model(Many(), {}, 4, arp, [], dns=dns)
+    named = [h for p in m["ports"] for h in p["hosts"] if h.get("name")]
+    assert len(named) == 32
+    assert peak > 1, "es wurde nacheinander aufgelöst"
+    assert peak <= physical.DNS_CONCURRENCY
