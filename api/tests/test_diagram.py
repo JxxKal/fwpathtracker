@@ -779,14 +779,7 @@ async def test_switch_view_maps_devices_to_ports_via_mac(inventory, prefixes):
     assert by_name["p2"]["hosts"][0]["ip"] == "10.124.58.73"
     assert by_name["p2"]["hosts"][0]["mac_readable"] == "00:0c:29:bb:bb:01"
     assert by_name["p4"]["hosts"] == [] and by_name["p4"]["up"] is False
-
-    root = ET.fromstring(physical.render_switch(m))
-    labels = [o.get("label", "") for o in root.findall(".//object")]
-    assert any("acc-1" in l and "4 Ports" in l for l in labels)
-    assert any("10.124.58.73" in l for l in labels)
-    # Uplink-Port anders eingefärbt als belegte und freie Ports.
-    styles = {o.get("label"): o.find("mxCell").get("style") for o in root.findall(".//object")}
-    assert "#e1d5e7" in styles["p1"] and "#d5e8d4" in styles["p2"] and "#ffffff" in styles["p4"]
+    assert m["device"]["sysName"] == "acc-1"
 
 
 class LongPortLnms(FakeLnms):
@@ -806,9 +799,10 @@ class LongPortLnms(FakeLnms):
         return {401: {"label": "core / Gi1/0/1", "monitored": True, "device_id": 1}}
 
 
-async def test_long_port_names_are_shortened_and_logical_ports_left_out(inventory, prefixes):
-    """„Ten-GigabitEthernet1/0/24" ist auf einem Port-Kästchen nicht zu lesen,
-    und Bridge-Aggregation oder Vlan-interface haben gar keine Buchse."""
+async def test_logical_interfaces_are_left_out_but_counted(inventory, prefixes):
+    """Bridge-Aggregation oder Vlan-interface haben keine Buchse — sie gehören
+    nicht in die Portliste. Verschwiegen werden sie trotzdem nicht: ihre Zahl
+    steht daneben, sonst fragt jemand, wo die restlichen Interfaces sind."""
     from diagram import physical
 
     async def arp(macs):
@@ -817,19 +811,7 @@ async def test_long_port_names_are_shortened_and_logical_ports_left_out(inventor
     warn: list[str] = []
     m = await physical.switch_model(LongPortLnms(), {}, 4, arp, warn)
     assert len(m["ports"]) == 24 and m["logical"] == 4
-    root = ET.fromstring(physical.render_switch(m))
-    labels = [o.get("label", "") for o in root.findall(".//object")]
-    # Alle Ports auf einem Modul: übrig bleibt die Portnummer — wie auf der
-    # echten Frontblende. Das Präfix steht einmal am Panel.
-    assert "24" in labels and "Ten-GigabitEthernet1/0/24" not in labels
-    head = next(l for l in labels if "acc-1" in l)
-    assert "Ten-GigabitEthernet1/0/" in head and "4 logische Interfaces" in head
-    # Die Geräte stehen auf gleichmäßigen Plätzen, nicht übereinander.
-    icons = [_geo(o.find("mxCell")) for o in root.findall(".//object")
-             if "networks.pc" in (o.find("mxCell").get("style") or "")]
-    xs = sorted(g[0] for g in icons)
-    assert len(xs) == 10
-    assert all(b - a >= 120 for a, b in zip(xs, xs[1:]) if abs(b - a) > 1)
+    assert all(p["name"].startswith("Ten-GigabitEthernet1/0/") for p in m["ports"])
 
 
 async def test_switch_view_resolves_names_via_dns(inventory, prefixes):
@@ -846,9 +828,6 @@ async def test_switch_view_resolves_names_via_dns(inventory, prefixes):
     m = await physical.switch_model(FakeLnms(), {}, 4, arp, [], dns=dns)
     host = next(h for p in m["ports"] for h in p["hosts"] if h.get("ip"))
     assert host["name"] == "hmi-panel-3.op-tech.com"
-    labels = [o.get("label", "") for o in ET.fromstring(
-        physical.render_switch(m)).findall(".//object")]
-    assert any("hmi-panel-3" in l and "10.124.58.73" in l for l in labels)
 
 
 async def test_infra_view_without_lldp_says_so(inventory, prefixes):
@@ -907,44 +886,6 @@ async def test_infra_view_can_be_limited_to_a_set_of_devices(inventory, prefixes
     assert empty["nodes"] == {} and any("Standort" in w for w in leer)
 
 
-async def test_switch_panel_uses_the_stored_model_picture(inventory, prefixes):
-    from diagram import physical
-
-    async def arp(macs):
-        return {}
-
-    m = await physical.switch_model(FakeLnms(), {}, 4, arp, [])
-    m["device"] = {**m["device"], "hardware": "MOXA IKS-6728A-4GTXSFP-T"}
-    root = ET.fromstring(physical.render_switch(m, rules=RULES))
-    styles = [o.find("mxCell").get("style") for o in root.findall(".//object")]
-    assert any("data:image/png,AAAB" in s for s in styles)
-    # Ohne Bibliothek bleibt das Klassensymbol.
-    plain = ET.fromstring(physical.render_switch(m))
-    assert not any("shape=image" in (o.find("mxCell").get("style") or "")
-                   for o in plain.findall(".//object"))
-
-
-async def test_several_switch_panels_are_stacked_without_overlap(inventory, prefixes):
-    """Standort oder Gruppe statt Einzelgerät: dann gehört je Switch ein Panel
-    in die Zeichnung, untereinander und ohne Überschneidung."""
-    from diagram import physical
-
-    async def arp(macs):
-        return {}
-
-    m = await physical.switch_model(FakeLnms(), {}, 4, arp, [])
-    second = {**m, "device": {**m["device"], "sysName": "acc-2"}}
-    xml = physical.render_switches([m, second], name="Netzwerk physisch · Haus 1 OG")
-    root = ET.fromstring(xml)
-    assert root.find("diagram").get("name") == "Netzwerk physisch · Haus 1 OG"
-    panels = [(o.get("label"), _geo(o.find("mxCell"))) for o in root.findall(".//object")
-              if "fillColor=#d9d9d9" in (o.find("mxCell").get("style") or "")]
-    assert len(panels) == 2
-    (_l1, g1), (_l2, g2) = sorted(panels, key=lambda p: p[1][1])
-    assert g2[1] >= g1[1] + g1[3]
-    assert any("acc-2" in (l or "") for l, _g in panels)
-
-
 # ── Kalibriertes Modellbild: Buchsen statt Kästchen ──────────────────────────
 
 CALIBRATED = [{
@@ -987,53 +928,16 @@ def test_port_grid_maps_numbers_to_places_in_both_orders():
     assert port_position(26, two)[:2] == (430, 100)
 
 
-async def test_calibrated_image_replaces_the_schematic_panel(inventory, prefixes):
-    from diagram import physical
-
-    async def arp(macs):
-        return {}
-
-    m = await physical.switch_model(FakeLnms(), {}, 4, arp, [])
-    root = ET.fromstring(physical.render_switch(m, rules=CALIBRATED))
-    cells = [o.find("mxCell") for o in root.findall(".//object")]
-    panel = next(c for c in cells if "shape=image" in (c.get("style") or ""))
-    assert "data:image/png,AAAB" in panel.get("style") and "container=1" in panel.get("style")
-    assert _geo(panel)[2:] == (800, 120)
-    # Kein schematisches Panel mehr.
-    assert not any("fillColor=#d9d9d9" in (c.get("style") or "") for c in cells)
-
-    # Buchsen liegen im Bild, gemessen an der Kalibrierung.
-    pid = next(o.get("id") for o in root.findall(".//object")
-               if o.find("mxCell") is panel)
-    kids = [(o.get("tooltip", ""), _geo(o.find("mxCell")))
-            for o in root.findall(".//object") if o.find("mxCell").get("parent") == pid]
-    assert len(kids) == 4
-    p1 = next(g for t, g in kids if t.startswith("Port p1"))
-    assert (p1[0] + p1[2] / 2, p1[1] + p1[3] / 2) == (100, 40)     # Buchse 1 oben links
-    p2 = next(g for t, g in kids if t.startswith("Port p2"))
-    assert (p2[0] + p2[2] / 2, p2[1] + p2[3] / 2) == (100, 80)     # Buchse 2 darunter
-    # Uplink und belegte Buchse sind unterschiedlich markiert.
-    styles = {o.get("tooltip", "").split("\n")[0]: o.find("mxCell").get("style")
-              for o in root.findall(".//object") if o.find("mxCell").get("parent") == pid}
-    assert "#6a4c93" in styles["Port p1"] and "#2e8b57" in styles["Port p2"]
-
-
-async def test_ports_outside_the_grid_are_kept_below_the_picture(inventory, prefixes):
-    """Ein Port ohne Rasterplatz darf nicht verschwinden — sonst behauptet die
-    Zeichnung, es gäbe ihn nicht."""
-    from diagram import physical
-
-    async def arp(macs):
-        return {}
-
-    narrow = [{**CALIBRATED[0],
-               "blocks": [{"cols": 1, "rows": 1, "start": 1,
-                           "x": 100, "y": 40, "dx": 0, "dy": 0, "w": 20, "h": 20}]}]
-    m = await physical.switch_model(FakeLnms(), {}, 4, arp, [])
-    root = ET.fromstring(physical.render_switch(m, rules=narrow))
-    labels = [o.get("label", "") for o in root.findall(".//object")]
-    assert "3 Ports ohne zugeordnete Buchse" in labels
-    assert {"p2", "p3", "p4"} <= set(labels)
+def test_old_grid_rules_still_place_their_ports():
+    """Regeln aus der Rasterzeit bleiben gültig — wer sein Blech einmal
+    eingemessen hat, soll es nicht wieder tun müssen."""
+    from diagram.physical import port_places
+    place = port_places(CALIBRATED[0])
+    assert place("p1") == {"x": 100, "y": 40, "w": 24, "h": 24}
+    assert place("p2") == {"x": 100, "y": 80, "w": 24, "h": 24}   # zigzag: darunter
+    # Ein Port außerhalb des Rasters bekommt keinen Platz — er darf deshalb
+    # nicht verschwinden, sondern steht in der Ansicht ohne Buchse.
+    assert place("p9") is None
 
 
 BY_NAME = [{
@@ -1079,29 +983,6 @@ def test_ports_are_placed_by_name_not_by_number():
     assert port_places(None) is None
 
 
-async def test_named_port_map_drives_the_image_panel(inventory, prefixes):
-    from diagram import physical
-
-    async def arp(macs):
-        return {}
-
-    m = await physical.switch_model(FakeLnms(), {}, 4, arp, [])
-    m["device"] = {**m["device"], "hardware": "MOXA IKS-6728A-4GTXSFP-T"}
-    root = ET.fromstring(physical.render_switch(m, rules=BY_NAME))
-    panel = next(o for o in root.findall(".//object")
-                 if "shape=image" in (o.find("mxCell").get("style") or ""))
-    assert _geo(panel.find("mxCell"))[2:] == (721, 81)
-    kids = {o.get("tooltip", "").split("\n")[0]: _geo(o.find("mxCell"))
-            for o in root.findall(".//object")
-            if o.find("mxCell").get("parent") == panel.get("id")}
-    assert (kids["Port p1"][0] + kids["Port p1"][2] / 2,
-            kids["Port p1"][1] + kids["Port p1"][3] / 2) == (40, 24)
-    assert kids["Port p3"][2:] == (34, 22)
-    # p4 ist nicht zugeordnet und steht deshalb unter dem Bild, nicht nirgends.
-    labels = [o.get("label", "") for o in root.findall(".//object")]
-    assert "1 Ports ohne zugeordnete Buchse" in labels and "p4" in labels
-
-
 # ── Stacks und Gerätemengen ──────────────────────────────────────────────────
 
 def test_stack_unit_is_read_from_the_name_and_normalised():
@@ -1139,82 +1020,28 @@ STACK_RULE = [{
 }]
 
 
-async def test_every_stack_unit_gets_its_own_faceplate(inventory, prefixes):
+async def test_every_stack_unit_reuses_the_same_faceplate(inventory, prefixes):
+    """Ein Stack ist mehrfach dasselbe Gerät: eingemessen wird EIN Blech, und
+    Einheit 2 sitzt an denselben Stellen. Ohne diese Normierung fiele jede
+    weitere Einheit durch die Zuordnung."""
     from diagram import physical
 
     async def arp(macs):
         return {}
 
     m = await physical.switch_model(StackLnms(), {}, 4, arp, [])
-    m["device"] = {**m["device"], "hardware": "stacked"}
-    root = ET.fromstring(physical.render_switch(m, rules=STACK_RULE))
-    panels = [o for o in root.findall(".//object")
-              if "shape=image" in (o.find("mxCell").get("style") or "")]
-    assert len(panels) == 2, "je Einheit ein Blech"
-    heads = [o.get("label", "") for o in root.findall(".//object")]
-    assert any("Einheit 1" in h for h in heads) and any("Einheit 2" in h for h in heads)
-    # Jede Einheit trägt ihre 8 Buchsen — keine landet in der Restzeile.
-    for panel in panels:
-        kids = [o for o in root.findall(".//object")
-                if o.find("mxCell").get("parent") == panel.get("id")]
-        assert len(kids) == 8
-    assert not any("ohne zugeordnete Buchse" in h for h in heads)
-    # Und die Bleche liegen untereinander, nicht übereinander.
-    (y1, h1), (y2, _h2) = sorted((_geo(p.find("mxCell"))[1], _geo(p.find("mxCell"))[3])
-                                 for p in panels)
-    assert y2 >= y1 + h1
+    place = physical.port_places(STACK_RULE[0])
+    by_unit: dict[int, list[dict]] = {}
+    for port in m["ports"]:
+        by_unit.setdefault(physical.port_unit(port["name"]), []).append(port)
 
-
-async def test_many_devices_go_to_a_table_instead_of_the_drawing(inventory, prefixes):
-    """70 Geräte an einem Blech ergaben 14 Reihen und Leitungen quer über alles.
-    Die Hausvorgabe sieht für lange Listen ohnehin eine Tabelle vor."""
-    from diagram import physical
-
-    async def arp(macs):
-        return {}
-
-    class Busy(FakeLnms):
-        PORTS = {"4": [{"port_id": 400 + i, "ifName": f"p{i}", "ifOperStatus": "up"}
-                       for i in range(1, 41)]}
-        FDB = {"4": [{"port_id": 400 + i, "mac_address": f"000c29aa{i:04x}"}
-                     for i in range(1, 41)]}
-
-        async def neighbours(self, cfg):
-            return {}
-
-    m = await physical.switch_model(Busy(), {}, 4, arp, [])
-    root = ET.fromstring(physical.render_switch(m))
-    assert any(d.get("name", "").startswith("Geräte ") for d in root.findall("diagram"))
-    head = next(o.get("label") for o in root.findall(".//object")
-                if "fillColor=#d9d9d9" in (o.find("mxCell").get("style") or ""))
-    assert "40 Geräte — siehe Tabellenseite" in head
-    # In der Zeichnung selbst hängt dann kein Gerät mehr.
-    assert not any("mxgraph.networks.pc" in (o.find("mxCell").get("style") or "")
-                   for o in root.findall(".//object"))
-
-
-async def test_few_devices_stay_in_at_most_two_rows(inventory, prefixes):
-    from diagram import physical
-
-    async def arp(macs):
-        return {}
-
-    class Some(FakeLnms):
-        PORTS = {"4": [{"port_id": 400 + i, "ifName": f"p{i}", "ifOperStatus": "up"}
-                       for i in range(1, 13)]}
-        FDB = {"4": [{"port_id": 400 + i, "mac_address": f"000c29bb{i:04x}"}
-                     for i in range(1, 13)]}
-
-        async def neighbours(self, cfg):
-            return {}
-
-    m = await physical.switch_model(Some(), {}, 4, arp, [])
-    root = ET.fromstring(physical.render_switch(m))
-    icons = [_geo(o.find("mxCell")) for o in root.findall(".//object")
-             if "mxgraph.networks" in (o.find("mxCell").get("style") or "")
-             and (o.get("tooltip") or "").startswith("MAC")]
-    assert len(icons) == 12
-    assert len({g[1] for g in icons}) <= 4     # höchstens zwei Reihen je Seite
+    assert sorted(by_unit) == [1, 2]
+    for unit, ports in by_unit.items():
+        assert len(ports) == 8, f"Einheit {unit}"
+        assert all(place(p["name"]) is not None for p in ports)
+    # Gleiche Buchsennummer, gleicher Platz — nur eben auf dem zweiten Blech.
+    assert (place("Ten-GigabitEthernet2/0/3")
+            == place("Ten-GigabitEthernet1/0/3"))
 
 
 async def test_switch_view_resolves_names_in_parallel_not_one_by_one(inventory, prefixes):
@@ -1251,6 +1078,21 @@ async def test_switch_view_resolves_names_in_parallel_not_one_by_one(inventory, 
     assert len(named) == 32
     assert peak > 1, "es wurde nacheinander aufgelöst"
     assert peak <= physical.DNS_CONCURRENCY
+
+
+def test_a_device_name_made_of_punctuation_is_no_name():
+    """Manche Geräte liefern als sysName Müll — Steuerzeichen, Füllbytes, eine
+    Reihe Punkte. In der Switch-Auswahl standen dann mehrere Einträge
+    „..............................", die niemand auseinanderhalten kann."""
+    from diagram.physical import clean_name
+    assert clean_name("." * 30) is None
+    assert clean_name("---") is None
+    assert clean_name("\x00\x01\x02") is None
+    assert clean_name("  ") is None and clean_name(None) is None
+    # Steuerzeichen fliegen raus, der lesbare Rest bleibt.
+    assert clean_name("acc-1\x00\x00") == "acc-1"
+    assert clean_name("  sw-halle-2  ") == "sw-halle-2"
+    assert clean_name("10.124.48.96") == "10.124.48.96"
 
 
 def test_librenms_location_may_be_an_object_and_becomes_text():

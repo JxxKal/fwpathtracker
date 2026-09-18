@@ -1,6 +1,6 @@
 import { Download, ExternalLink, Map, Play } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { buildDiagram, diagramFilters, diagramScopes, diagramSwitches, type PhysicalFilters, type SwitchEntry, type DiagramHosts, type DiagramResult, type DiagramScope, type DiagramScopes, type DiagramView } from '../api';
+import { buildDiagram, diagramFilters, diagramScopes, type PhysicalFilters, type DiagramHosts, type DiagramResult, type DiagramScope, type DiagramScopes, type DiagramView } from '../api';
 import { de } from '../i18n/de';
 
 // Netzplan als draw.io: Scope wählen, Datei bauen lassen, herunterladen.
@@ -32,12 +32,8 @@ export default function NetDiagram() {
   const [hosts, setHosts] = useState<DiagramHosts>('auto');
   const [expand, setExpand] = useState(false);
   const [view, setView] = useState<DiagramView>('struktur');
-  const [switches, setSwitches] = useState<SwitchEntry[]>([]);
-  const [switchId, setSwitchId] = useState('');
-  // Standort, Gerätegruppe und einzelner Switch sind Alternativen, keine
-  // Filterkette: eine Zeichnung zeigt einen Standort ODER eine Gruppe ODER
-  // ein Gerät. Deshalb schließen sie sich gegenseitig aus.
-  const [pickedSwitch, setPickedSwitch] = useState(false);
+  // Standort und Gerätegruppe sind Alternativen, keine Filterkette: eine
+  // Zeichnung zeigt einen Standort ODER eine Gruppe.
   const [filters, setFilters] = useState<PhysicalFilters | null>(null);
   const [location, setLocation] = useState('');
   const [group, setGroup] = useState('');
@@ -64,17 +60,6 @@ export default function NetDiagram() {
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   }, [physical, filters]);
 
-  // Switch-Liste hängt am Filter: ein raumscharfer Standort macht aus 300
-  // Geräten eine Handvoll.
-  useEffect(() => {
-    if (view !== 'physisch-l2') return;
-    diagramSwitches(location || undefined, group || undefined).then((r) => {
-      setSwitches(r.switches);
-      setSwitchId((s) => (r.switches.some((x) => x.device_id === s)
-        ? s : r.switches[0]?.device_id ?? ''));
-    }).catch((e) => setErr(e instanceof Error ? e.message : String(e)));
-  }, [view, location, group]);
-
   const vdoms = useMemo(() => scopes?.devices.find((d) => d.device === device)?.vdoms ?? [], [scopes, device]);
   useEffect(() => { if (vdoms.length > 0 && !vdoms.includes(vdom)) setVdom(vdoms[0]); }, [vdoms, vdom]);
 
@@ -84,7 +69,6 @@ export default function NetDiagram() {
       setRes(await buildDiagram(
         scope, scope === 'vdom' || scope === 'firewall' ? device : null,
         scope === 'vdom' ? vdom : null, scope === 'site' ? site : null, hosts, expand, view,
-        view === 'physisch-l2' && pickedSwitch ? switchId : null,
         physical ? location || null : null, physical ? group || null : null));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -110,7 +94,6 @@ export default function NetDiagram() {
             <option value="struktur">{de.diagram.viewStruktur}</option>
             <option value="logisch">{de.diagram.viewLogisch}</option>
             <option value="physisch-l1">{de.diagram.viewPhysL1}</option>
-            <option value="physisch-l2">{de.diagram.viewPhysL2}</option>
           </select>
         </label>
         <label className={`flex flex-col gap-1 ${physical ? 'hidden' : ''}`}>
@@ -160,8 +143,8 @@ export default function NetDiagram() {
             <label className="flex flex-col gap-1">
               <span className="text-[11px] text-slate-500">{de.diagram.location}</span>
               <select className="fwpt-input w-60 disabled:opacity-40" value={location}
-                disabled={!!group || !!pickedSwitch}
-                onChange={(e) => { setLocation(e.target.value); setGroup(''); setPickedSwitch(false); }}>
+                disabled={!!group}
+                onChange={(e) => { setLocation(e.target.value); setGroup(''); }}>
                 <option value="">{de.diagram.filterAll}</option>
                 {(filters?.locations ?? []).map((l) => <option key={l} value={l}>{l}</option>)}
               </select>
@@ -169,8 +152,8 @@ export default function NetDiagram() {
             <label className="flex flex-col gap-1">
               <span className="text-[11px] text-slate-500">{de.diagram.group}</span>
               <select className="fwpt-input w-52 disabled:opacity-40" value={group}
-                disabled={!!location || !!pickedSwitch}
-                onChange={(e) => { setGroup(e.target.value); setLocation(''); setPickedSwitch(false); }}>
+                disabled={!!location}
+                onChange={(e) => { setGroup(e.target.value); setLocation(''); }}>
                 <option value="">{de.diagram.filterAll}</option>
                 {(filters?.groups ?? []).map((g) => (
                   <option key={g.name} value={g.name} title={g.desc ?? undefined}>{g.name}</option>
@@ -178,23 +161,6 @@ export default function NetDiagram() {
               </select>
             </label>
           </>
-        )}
-        {view === 'physisch-l2' && (
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] text-slate-500">{de.diagram.switchPick}</span>
-            <select className="fwpt-input w-64 font-mono disabled:opacity-40"
-              value={pickedSwitch ? switchId : ''}
-              disabled={!!location || !!group}
-              onChange={(e) => { setSwitchId(e.target.value); setPickedSwitch(!!e.target.value); }}>
-              <option value="">{de.diagram.switchAll}</option>
-              {switches.map((s) => (
-                <option key={s.device_id} value={s.device_id}
-                  title={[s.hardware, s.location].filter(Boolean).join(' · ') || undefined}>
-                  {s.name}{s.ip ? ` — ${s.ip}` : ''}
-                </option>
-              ))}
-            </select>
-          </label>
         )}
         <label className={`flex flex-col gap-1 ${physical || scope === 'global' ? 'hidden' : ''}`}>
           <span className="text-[11px] text-slate-500">{de.diagram.hosts}</span>
@@ -211,16 +177,14 @@ export default function NetDiagram() {
           {de.diagram.expand}
         </label>
         <button type="button" className="fwpt-btn" onClick={build}
-          disabled={busy || (view === 'physisch-l2' ? !(pickedSwitch || location || group)
-            : physical ? false : scope === 'site' ? !site : scope !== 'global' && !device)}>
+          disabled={busy || (physical ? false
+            : scope === 'site' ? !site : scope !== 'global' && !device)}>
           <Play size={14} /> {busy ? de.diagram.building : de.diagram.build}
         </button>
       </div>
       <p className="text-[11px] text-slate-600">
-        {physical ? `${view === 'physisch-l1' ? de.diagram.viewPhysL1Hint : de.diagram.viewPhysL2Hint} ${de.diagram.filterHint}`
-          : view === 'physisch-l1' ? de.diagram.viewPhysL1Hint
-          : view === 'physisch-l2' ? de.diagram.viewPhysL2Hint
-            : view === 'logisch' ? de.diagram.viewLogischHint
+        {physical ? `${de.diagram.viewPhysL1Hint} ${de.diagram.filterHint}`
+          : view === 'logisch' ? de.diagram.viewLogischHint
           : scope === 'global' ? de.diagram.globalHint
           : de.diagram.hostsHint.replace('{n}', String(scopes?.max_hosts ?? 1500))}
       </p>
@@ -230,9 +194,6 @@ export default function NetDiagram() {
       {physical && filters && filters.locations.length === 0
         && filters.groups.length === 0 && filters.warnings.length === 0 && (
         <p className="text-xs text-slate-600">{de.diagram.noFilters}</p>
-      )}
-      {view === 'physisch-l2' && switches.length === 0 && !err && (
-        <p className="text-sm text-amber-400">{de.diagram.noSwitches}</p>
       )}
       {!physical && scope === 'site' && scopes?.sites.length === 0 && (
         <p className="text-sm text-amber-400">{de.diagram.noSites}</p>

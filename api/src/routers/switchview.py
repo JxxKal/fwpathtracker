@@ -12,6 +12,8 @@ Oberfläche dieselbe Frontblende wie der Plan.
 """
 from __future__ import annotations
 
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from deps import get_current_user
@@ -63,11 +65,25 @@ async def devices(request: Request, location: str | None = None, group: str | No
     for dev in index.values():
         did = str(dev.get("device_id") or "")
         if did and did not in seen and (allow is None or did in allow):
-            seen[did] = {"device_id": did,
-                         "name": dev.get("sysName") or dev.get("hostname") or did,
-                         "ip": dev.get("ip"), "hardware": dev.get("hardware"),
+            # sysName kommt gelegentlich als Müll aus dem SNMP — Steuerzeichen
+            # oder eine Reihe Punkte. In der Auswahlliste stünden dann mehrere
+            # ununterscheidbare Einträge; dann lieber die IP.
+            name = (physical.clean_name(dev.get("sysName"))
+                    or physical.clean_name(dev.get("hostname")))
+            ip = physical.clean_name(dev.get("ip"))
+            seen[did] = {"device_id": did, "name": name or ip or did, "ip": ip,
+                         "hardware": physical.clean_name(dev.get("hardware")),
                          "location": physical.location_name(dev.get("location"))}
-    return {"devices": sorted(seen.values(), key=lambda d: d["name"].lower())}
+
+    def order(dev: dict) -> tuple:
+        """Benannte Geräte zuerst — ein Name ist die Auskunft, nach der gesucht
+        wird. Namenlose danach nach IP, und zwar numerisch: alphabetisch stünde
+        .100 vor .99."""
+        named = dev["name"] != dev["ip"]
+        octets = tuple(int(x) for x in re.findall(r"\d+", dev["ip"] or "")[:4])
+        return (not named, dev["name"].lower() if named else "", octets)
+
+    return {"devices": sorted(seen.values(), key=order)}
 
 
 @router.get("")
@@ -106,9 +122,12 @@ async def switch_view(request: Request, device_id: str,
                  "height": rule.get("height") or 120, "label": rule.get("label")}
     return {
         "device": {"device_id": str(device_id),
-                   "name": dev.get("sysName") or dev.get("hostname") or str(device_id),
-                   "ip": dev.get("ip"), "hardware": dev.get("hardware"),
-                   "os": dev.get("os"),
+                   "name": (physical.clean_name(dev.get("sysName"))
+                            or physical.clean_name(dev.get("hostname"))
+                            or physical.clean_name(dev.get("ip")) or str(device_id)),
+                   "ip": physical.clean_name(dev.get("ip")),
+                   "hardware": physical.clean_name(dev.get("hardware")),
+                   "os": physical.clean_name(dev.get("os")),
                    "location": physical.location_name(dev.get("location"))},
         "ports": ports, "logical": model.get("logical", 0),
         "units": sorted({p["unit"] for p in ports}),

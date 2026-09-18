@@ -64,11 +64,10 @@ class DiagramRequest(BaseModel):
     # struktur = Container-Sicht (VDOMs, Kopplungen, Switche);
     # logisch   = Busleisten-Sicht nach der Hausvorgabe (ohne Switche, DIN A3 quer)
     # struktur/logisch = L3-Sicht aus dem FMG-Inventar;
-    # physisch-l1/l2   = Kabel-Sicht aus LibreNMS (LLDP bzw. FDB)
+    # physisch-l1      = Kabel-Sicht aus LibreNMS (LLDP)
     view: str = Field(default="struktur",
-                      pattern="^(struktur|logisch|physisch-l1|physisch-l2)$")
-    switch_id: str | None = Field(default=None, max_length=32)
-    # Nur für die physischen Sichten: Einschränkung auf einen LibreNMS-Standort
+                      pattern="^(struktur|logisch|physisch-l1)$")
+    # Nur für die physische Sicht: Einschränkung auf einen LibreNMS-Standort
     # (bei uns teils raumscharf) oder eine Gerätegruppe.
     location: str | None = Field(default=None, max_length=200)
     group: str | None = Field(default=None, max_length=200)
@@ -164,7 +163,6 @@ _SCOPE_LABEL = {"vdom": "VDOM", "firewall": "Firewall", "site": "Standort",
 
 # Mehr Panels passen auf kein Blatt und dauern zu lange — LibreNMS wird je
 # Gerät einmal nach Ports und FDB gefragt.
-MAX_PANELS = 10
 
 
 def _net_note(st: dict) -> str:
@@ -283,33 +281,14 @@ async def device_ports(request: Request, device_id: str,
     return {"ports": out}
 
 
-@router.get("/switches")
-async def switches(request: Request, location: str | None = None,
-                   group: str | None = None,
-                   _user: dict = Depends(get_current_user)) -> dict:
-    """Überwachte Geräte aus LibreNMS — Auswahl für den Switch-Plan (Ebene 2)."""
-    cfg = await read_config("librenms")
-    if not cfg.get("base_url"):
-        raise HTTPException(400, "LibreNMS ist nicht konfiguriert.")
-    client = request.app.state.locate.librenms
-    try:
-        index = await client.device_index(cfg)
-        allow = await physical.allowed_devices(client, cfg, location, group)
-    except Exception as exc:
-        raise HTTPException(502, f"LibreNMS nicht abrufbar: {exc}") from exc
-    seen: dict[str, dict] = {}
-    for dev in index.values():
-        did = str(dev.get("device_id") or "")
-        if did and did not in seen and (allow is None or did in allow):
-            seen[did] = {"device_id": did,
-                         "name": dev.get("sysName") or dev.get("hostname") or did,
-                         "ip": dev.get("ip"), "hardware": dev.get("hardware"),
-                         "location": physical.location_name(dev.get("location"))}
-    return {"switches": sorted(seen.values(), key=lambda d: d["name"].lower())}
-
-
 async def _physical(body: DiagramRequest, request: Request, user: dict) -> dict:
-    """Ebene 1 (LLDP-Topologie) und Ebene 2 (Geräte an einem Switch)."""
+    """Ebene 1: LLDP-Topologie — wie hängen die Netzwerkkomponenten aneinander.
+
+    Ebene 2 (was hängt an EINEM Switch) ist keine Zeichnung mehr: Auf Papier
+    war das Blech entweder unlesbar klein oder die Leitungen liefen quer über
+    alles. Die Frage beantwortet jetzt die Switch-Ansicht in den Network Tools,
+    wo man die Buchse anklicken kann.
+    """
     state = request.app.state
     cfg = await read_config("librenms")
     if not cfg.get("base_url"):
@@ -326,78 +305,19 @@ async def _physical(body: DiagramRequest, request: Request, user: dict) -> dict:
         allow = None
     scope_note = " · ".join(p for p in (body.location, body.group) if p)
 
-    if body.view == "physisch-l1":
-        mdl = await physical.infra_model(client, cfg, warnings, allow=allow)
-        title = "Netzwerk physisch · Infrastruktur"
-        subtitle = (f"{len(mdl['nodes'])} Geräte · {len(mdl['edges'])} LLDP-Verbindungen"
-                    + (f" · {scope_note}" if scope_note else ""))
-        stem = "physisch_infrastruktur" + (f"_{scope_note}" if scope_note else "")
-        stats = {"devices": len(mdl["nodes"]), "links": len(mdl["edges"])}
+    mdl = await physical.infra_model(client, cfg, warnings, allow=allow)
+    title = "Netzwerk physisch · Infrastruktur"
+    subtitle = (f"{len(mdl['nodes'])} Geräte · {len(mdl['edges'])} LLDP-Verbindungen"
+                + (f" · {scope_note}" if scope_note else ""))
+    stem = "physisch_infrastruktur" + (f"_{scope_note}" if scope_note else "")
+    stats = {"devices": len(mdl["nodes"]), "links": len(mdl["edges"])}
 
-        def render(m, tb):
-            return physical.render_infra(m, tb, rules=shapes)
-    else:
-        # Genau EINE Auswahl bestimmt den Umfang: ein Standort, eine
-        # Gerätegruppe ODER ein einzelner Switch. Bei Standort/Gruppe wird je
-        # Switch ein Panel gezeichnet.
-        if allow is None and not body.switch_id:
-            raise HTTPException(422, "Bitte einen Standort, eine Gerätegruppe oder "
-                                     "einen Switch wählen.")
-
-        async def arp_by_mac(macs: list[str]) -> dict:
-            try:
-                return await state.arp_store.latest_by_macs(macs)
-            except Exception as exc:
-                warnings.append(f"IP↔MAC-Historie nicht lesbar: {exc}")
-                return {}
-
-        use_dns = await build_reverse(state, await read_config("dns"))
-        if allow is not None:
-            try:
-                index = await client.device_index(cfg)
-            except Exception as exc:
-                raise HTTPException(502, f"LibreNMS nicht abrufbar: {exc}") from exc
-            picked, seen = [], set()
-            for dev in index.values():
-                did = str(dev.get("device_id") or "")
-                if did and did in allow and did not in seen:
-                    seen.add(did)
-                    picked.append((did, str(dev.get("sysName") or dev.get("hostname") or did)))
-            picked.sort(key=lambda p: p[1].lower())
-            if not picked:
-                raise HTTPException(422, "Zu dieser Auswahl gibt es kein überwachtes Gerät.")
-            if len(picked) > MAX_PANELS:
-                warnings.append(f"{len(picked)} Geräte in der Auswahl — gezeichnet werden "
-                                f"die ersten {MAX_PANELS}. Enger wählen; der Standort ist "
-                                "bei uns teils raumscharf gepflegt.")
-                picked = picked[:MAX_PANELS]
-        else:
-            picked = [(body.switch_id, body.switch_id)]
-
-        mdls = [await physical.switch_model(client, cfg, did, arp_by_mac, warnings,
-                                            dns=use_dns) for did, _n in picked]
-        if use_dns is not None:
-            await use_dns.flush()
-        names = [m["device"].get("sysName") or m["device"].get("hostname") or did
-                 for m, (did, _n) in zip(mdls, picked)]
-        attached = sum(len(p["hosts"]) for m in mdls for p in m["ports"])
-        ports_total = sum(len(m["ports"]) for m in mdls)
-        title = "Netzwerk physisch · " + (scope_note or names[0])
-        subtitle = (f"{len(mdls)} Switch{'es' if len(mdls) != 1 else ''} · "
-                    f"{ports_total} Ports · {attached} angeschlossene Geräte")
-        stem = f"physisch_{scope_note or names[0]}"
-        stats = {"switches": len(mdls), "ports": ports_total, "hosts": attached,
-                 "uplinks": sum(1 for m in mdls for p in m["ports"] if p["uplink"]),
-                 "logical": sum(m.get("logical", 0) for m in mdls)}
-        mdl = {"devices_for_shapes": [m["device"] for m in mdls]}
-
-        def render(_m, tb):
-            return physical.render_switches(mdls, tb, rules=shapes, name=title)
+    def render(m, tb):
+        return physical.render_infra(m, tb, rules=shapes)
 
     # Ob die Shape-Bibliothek gegriffen hat, sieht man der Zeichnung sonst nur
     # an — und „nur generische Symbole" ist genau die Frage, die dann aufkommt.
-    devs = (list(mdl["nodes"].values()) if body.view == "physisch-l1"
-            else mdl.get("devices_for_shapes", []))
+    devs = list(mdl["nodes"].values())
     matched = sum(1 for d in devs if physical.match_rule(d, shapes))
     stats["shapes_matched"] = matched
     stats["shapes_rules"] = len(shapes)
@@ -418,7 +338,7 @@ async def _physical(body: DiagramRequest, request: Request, user: dict) -> dict:
             cfg_tb, title=title, subtitle=subtitle,
             author=str(user.get("username") or ""),
             drawing_no=f"{prefix}-{stem.upper()}",
-            note="Erzeugt von A38 aus LibreNMS (LLDP und FDB)")
+            note="Erzeugt von A38 aus LibreNMS (LLDP)")
     return {"filename": f"A38_Netzplan_{stem}.drawio", "xml": render(mdl, tb),
             "stats": stats, "hosts_mode": "none", "warnings": warnings}
 

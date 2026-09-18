@@ -134,9 +134,17 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   IP, Name, Alter des Eintrags. Dieselbe Quelle wie die physische Zeichnung —
   Ports und FDB aus LibreNMS, IP↔MAC aus der Historie, Namen aus Reverse-DNS —
   aber zum Klicken statt zum Drucken. Ist für das Modell ein Blech mit
-  zugeordneten Buchsen hinterlegt, steht es hier genauso wie im Plan; sonst ein
-  Raster. Stacks zeigen je Einheit ein Blech. Die Zeichnung bleibt für den Weg
-  aufs Papier, die Hausvorgabe verlangt beides.
+  zugeordneten Buchsen hinterlegt, steht es hier; sonst ein Raster. Stacks
+  zeigen je Einheit ein Blech. Logische Interfaces (Bridge-Aggregation,
+  Vlan-interface, Loopback …) haben keine Buchse und stehen nicht in der Liste
+  — gezählt werden sie trotzdem, sonst fragt jemand nach den fehlenden
+  Interfaces.
+
+  Diese Ansicht ersetzt die frühere zweite physische Zeichenebene. Auf Papier
+  war das Blech entweder unlesbar klein oder die Leitungen liefen quer über
+  alles; am Bildschirm klickt man die Buchse an. Ein Gerät, dessen sysName nur
+  aus Steuerzeichen oder Punkten besteht, steht hier unter seiner **IP** — drei
+  Einträge „.............................." sind keine Auswahl.
 - **Netzplan (draw.io)** — zwei Darstellungen zur Wahl. **Struktur** (Default):
   Container für Firewall, VDOM und Netz mit Kopplungen und Switchen. **Logisch**
   nach der Hausvorgabe für die OT-Dokumentation: Netze als farbige Busleisten
@@ -149,24 +157,15 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   Switche werden im Schriftfeld gezählt. Wird eine Geräteliste zu lang, steht
   je Geräteklasse ein Symbol mit Anzahl und Verweis auf eine **Tabellenseite**
   in derselben Datei. Druckformat DIN A3 quer.
-  **Physisch Ebene 1** zeichnet, wie die Netzwerkkomponenten untereinander
-  hängen: Knoten und Kanten aus den **LLDP**-Nachbarschaften in LibreNMS, mit
-  den Ports an beiden Enden, Ebenen per Breitensuche vom bestvernetzten Gerät
-  (Core oben, Zugang unten), Firewalls mit eigenem Symbol. Kanten zu nicht
-  überwachten Nachbarn bleiben draußen — Endgeräte gehören auf Ebene 2.
-  **Physisch Ebene 2** zeigt EINEN Switch als Port-Panel mit den Geräten, die
-  dort in der **FDB** stehen: Zuordnung über die MAC wie gefordert, IP aus der
-  IP↔MAC-Historie, Name aus Reverse-DNS, Uplinks farblich getrennt von
-  belegten und freien Ports. Portnamen werden um ihr gemeinsames Präfix
-  gekürzt (`Ten-GigabitEthernet1/0/24` → `24`, bei mehreren Modulen bleibt
-  `1/0/24`); das Präfix steht einmal am Panelkopf. Logische Interfaces
-  (Bridge-Aggregation, Vlan-interface, Loopback …) haben keine Buchse und
-  gehören nicht aufs Panel — sie werden gezählt, nicht gezeichnet. Die Geräte
-  liegen auf gleichmäßigen Plätzen über und unter dem Panel statt an der
-  Port-Position; nebeneinander liegende Ports sind 62 px auseinander, eine
-  Beschriftung braucht 150. Das Symbol richtet sich nach Hersteller und Rolle
-  (Firewall, Layer-3-Switch, Access-Switch, Access Point). Wer die echte
-  Frontblende will, hinterlegt sie unter *Einstellungen → Shape-Bibliothek*.
+  **Physisch** zeichnet, wie die Netzwerkkomponenten untereinander hängen:
+  Knoten und Kanten aus den **LLDP**-Nachbarschaften in LibreNMS, mit den Ports
+  an beiden Enden, Ebenen per Breitensuche vom bestvernetzten Gerät (Core oben,
+  Zugang unten), Firewalls mit eigenem Symbol. Kanten zu nicht überwachten
+  Nachbarn bleiben draußen — einzelne Endgeräte beantwortet die
+  **Switch-Ansicht**, nicht der Plan. Das Symbol richtet sich nach Hersteller
+  und Rolle (Firewall, Layer-3-Switch, Access-Switch, Access Point). Wer die
+  echte Frontblende will, hinterlegt sie unter
+  *Einstellungen → Shape-Bibliothek*.
   Die Modellliste dort kommt aus **LibreNMS** (die tatsächlich erkannten
   Hardware-Strings), nicht aus einem Freitextfeld: jedes Modell lässt sich auf
   fünf Arten schreiben, und ein Tippfehler im Muster fällt erst auf, wenn die
@@ -175,8 +174,9 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
 
   Ein Bild allein trägt allerdings keine Information — die Leitung muss an der
   richtigen Buchse landen. Dafür werden die Buchsen einmal je Modell
-  **zugeordnet**: die Portliste des Geräts wird der Reihe nach abgearbeitet,
-  der hervorgehobene Port landet dort, wo man klickt. Ein Raster taugt dafür
+  **zugeordnet** — sie trägt die Switch-Ansicht: die Portliste des Geräts wird
+  der Reihe nach abgearbeitet, der hervorgehobene Port landet dort, wo man
+  klickt. Ein Raster taugt dafür
   nicht — echte Frontblenden haben Lücken zwischen den Portgruppen,
   Hutschienengeräte stehen hochkant, und 40/100-G-Buchsen sitzen abgesetzt und
   sind größer (Sondergrößen je Buchse einstellbar). Zugeordnet wird über den
@@ -184,16 +184,11 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   `GigabitEthernet1/0/1` tragen dieselbe Nummer und sind verschiedene Buchsen,
   während der Name bei allen Geräten desselben Modells gleich ist. Ports ohne
   Zuordnung verschwinden nicht, sie stehen als Kästchenreihe unter dem Bild.
-  Ohne Zuordnung bleibt das Bild ein Erkennungszeichen und die Geräte hängen am
-  schematischen Panel — die Rückfallebene für alles Unbekannte.
+  Ohne Zuordnung bleibt das Bild ein Erkennungszeichen, und die Ansicht fällt
+  auf ein Raster zurück — die Rückfallebene für alles Unbekannte.
   Ein **Stack** ist mehrfach dasselbe Gerät: eingemessen wird EIN Blech, und
   die Zuordnung gilt für jede Einheit (`Ten-GigabitEthernet2/0/17` sitzt dort,
-  wo `…1/0/17` sitzt). Gezeichnet wird je Einheit ein Blech untereinander.
-  Angeschlossene Geräte stehen in **höchstens zwei Reihen** je Seite; die
-  Zeichnung darf dafür breiter werden, denn ein Switchplan ist breit. Ab 24
-  Geräten je Blech wandern sie in eine **Tabellenseite**, wie es die
-  Hausvorgabe für lange Gerätelisten vorsieht — vorher ergaben 70 Geräte
-  vierzehn Reihen und Leitungen quer über die ganze Zeichnung.
+  wo `…1/0/17` sitzt).
 
   Bewusst ein **Upload** statt eines Visio-Konverters: Hersteller-Stencils sind
   teils altes Binärformat (`.vss`), liegen teils hinter Abo-Portalen und
@@ -201,13 +196,12 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   draw.io dagegen direkt und verlustfrei ein.
 
   Der Umfang einer physischen Zeichnung ist genau **eine** Auswahl:
-  **LibreNMS-Standort** (bei uns teils raumscharf gepflegt), **Gerätegruppe**
-  oder **ein einzelner Switch** — die drei schließen sich in der Oberfläche
-  gegenseitig aus. Bei Standort oder Gruppe zeichnet Ebene 2 **je Switch ein
-  Panel** untereinander (gedeckelt auf 10, sonst passt es auf kein Blatt). Gefiltert wird von LibreNMS selbst
-  (`?type=location` bzw. `/devicegroups/:name`) — das Standortfeld heißt je
-  nach Version anders, der Filter nicht. Der Filter wirkt auch auf die
-  Switch-Auswahl: ein raumscharfer Standort macht aus 300 Geräten eine Handvoll.
+  **LibreNMS-Standort** (bei uns teils raumscharf gepflegt) oder
+  **Gerätegruppe** — beide schließen sich in der Oberfläche gegenseitig aus.
+  Gefiltert wird von LibreNMS selbst (`?type=location` bzw.
+  `/devicegroups/:name`) — das Standortfeld heißt je nach Version anders, der
+  Filter nicht. Derselbe Filter steht in der Switch-Ansicht: ein raumscharfer
+  Standort macht aus 300 Geräten eine Handvoll.
   Struktur und Logisch teilen Scope und Schriftfeld: VDOM, Firewall, **Standort**
   oder **alle Standorte**; Netze je
   Interface (VLAN, CIDR, Zone, iTop-Name), VDOM-Links, Routen zu fremden VDOMs
