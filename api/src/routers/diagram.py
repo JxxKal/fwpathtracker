@@ -454,6 +454,8 @@ async def build(body: DiagramRequest, request: Request,
                             "eine Busleiste ohne alles belegt eine Zeile und sagt nichts.")
         xml = logical.render(mdl, title_block=tb)
     else:
-        xml = drawio.render(mdl, collapse=not body.expand_hosts, title_block=tb)
+        up_title = str((await read_config("drawio")).get("uplink_label") or "").strip()
+        xml = drawio.render(mdl, collapse=not body.expand_hosts, title_block=tb,
+                            uplink_title=up_title or "Uplink")
     return {"filename": f"A38_Netzplan_{stem}.drawio", "xml": xml,
             "stats": mdl["stats"], "hosts_mode": mdl["hosts_mode"], "warnings": warnings}

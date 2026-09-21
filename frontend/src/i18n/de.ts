@@ -546,6 +546,8 @@ export const de = {
     dns: 'DNS',
     dnsResolvers: 'Resolver (kommagetrennt, leer = System-Resolver)',
     dnsDomains: 'Suchdomains (kommagetrennt)',
+    uplinkLabel: 'Bezeichnung des Uplinks',
+    uplinkLabelHint: 'Überschrift der Uplink-Marke in der Strukturansicht — dort steht je VDOM, wohin es nach draußen geht. Wer den Weg betreibt, heißt bei jedem anders; leer bedeutet „Uplink".',
     dnsCache: 'Reverse-DNS-Cache',
     dnsCacheHint: 'Zeichnungen und die Switch-Ansicht fragen pro Aufruf hunderte Adressen rückwärts ab. Namen ändern sich selten, also merkt A38 sie sich — und die Fehlanzeigen gleich mit, denn Adressen ohne Eintrag laufen jedes Mal in die volle Zeitüberschreitung.',
     dnsHitDays: 'Treffer gelten (Tage)',

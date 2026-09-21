@@ -46,6 +46,13 @@ export default function DrawioPanel() {
           placeholder="http://svo3041-ot:8780"
           onChange={(e) => setCfg((c) => ({ ...c, base_url: e.target.value }))} />
       </div>
+      <div>
+        <label className="mb-1 block text-xs text-slate-400">{de.settings.uplinkLabel}</label>
+        <input className="fwpt-input" value={(cfg.uplink_label as string) ?? ''}
+          placeholder="Uplink"
+          onChange={(e) => setCfg((c) => ({ ...c, uplink_label: e.target.value }))} />
+        <p className="mt-1 text-[11px] text-slate-600">{de.settings.uplinkLabelHint}</p>
+      </div>
       {test && (
         <div className={`flex items-start gap-2 text-sm ${test.ok ? 'text-emerald-400' : test.soft ? 'text-amber-400' : 'text-red-400'}`}>
           {test.ok ? <CheckCircle2 size={16} className="mt-0.5 shrink-0" />

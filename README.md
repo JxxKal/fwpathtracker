@@ -210,13 +210,24 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   Standort macht aus 300 Geräten eine Handvoll.
   Struktur und Logisch teilen Scope und Schriftfeld: VDOM, Firewall, **Standort**
   oder **alle Standorte**; Netze je
-  Interface (VLAN, CIDR, Zone, iTop-Name), VDOM-Links, Routen zu fremden VDOMs
-  als Nachbarn (Overlay/Transit — die WAN-Seite), Default-Route, Switches per
-  LLDP (LibreNMS). Detailstufe wählbar: *nur Netze* (Netzverbindungsplan),
+  Interface (VLAN, CIDR, Zone, iTop-Name), VDOM-Links, Switches per
+  LLDP (LibreNMS).
+
+  Was **außerhalb des Scopes** liegt, wird nicht gezeichnet. Eine Firewall am
+  Blattrand und eine Linie quer über das halbe Blatt sagen weniger als eine
+  Zeile dort, wo die Kopplung entsteht: bei vier Uplinks kreuzen sich die
+  Linien, laufen durch Netz-Kästen und treffen sich in einem Punkt, an dem
+  niemand mehr auseinanderhält, welche zu welchem VDOM gehört. Stattdessen
+  trägt jedes VDOM oben eine **Uplink-Marke** mit einer Zeile je Kopplung nach
+  draußen — Default-Route zuerst, dann Transit und Overlay mit Ziel-VDOM; die
+  vollständigen Netzlisten stehen im Tooltip. Die Überschrift ist frei wählbar
+  (*Einstellungen → draw.io*), denn wer den Weg nach draußen betreibt, heißt
+  bei jedem anders. Kopplungen **innerhalb** des Scopes bleiben Linien: die
+  sind kurz und sagen genau das, was eine Linie gut sagt. Detailstufe wählbar: *nur Netze* (Netzverbindungsplan),
   *nur Netzwerkgeräte* (Switches, NetworkDevice-CIs) oder *alle Hosts* aus iTop,
   FMG-Objekten und ARP-Historie; *automatisch* fällt oberhalb von 1500 Hosts
   auf Netzwerkgeräte zurück. Symbole aus der draw.io-Bibliothek „Network"
-  (Server, Switch, PC, Firewall, Wolke — offline verfügbar, Zuordnung über
+  (Server, Switch, PC, Firewall — offline verfügbar, Zuordnung über
   iTop-Klasse und Beschreibung). Netz-Kästen mit vielen Hosts starten
   eingeklappt, jeder Knoten trägt einen Tooltip mit den Quellen — die Zeichnung ist damit
   gleichzeitig der Abgleich von FMG, iTop und LibreNMS. Herunterladen oder

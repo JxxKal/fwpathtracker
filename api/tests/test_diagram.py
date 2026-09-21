@@ -153,15 +153,71 @@ async def test_drawio_xml_is_well_formed_and_complete(inventory, prefixes):
     tips = " ".join(o.get("tooltip", "") for o in objects)
     assert "000c29aabbcc" in tips and "Server-LAN" in tips
     edges = [c for c in cells if c.get("edge") == "1"]
-    assert len(edges) >= 3
-    # Symbole aus der draw.io-Network-Bibliothek: Server, Switch, Firewall, Wolke.
+    # Symbole aus der draw.io-Network-Bibliothek: Server, Switch, Firewall.
     styles = " ".join(c.get("style", "") for c in cells)
     for shape in ("mxgraph.networks.server", "mxgraph.cisco.switches.workgroup_switch",
-                  "mxgraph.networks.firewall", "mxgraph.networks.cloud"):
+                  "mxgraph.networks.firewall"):
         assert shape in styles, shape
     # Jede Kante zeigt auf existierende Zellen.
     ids = {o.get("id") for o in objects} | {c.get("id") for c in cells}
     assert all(e.get("source") in ids and e.get("target") in ids for e in edges)
+
+
+async def test_couplings_to_the_outside_are_a_line_of_text_not_a_line(inventory, prefixes):
+    """Eine Firewall am Blattrand und eine Linie quer über das halbe Blatt sagen
+    weniger als eine Zeile dort, wo die Kopplung entsteht: bei vier Uplinks
+    kreuzen sich die Linien und treffen sich in einem Punkt, an dem niemand
+    mehr auseinanderhält, welche zu welchem VDOM gehört."""
+    m = await _build(inventory, prefixes)
+    assert m["neighbors"], "Testdaten ohne Nachbarn prüfen hier nichts"
+
+    rows = drawio.uplinks(m)
+    assert set(rows) == {"fw-a/root"}
+    texts = [r["text"] for r in rows["fw-a/root"]]
+    assert texts[0].startswith("Default via"), "der Weg nach draußen steht oben"
+
+    root = ET.fromstring(drawio.render(m))
+    cells = root.findall(".//mxCell")
+    # Kein Symbol mehr für das, was außerhalb des Scopes liegt.
+    styles = " ".join(c.get("style", "") for c in cells)
+    assert "mxgraph.networks.cloud" not in styles
+    labels = " ".join(o.get("label", "") for o in root.findall(".//object"))
+    assert "Internet / Default-Route" not in labels
+    # Stattdessen steht die Auskunft im VDOM.
+    badge = next(o for o in root.findall(".//object")
+                 if "fillColor=#f8e4e4" in (o.find("mxCell").get("style") or ""))
+    assert "<b>Uplink</b>" in badge.get("label")
+    for text in texts:
+        assert text in badge.get("label")
+    # Und keine Kante endet im Nichts.
+    ids = {o.get("id") for o in root.findall(".//object")} | {c.get("id") for c in cells}
+    edges = [c for c in cells if c.get("edge") == "1"]
+    assert all(e.get("source") in ids and e.get("target") in ids for e in edges)
+
+
+async def test_the_uplink_heading_can_be_named(inventory, prefixes):
+    """Wer den Weg nach draußen betreibt, heißt bei jedem anders."""
+    m = await _build(inventory, prefixes)
+    labels = " ".join(o.get("label", "") for o in ET.fromstring(
+        drawio.render(m, uplink_title="Open Systems")).findall(".//object"))
+    assert "<b>Open Systems</b>" in labels
+
+
+async def test_couplings_inside_the_scope_stay_lines(inventory, prefixes):
+    """Kurze Linien zwischen zwei sichtbaren VDOMs sagen genau das, was eine
+    Linie gut sagt — nur der Weg über den Blattrand nicht."""
+    m = await _build(inventory, prefixes, scope="firewall", device="fw-a", vdom=None)
+    inside = {vd["id"] for dev in m["devices"] for vd in dev["vdoms"]}
+    assert len(inside) > 1, "Testdaten ohne zweites VDOM prüfen hier nichts"
+    assert any(e["from"] in inside and e["to"] in inside for e in m["edges"])
+
+    root = ET.fromstring(drawio.render(m))
+    edges = [c for c in root.findall(".//mxCell") if c.get("edge") == "1"]
+    assert edges, "die Kopplung im Gerät wurde mit weggeräumt"
+    # Was als Linie dasteht, gehört nicht zusätzlich in die Uplink-Marke.
+    rows = " ".join(r["text"] for rs in drawio.uplinks(m).values() for r in rs)
+    for vid in inside:
+        assert vid.replace("/", " / ") not in rows
 
 
 async def test_every_network_with_hosts_starts_collapsed(inventory, prefixes):

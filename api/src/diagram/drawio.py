@@ -8,8 +8,15 @@ außen nach innen:
               └ Netz-Kästen im Raster, darin die Hosts als Liste (einklappbar,
                 ab HOST_COLLAPSE zugeklappt — der Plan bleibt lesbar, die Hosts
                 sind trotzdem drin)
-    rechts:  Nachbar-VDOMs, Internet/Default (die WAN-Seite)
+    im VDOM oben: die Uplink-Marke — wohin dieses VDOM nach außen koppelt
     unter jeder Firewall: ihre Switches per LLDP
+
+Was AUSSERHALB des Scopes liegt, wird nicht mehr als Symbol gezeichnet. Eine
+Firewall am Bildrand und eine Linie quer über das halbe Blatt sagen weniger als
+eine Zeile an der Stelle, an der die Kopplung entsteht: bei vier Uplinks kreuzen
+sich die Linien, laufen durch Netz-Kästen und treffen sich in einem Punkt, an
+dem niemand mehr auseinanderhält, welche zu welchem VDOM gehört. Die Angabe
+steht deshalb im VDOM selbst.
 Gerechnet wird von innen nach außen: erst die Netz-Kästen, daraus die Größe
 des VDOMs, daraus die der Firewall, daraus die des Standorts.
 
@@ -37,7 +44,9 @@ NET_M, NET_SPACING = 12, 12      # Rand/Abstand der Netz-Kästen im VDOM
 VDOM_M, VDOM_SPACING = 24, 24    # Rand/Abstand der VDOMs in der Firewall
 DEV_ICON_H = 34                  # Firewall-Symbol über dem Container
 SWITCH_W, SWITCH_H, SWITCH_ROW = 72, 40, 76
-NEIGHBOR_W, NEIGHBOR_H = 200, 60
+# Uplink-Marke im VDOM: Kopfzeile + eine Zeile je Kopplung nach außen.
+UPLINK_HEAD, UPLINK_ROW, UPLINK_PAD = 18, 15, 8
+UPLINK_MAX_ROWS = 6
 
 STYLE: dict[str, str] = {
     # childLayout=stackLayout: draw.io ordnet die Kinder selbst an und zieht den
@@ -90,6 +99,10 @@ STYLE: dict[str, str] = {
     "edge-transit": "strokeColor=#6c8ebf;",
     "edge-default": "strokeColor=#b85450;",
     "edge-switch": "strokeColor=#9673a6;",
+    # Uplink-Marke: rot wie die WAN-Kanten früher, damit die Farbsprache bleibt.
+    "uplink": "rounded=1;html=1;align=left;verticalAlign=top;spacingLeft=6;spacingTop=2;"
+              "fontSize=9;fillColor=#f8e4e4;strokeColor=#b85450;fontColor=#8a3b3b;"
+              "dashed=1;whiteSpace=wrap;",
 }
 
 
@@ -101,7 +114,6 @@ SHAPES = {
                "fillColor=#9673a6;strokeColor=#ffffff;strokeWidth=1;"),
     "server": ("mxgraph.networks.server", "fillColor=#29AAE1;strokeColor=none;"),
     "pc": ("mxgraph.networks.pc", "fillColor=#6c8ebf;strokeColor=none;"),
-    "cloud": ("mxgraph.networks.cloud", "fillColor=#b85450;strokeColor=none;"),
 }
 
 
@@ -212,14 +224,73 @@ def _pack(sizes: list[tuple[float, float]], cols: int,
 # schon beim Öffnen dort, wo das Layout sie hinlegen würde — und das erste
 # Auf- oder Zuklappen verrückt nicht plötzlich alles.
 
+KIND_WORD = {"overlay": "Overlay", "transit": "Transit", "default": "Default"}
+
+
+def _short_target(nid: str) -> str:
+    """`EUGEBA1-FW-10001-1-OT/L3` → `EUGEBA1-FW-10001-1-OT / L3`. Der Name ist
+    lang, aber er ist die Auskunft — gekürzt wird er nicht, nur lesbar
+    gesetzt."""
+    dev, _, vdom = nid.partition("/")
+    return f"{dev} / {vdom}" if vdom else dev
+
+
+def uplinks(model: dict) -> dict[str, list[dict]]:
+    """Je VDOM seine Kopplungen nach außen — Default-Route, Transit, Overlay.
+
+    „Außen" heißt: das Gegenüber liegt nicht im Scope und wäre deshalb ein
+    freistehendes Symbol am Blattrand. Kopplungen INNERHALB des Scopes bleiben
+    Linien; die sind kurz und sagen genau das, was eine Linie gut sagt.
+    """
+    in_scope = {vd["id"] for dev in model["devices"] for vd in dev["vdoms"]}
+    labels = {n["id"]: n.get("label") or n["id"] for n in model["neighbors"]}
+    out: dict[str, list[dict]] = {}
+    for e in model["edges"]:
+        near, far = e["from"], e["to"]
+        if near not in in_scope:
+            near, far = far, near
+        if near not in in_scope or far in in_scope:
+            continue
+        word = KIND_WORD.get(e["kind"], e["kind"])
+        if e["kind"] == "default":
+            text = e["label"]                      # trägt „Default via …" schon
+            tip = f"{e['label']}\n{labels.get(far, far)}"
+        else:
+            text = f"{word} → {_short_target(far)}"
+            tip = f"{word} über {e.get('via') or '?'}\n{_short_target(far)}\n{e['label']}"
+        out.setdefault(near, []).append({"text": text, "tooltip": tip, "kind": e["kind"]})
+    for rows in out.values():
+        # Default zuerst: der Weg nach draußen ist die häufigste Frage.
+        rows.sort(key=lambda r: (r["kind"] != "default", r["text"]))
+    return out
+
+
+def _uplink_height(rows: list[dict]) -> float:
+    if not rows:
+        return 0.0
+    shown = min(len(rows), UPLINK_MAX_ROWS) + (1 if len(rows) > UPLINK_MAX_ROWS else 0)
+    return UPLINK_HEAD + shown * UPLINK_ROW + UPLINK_PAD
+
+
+def _uplink_label(rows: list[dict], title: str) -> str:
+    shown = rows[:UPLINK_MAX_ROWS]
+    lines = [f"<b>{_esc(title)}</b>"]
+    lines += [_esc(r["text"]) for r in shown]
+    if len(rows) > len(shown):
+        lines.append(_esc(f"… +{len(rows) - len(shown)} weitere"))
+    return "<br>".join(lines)
+
+
 def _measure_vdom(vd: dict, with_networks: bool,
-                  collapse: bool = True) -> tuple[tuple[float, float], list]:
+                  collapse: bool = True, up_h: float = 0.0) -> tuple[tuple[float, float], list]:
     """Größe eines VDOM-Containers + Platzierung seiner Netz-Kästen (eine Spalte)."""
     nets = vd["networks"] if with_networks else []
+    top = VDOM_HEAD + NET_M + (up_h + NET_SPACING if up_h else 0)
     if not nets:
-        return (VDOM_MIN_W, VDOM_HEAD + 2 * NET_M), []
+        return (max(VDOM_MIN_W, NET_W + 2 * NET_M if up_h else VDOM_MIN_W),
+                top - NET_SPACING + NET_M if up_h else VDOM_HEAD + 2 * NET_M), []
     placed = []
-    y = VDOM_HEAD + NET_M
+    y = top
     for net in nets:
         full, short = _net_height(net)
         collapsed = collapse and bool(net["hosts"])
@@ -229,11 +300,14 @@ def _measure_vdom(vd: dict, with_networks: bool,
     return (NET_W + 2 * NET_M, y - NET_SPACING + NET_M), placed
 
 
-def _measure_device(dev: dict, with_networks: bool,
-                    collapse: bool = True) -> tuple[tuple[float, float],
-                                                    tuple[float, float], list]:
+def _measure_device(dev: dict, with_networks: bool, collapse: bool = True,
+                    ups: dict[str, list[dict]] | None = None
+                    ) -> tuple[tuple[float, float], tuple[float, float], list]:
     """(Platzbedarf inkl. Symbol und Switch-Spalte, Container-Maß, VDOM-Kinder)."""
-    measured = [_measure_vdom(vd, with_networks, collapse) for vd in dev["vdoms"]]
+    ups = ups or {}
+    measured = [_measure_vdom(vd, with_networks, collapse,
+                              _uplink_height(ups.get(vd["id"], [])))
+                for vd in dev["vdoms"]]
     inner_h = max((m[0][1] for m in measured), default=VDOM_HEAD + 2 * NET_M)
     x = VDOM_M
     kids = []
@@ -248,9 +322,10 @@ def _measure_device(dev: dict, with_networks: bool,
     return (box[0] + switch_col, DEV_ICON_H + box[1]), box, kids
 
 
-def _measure_site(group: dict, with_networks: bool,
-                  collapse: bool = True) -> tuple[tuple[float, float], list]:
-    measured = [_measure_device(d, with_networks, collapse) for d in group["devices"]]
+def _measure_site(group: dict, with_networks: bool, collapse: bool = True,
+                  ups: dict[str, list[dict]] | None = None
+                  ) -> tuple[tuple[float, float], list]:
+    measured = [_measure_device(d, with_networks, collapse, ups) for d in group["devices"]]
     pos, w, h = _pack([m[0] for m in measured], FWS_PER_ROW)
     head = SITE_HEAD + GAP if group["name"] else 0
     off = GAP if group["name"] else 0
@@ -265,12 +340,20 @@ def _measure_site(group: dict, with_networks: bool,
 
 def _draw_vdom(doc: _Doc, vd: dict, parent: str, x: float, y: float,
                size: tuple[float, float], nets: list, cell_of: dict,
-               with_networks: bool) -> None:
+               with_networks: bool, up_rows: list[dict] | None = None,
+               up_title: str = "Uplink") -> None:
     label = _esc(vd["vdom"]) if with_networks else \
         f"{_esc(vd['vdom'])} <span style='color:#888'>· {vd['network_count']} Netze</span>"
     vd_id = doc.vertex(label, STYLE["vdom"], x, y, size[0], size[1], parent=parent,
                        tooltip=f"VDOM {vd['id']} · {vd['network_count']} Netze")
     cell_of[vd["id"]] = vd_id
+    # Die Uplink-Marke steht VOR den Netzen: sie gehört zum VDOM als Ganzem und
+    # ist im Stack-Layout damit die oberste Zeile.
+    if up_rows:
+        doc.vertex(_uplink_label(up_rows, up_title), STYLE["uplink"],
+                   NET_M, VDOM_HEAD + NET_M, NET_W, _uplink_height(up_rows) - UPLINK_PAD,
+                   parent=vd_id,
+                   tooltip="\n\n".join(r["tooltip"] for r in up_rows))
     for net, nx, ny, nh, collapsed, full, short in nets:
         if not net.get("enabled", True):
             style = STYLE["net-off"]
@@ -314,7 +397,8 @@ def _ha_text(ha: dict) -> tuple[str, str]:
 
 def _draw_device(doc: _Doc, dev: dict, parent: str, x: float, y: float,
                  box: tuple[float, float], vdoms: list, cell_of: dict,
-                 with_networks: bool) -> None:
+                 with_networks: bool, ups: dict[str, list[dict]] | None = None,
+                 up_title: str = "Uplink") -> None:
     """Symbol über dem Container, VDOMs darin, Switches rechts daneben. Der
     Container enthält NUR VDOMs — alles andere würde das Stack-Layout mit
     einreihen."""
@@ -337,7 +421,8 @@ def _draw_device(doc: _Doc, dev: dict, parent: str, x: float, y: float,
                        parent=parent, tooltip=tip)
     cell_of[f"device:{dev['device']}"] = fw_id
     for vd, vx, vy, vsize, nets in vdoms:
-        _draw_vdom(doc, vd, fw_id, vx, vy, vsize, nets, cell_of, with_networks)
+        _draw_vdom(doc, vd, fw_id, vx, vy, vsize, nets, cell_of, with_networks,
+                   (ups or {}).get(vd["id"]), up_title)
     for i, sw in enumerate(dev["switches"]):
         ports = ", ".join(sorted({p["fw_port"] for p in sw["ports"]}))
         stip = "\n".join(f"{k}: {v}" for k, v in (
@@ -350,16 +435,20 @@ def _draw_device(doc: _Doc, dev: dict, parent: str, x: float, y: float,
         doc.edge(cell_of[sw["id"]], fw_id, _esc(ports), "switch")
 
 
-def render(model: dict, collapse: bool = True, title_block: dict | None = None) -> str:
+def render(model: dict, collapse: bool = True, title_block: dict | None = None,
+           uplink_title: str = "Uplink") -> str:
     """collapse=False zeichnet die Hostlisten offen — für Ausdruck und PDF, wo
     niemand klicken kann. Die Zeichnung wird dann entsprechend groß.
 
-    title_block: Schriftfeld unten rechts (siehe titleblock.info_from)."""
+    title_block: Schriftfeld unten rechts (siehe titleblock.info_from).
+    uplink_title: Überschrift der Uplink-Marke — wer den Weg nach draußen
+    betreibt, heißt bei jedem anders (Provider, „WAN", ein Produktname)."""
     doc = _Doc(model["scope"].get("title") or "Netzplan")
     cell_of: dict[str, str] = {}
     with_networks = model.get("with_networks", True)
 
-    measured = [_measure_site(g, with_networks, collapse) for g in model["sites"]]
+    ups = uplinks(model)
+    measured = [_measure_site(g, with_networks, collapse, ups) for g in model["sites"]]
     pos, total_w, _total_h = _pack([m[0] for m in measured], SITES_PER_ROW)
     x0, y0 = 40, 40
     for group, (px, py), (size, devs) in zip(model["sites"], pos, measured):
@@ -375,19 +464,11 @@ def render(model: dict, collapse: bool = True, title_block: dict | None = None) 
         else:
             parent, ox, oy = "1", gx, gy
         for dev, dx, dy, box, vdoms in devs:
-            _draw_device(doc, dev, parent, ox + dx, oy + dy, box, vdoms, cell_of, with_networks)
+            _draw_device(doc, dev, parent, ox + dx, oy + dy, box, vdoms, cell_of,
+                         with_networks, ups, uplink_title)
 
-    # ── Nachbarn (WAN-Seite) rechts ────────────────────────────────────────
-    nx, ny = x0 + total_w + 2 * GAP, y0
-    for nb in model["neighbors"]:
-        is_default = nb["kind"] == "default"
-        style = icon_style("cloud" if is_default else "firewall")
-        tip = nb["label"] if is_default else f"{nb['id']}" + (
-            f"\nStandort: {nb['site']}" if nb.get("site") else "")
-        w, h = (96, 60) if is_default else (64, 44)
-        cell_of[nb["id"]] = doc.vertex(_esc(nb["label"]), style, nx + (NEIGHBOR_W - w) // 2, ny,
-                                       w, h, tooltip=tip)
-        ny += NEIGHBOR_H + GAP + 16
+    # Kein Symbol für das, was außerhalb des Scopes liegt: die Kopplung steht
+    # als Zeile im VDOM (siehe uplinks). Damit endet keine Linie am Blattrand.
 
     # ── Schriftfeld ────────────────────────────────────────────────────────
     # NEBEN die Zeichnung, nicht darunter: Container wachsen beim Aufklappen
@@ -396,9 +477,8 @@ def render(model: dict, collapse: bool = True, title_block: dict | None = None) 
     # ändert sich beim Aufklappen nicht. Unterkante bündig mit der Zeichnung,
     # damit es im geschlossenen Zustand unten rechts steht, wo es hingehört.
     if title_block:
-        right = max(x0 + total_w, nx + NEIGHBOR_W if model["neighbors"] else 0)
-        bottom = max(y0 + _total_h, ny)
-        titleblock.draw(doc, right + 2 * GAP,
+        bottom = y0 + _total_h
+        titleblock.draw(doc, x0 + total_w + 2 * GAP,
                         max(y0, bottom - titleblock.HEIGHT), title_block)
 
     # ── Kanten ─────────────────────────────────────────────────────────────
