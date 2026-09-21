@@ -552,7 +552,12 @@ def test_ip_is_shortened_to_the_significant_part():
 
 async def test_logical_view_draws_buses_with_vlan_and_colours(inventory, prefixes):
     from diagram import logical
-    m = await _build(inventory, prefixes, scope="firewall", device="fw-a", vdom=None)
+    hosts = ITOP_HOSTS + [
+        {"name": "plc-1", "ip": "10.1.2.10", "description": "", "kind": "Server"},
+        {"name": "hmi-1", "ip": "203.0.113.2", "description": "", "kind": None},
+    ]
+    m = await _build(inventory, prefixes, scope="firewall", device="fw-a", vdom=None,
+                     itop_hosts=hosts)
     root = ET.fromstring(logical.render(m))
     labels = [o.get("label", "") for o in root.findall(".//object")]
     assert any("10.1.1.0/24" in l for l in labels)
@@ -579,6 +584,55 @@ async def test_logical_view_leaves_out_switches_and_says_so(inventory, prefixes)
     labels = " ".join(o.get("label", "") for o in root.findall(".//object"))
     assert "srv-1" in labels and "sw-core" not in labels
     assert "Switche nicht dargestellt" in labels
+
+
+async def test_empty_networks_are_left_out_of_the_bus_view(inventory, prefixes):
+    """Eine Busleiste ohne Geräte belegt eine volle Zeile und sagt nichts. Bei
+    einer Firewall mit vielen angelegten, aber leeren Interfaces war die
+    Zeichnung fast nur noch Leerlauf."""
+    from diagram import logical, titleblock
+    hosts = [{"name": "srv-1", "ip": "10.1.1.10", "description": "", "kind": "Server"}]
+    m = await _build(inventory, prefixes, itop_hosts=hosts, itop_addresses={})
+    nets = [n for dev in m["devices"] for vd in dev["vdoms"] for n in vd["networks"]]
+    assert len(nets) > 1, "Testdaten ohne zweites Netz prüfen hier nichts"
+
+    visible, hidden = logical.networks_with_hosts(m)
+    assert hidden == len(nets) - 1
+    assert [n["cidr"] for ns in visible.values() for n in ns] == ["10.1.1.0/24"]
+
+    tb = titleblock.info_from(TB, title="T", subtitle="S", author="a", drawing_no="N")
+    labels = " ".join(o.get("label", "") for o in ET.fromstring(
+        logical.render(m, title_block=tb)).findall(".//object"))
+    assert "10.1.1.0/24" in labels and "10.1.2.0/24" not in labels
+    # Ausgeblendet ist nicht dasselbe wie nicht vorhanden.
+    assert f"{hidden} Netze ohne Geräte ausgeblendet" in labels
+
+
+async def test_a_network_with_only_switches_counts_as_empty(inventory, prefixes):
+    """Switche werden in dieser Sicht nicht gezeichnet — ein Netz, in dem nur
+    welche stehen, bliebe sonst als leere Leiste zurück."""
+    from diagram import logical
+    hosts = [{"name": "srv-1", "ip": "10.1.1.10", "description": "", "kind": "Server"},
+             {"name": "sw-2", "ip": "10.1.2.5", "description": "", "kind": "NetworkDevice"}]
+    m = await _build(inventory, prefixes, itop_hosts=hosts, itop_addresses={})
+    visible, _hidden = logical.networks_with_hosts(m)
+    assert [n["cidr"] for ns in visible.values() for n in ns] == ["10.1.1.0/24"]
+
+
+async def test_without_any_hosts_every_network_stays(inventory, prefixes):
+    """Sonst bliebe im Gesamtplan, bei „keine Hosts" oder wenn nur
+    Netzwerkgeräte eingesammelt wurden, ein leeres Blatt übrig — schlechter als
+    ein paar leere Leisten."""
+    from diagram import logical
+    m = await _build(inventory, prefixes, hosts="none")
+    nets = [n for dev in m["devices"] for vd in dev["vdoms"] for n in vd["networks"]]
+    assert not any(n["hosts"] for n in nets)
+    visible, hidden = logical.networks_with_hosts(m)
+    assert hidden == 0
+    assert sum(len(ns) for ns in visible.values()) == len(nets)
+    bars = [c for c in ET.fromstring(logical.render(m)).findall(".//mxCell")
+            if "fontSize=0" in (c.get("style") or "")]
+    assert len(bars) == len(nets)
 
 
 async def test_too_many_hosts_become_one_symbol_per_class_plus_a_table(inventory, prefixes):

@@ -153,7 +153,13 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   gekürztem Namen (`WD-OT-L3-SVO3036` → `SVO3036`; das Präfix steht einmal an
   der Leiste). Geräte liegen in **zwei Höhenlagen** versetzt, damit lange Namen
   nicht aneinanderstoßen, und hängen mit **senkrechten** Abgängen an ihrer
-  Leiste. **Ohne Switche und Ports** — ausgeblendete
+  Leiste. **Nur Netze mit Geräten** — eine leere Busleiste belegt eine volle
+  Zeile und sagt nichts; bei einer Firewall mit vielen angelegten, aber leeren
+  Interfaces war die Zeichnung fast nur noch Leerlauf. Ausgeblendete Netze
+  werden im Schriftfeld gezählt, und ein Hinweis nennt sie nach dem Erzeugen.
+  Steht nirgends ein Gerät (Gesamtplan, *keine Hosts*, oder es wurden nur
+  Netzwerkgeräte eingesammelt), bleiben alle Netze stehen — ein leeres Blatt
+  wäre schlechter. **Ohne Switche und Ports** — ausgeblendete
   Switche werden im Schriftfeld gezählt. Wird eine Geräteliste zu lang, steht
   je Geräteklasse ein Symbol mit Anzahl und Verweis auf eine **Tabellenseite**
   in derselben Datei. Druckformat DIN A3 quer.

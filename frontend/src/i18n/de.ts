@@ -239,7 +239,7 @@ export const de = {
     noFilters: 'LibreNMS meldet weder Standorte noch Gerätegruppen — dort zuerst pflegen.',
     filterHint: 'Standort und Gerätegruppe sind Alternativen: eine Zeichnung zeigt einen Standort ODER eine Gruppe. Was an einem einzelnen Switch hängt, zeigt die Switch-Ansicht.',
     noSwitches: 'Keine überwachten Geräte aus LibreNMS — Verbindung in den Einstellungen prüfen.',
-    viewLogischHint: 'Logische Netzdokumentation nach Hausvorgabe: Netze als farbige Busleisten mit VLAN-ID, Endgeräte mit gekürzter IP, ohne Switche. Zu lange Gerätelisten werden je Klasse zusammengefasst und auf einer Tabellenseite geführt.',
+    viewLogischHint: 'Logische Netzdokumentation nach Hausvorgabe: Netze als farbige Busleisten mit VLAN-ID, Endgeräte mit gekürzter IP, ohne Switche. Netze ohne Geräte werden nicht gezeichnet. Zu lange Gerätelisten werden je Klasse zusammengefasst und auf einer Tabellenseite geführt.',
     scopeVdom: 'VDOM',
     scopeFirewall: 'Firewall (alle VDOMs)',
     scopeSite: 'Standort (alle Firewalls dort)',

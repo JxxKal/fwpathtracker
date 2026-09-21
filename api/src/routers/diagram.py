@@ -448,6 +448,10 @@ async def build(body: DiagramRequest, request: Request,
         stem = f"logisch_{stem}"
     tb = await _title_block(mdl, stem, user)
     if body.view == "logisch":
+        _visible, hidden_nets = logical.networks_with_hosts(mdl)
+        if hidden_nets:
+            warnings.append(f"{hidden_nets} Netze ohne Geräte sind nicht gezeichnet — "
+                            "eine Busleiste ohne alles belegt eine Zeile und sagt nichts.")
         xml = logical.render(mdl, title_block=tb)
     else:
         xml = drawio.render(mdl, collapse=not body.expand_hosts, title_block=tb)

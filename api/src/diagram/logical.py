@@ -9,6 +9,9 @@ Aus der Anforderung, Punkt für Punkt:
   * KEINE Switche und keine einzelnen Ports: gezeichnet werden ausschließlich
     Router/Firewalls und Endgeräte. Ausgeblendete Switche werden gezählt und
     genannt, damit nichts stillschweigend verschwindet.
+  * Nur Netze MIT Geräten. Eine Leiste ohne alles belegt eine ganze Zeile und
+    sagt nichts; bei einer Firewall mit 40 angelegten, aber leeren Interfaces
+    war die Zeichnung fast nur noch Leerlauf.
   * Wird die Geräteliste zu lang, steht je Geräteklasse EIN Symbol mit Anzahl
     und dem Verweis auf eine Tabelle; die Tabelle liegt auf einer eigenen
     Seite derselben Datei.
@@ -130,6 +133,28 @@ def _drawn_hosts(net: dict) -> list[dict]:
     return [h for h in net["hosts"] if host_class(h) != "switch"]
 
 
+def networks_with_hosts(model: dict) -> tuple[dict[str, list[dict]], int]:
+    """Je VDOM die Netze, die in die Zeichnung gehören, und wie viele leere
+    dabei wegfallen.
+
+    Eine Busleiste ohne Geräte kostet eine volle Zeile und sagt nichts. In der
+    logischen Sicht zählen dabei nur die Geräte, die auch gezeichnet werden —
+    ein Netz mit ausschließlich Switchen bliebe sonst als leere Leiste stehen.
+
+    Ausgeblendet wird nur, wenn überhaupt irgendwo Geräte stehen. Sonst — im
+    Gesamtplan, bei „keine Hosts" oder wenn nur Netzwerkgeräte eingesammelt
+    wurden — wäre die ganze Zeichnung leer, und das ist schlechter als ein paar
+    leere Leisten.
+    """
+    by_vdom = {vd["id"]: vd["networks"]
+               for dev in model["devices"] for vd in dev["vdoms"]}
+    filled = {vid: [n for n in nets if _drawn_hosts(n)] for vid, nets in by_vdom.items()}
+    if not any(filled.values()):
+        return by_vdom, 0
+    hidden = sum(len(by_vdom[vid]) - len(nets) for vid, nets in filled.items())
+    return filled, hidden
+
+
 def render(model: dict, title_block: dict | None = None,
            max_hosts: int = MAX_HOSTS_DRAWN) -> str:
     sc = model["scope"]
@@ -140,15 +165,23 @@ def render(model: dict, title_block: dict | None = None,
     y = y0
     color_index = 0
 
+    visible, hidden_nets = networks_with_hosts(model)
+
     for dev in model["devices"]:
         for vd in dev["vdoms"]:
-            nets = vd["networks"]
+            nets = visible[vd["id"]]
+            # Ein VDOM ohne ein einziges belegtes Netz ist ein leeres Band —
+            # das ist derselbe Leerlauf eine Ebene höher.
+            if not nets:
+                continue
             band_h = BAND_HEAD + GAP + max(1, len(nets)) * BAR_GAP
             widest = max((len(_drawn_hosts(n)) for n in nets), default=1)
             band_w = max(widest, 4) * HOST_W + LABEL_W + 4 * GAP
+            tip = f"{vd['id']} · {vd['network_count']} Netze"
+            if len(nets) < vd["network_count"]:
+                tip += f", davon {len(nets)} mit Geräten"
             band = doc.vertex(f"{esc(dev['device'])} / {esc(vd['vdom'])}", BAND,
-                              x0, y, band_w, band_h,
-                              tooltip=f"{vd['id']} · {vd['network_count']} Netze")
+                              x0, y, band_w, band_h, tooltip=tip)
             doc.vertex(esc(dev["device"]), FW, x0 - 96, y + BAND_HEAD + 8, 56, 40,
                        tooltip=f"FortiGate {dev['device']}"
                                + (f"\nHA {dev['ha']['mode']}" if dev.get("ha") else ""))
@@ -216,6 +249,9 @@ def render(model: dict, title_block: dict | None = None,
         if hidden_switches:
             info["note"] = (info.get("note") or "") + \
                 f"  ·  {hidden_switches} Switche nicht dargestellt (logische Sicht)"
+        if hidden_nets:
+            info["note"] = (info.get("note") or "") + \
+                f"  ·  {hidden_nets} Netze ohne Geräte ausgeblendet"
         titleblock.draw(doc, x0 + 1200, max(y0, y - titleblock.HEIGHT), info)
 
     for band_name, net, hosts in tables:
