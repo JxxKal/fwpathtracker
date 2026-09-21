@@ -117,13 +117,30 @@ Dazu eine schmale Begleittabelle mit dem **zuletzt gesehenen Hash** je Objekt,
 damit der Vergleich ohne Rückgriff auf das Protokoll auskommt. Sie ist im
 Grunde `fmg_snapshot` um eine Hash-Spalte erweitert und könnte darin aufgehen.
 
-**`before`/`after` mitschreiben oder nicht?** Ohne sie ist die Tabelle winzig,
-aber die Antwort lautet nur „hat sich geändert" — für ein Adressobjekt zu
-wenig. Mit ihnen steht dort, *was* sich geändert hat. Vorschlag: mitschreiben,
-aber je Quelle nur die Felder, die fachlich zählen, nicht die rohe
-FortiManager-Antwort mit ihren Zeitstempeln und internen IDs. Was genau das ist,
-gehört in Schritt 2 der Umsetzung (Abschnitt 9) und ist die eigentliche Arbeit
-an diesem Feature.
+### Wie viel `before`/`after`?
+
+Ohne die beiden Spalten ist die Tabelle winzig, aber die Antwort lautet nur
+„hat sich geändert" — für ein Adressobjekt zu wenig. Die Frage lässt sich
+allerdings nicht am Datenmodell entscheiden, sondern nur an der Ansicht: Die
+Vorher-Nachher-Zeichnung (Abschnitt 7) braucht den **Zustand** am Stichtag,
+nicht nur die Änderungen. Aus einem reinen Änderungsprotokoll lässt er sich nur
+rückwärts rekonstruieren — von heute aus zurückgespielt. Das geht, verlangt aber
+je Änderung genug Inhalt, um sie umzukehren.
+
+Deshalb unterschiedlich je Objektart:
+
+| Objektart | Was gespeichert wird | Warum |
+|---|---|---|
+| Interface, Route, Subnetz, VLAN, Zone | vollständig vorher **und** nachher | trägt die Zeichnung; wenige Objekte, seltene Änderungen |
+| Adressobjekt, Gruppe, Service, VIP | nur die geänderten Felder | taucht in keiner Zeichnung auf |
+| Policy | nur die geänderten Felder | großes Objekt, hohe Änderungsrate |
+| CI, Host, MAC, DNS-Name | nur die geänderten Felder | Liste, keine Zeichnung |
+
+Die erste Zeile ist die teure und zugleich die billige: Sie trägt die
+Rekonstruktion, und es sind genau die Objekte, von denen es wenige gibt und die
+sich selten ändern. Rohfelder der Quellen — Zeitstempel, interne IDs,
+Zähler — werden vorher entfernt, sonst besteht das Protokoll aus
+Nicht-Änderungen (siehe Fallstrick 3).
 
 ---
 
@@ -243,22 +260,89 @@ Ein Punkt in den Network Tools, neben Verlauf und Checks.
 **Eingabe:** ein Datum. Optional ein zweites, sonst gilt „bis heute". Dazu
 Filter auf Quelle, Standort/ADOM und Objektart.
 
-**Ausgabe:** nach Quelle gruppiert, je Gruppe Zugänge, Abgänge, Änderungen —
-mit Zahl in der Überschrift, damit der Umfang vor dem Aufklappen sichtbar ist.
-Eine Zeile zeigt Objekt, Zeitpunkt und bei Änderungen die betroffenen Felder
-mit Vorher und Nachher.
+Die Ausgabe ist **keine Tabelle**. Eine Tabelle beantwortet „was steht drin",
+aber die Frage lautet „ist da etwas, das mich beunruhigen sollte" — und das ist
+eine Frage nach Form und Häufung, nicht nach Zeilen. Deshalb drei Ebenen von
+grob nach fein.
+
+### 7.1 Der Zeitstrahl: wann ist etwas passiert
+
+Oben eine Leiste vom Stichtag bis heute, eine Spur je Quelle, jede Änderung ein
+Strich. Wichtig ist nicht die einzelne Marke, sondern das **Muster**: Änderungen
+treten in Bündeln auf, weil an einem Wartungsfenster gearbeitet wurde. Ein
+Bündel, das niemand zuordnen kann, ist der eigentliche Befund — und der fällt
+in einer nach Zeit sortierten Liste nicht auf, in einer Leiste sofort.
+
+Der Zeitstrahl ist zugleich die Navigation: ein Bündel anklicken grenzt den
+Zeitraum darauf ein.
+
+Ein Kalenderraster (Tage als Kacheln, Intensität nach Anzahl) tut es auch und
+ist billiger zu bauen, sagt aber nur *wann* und nicht *was*. Als schmale Leiste
+über dem Detail ist es eine brauchbare erste Fassung.
+
+### 7.2 Die Zeichnung als Vorher und Nachher
+
+Das ist der Teil, den nur A38 kann, weil der Renderer bereits steht: Statt einer
+Liste bekommt man den Netzplan **am Stichtag** und den von **heute**, und die
+Differenz ist eingefärbt.
+
+Die Farbsprache ist schon eingeführt und muss nicht neu gelernt werden:
+
+| Änderung | Darstellung | entspricht heute |
+|---|---|---|
+| neu hinzugekommen | grün, kräftiger Rahmen | das normale Netz |
+| entfallen | grau, gestrichelt, schraffiert | das abgeschaltete Interface |
+| geändert | bernstein | das Netz ohne Link |
+| unverändert | blass zurückgenommen | — |
+
+Das Ergebnis ist eine draw.io-Datei mit Schriftfeld, also **druckbar**. Damit
+fällt der Change-Nachweis als Nebenprodukt ab: Ein Auditor bekommt ein Blatt,
+kein Bildschirmfoto. Eine interaktive Grafik leistet das nie.
+
+Voraussetzung ist die Rekonstruktion des Zustands am Stichtag — genau dafür
+speichert Abschnitt 4 bei Interfaces, Routen, Subnetzen, VLANs und Zonen den
+vollständigen Inhalt vorher und nachher.
+
+Als Ausbaustufe dieselbe Zeichnung an mehreren Zeitpunkten nebeneinander, klein.
+Dann sieht man nicht nur, *dass* ein Standort gewachsen ist, sondern in welchen
+Schritten.
+
+### 7.3 Karten statt Zeilen im Detail
+
+Ein geändertes Adressobjekt oder eine geänderte Policy hat Struktur. Eine Karte
+je Änderung mit altem und neuem Wert nebeneinander und **nur den betroffenen
+Feldern** liest sich deutlich besser als eine Tabellenzeile mit zwei
+JSON-Spalten. Gruppiert wird nach Änderungsfenster, nicht nach Objektart: Was
+zusammen passiert ist, gehört zusammen gelesen.
+
+### 7.4 Was diese Ansichten ruiniert, wenn man es nicht vorher bedenkt
+
+- **Masse ist nicht Bedeutung.** Ein einziger Policy-Push erzeugt hunderte
+  Einträge und begräbt die eine geänderte Route, auf die es ankommt. Sortiert
+  und gewichtet wird nach fachlichem Gewicht, nicht nach Anzahl: Route, Subnetz,
+  VLAN und Interface wiegen schwerer als ein umbenanntes Adressobjekt. Im
+  Zeitstrahl bestimmt das die Höhe der Marke, in den Karten die Reihenfolge.
+- **Die FDB-Wechsel bleiben draußen.** Sonst besteht jedes Bündel aus Notebooks,
+  die den Port gewechselt haben (siehe 5.3).
+- **Farbe hat hier schon eine Bedeutung.** Grün, Grau und Bernstein sind in den
+  Zeichnungen belegt. Die Delta-Farben müssen dazu passen, sonst heißt Grau in
+  zwei Zeichnungen zweierlei.
+
+### 7.5 Weiterarbeiten
 
 **Sprungmarken:** Von einer geänderten Route in den Tracker. Von einer neuen MAC
 in die Switchport-Suche. Von einem neuen Subnetz in den Netzplan. Der Befund ist
 selten das Ziel — meist ist er der Anfang einer Frage.
 
-**Export** als CSV, denn der häufigste Zweck ist eine Zuarbeit: Audit,
-Change-Nachweis, Übergabe.
+**Export** als CSV und als Zeichnung, denn der häufigste Zweck ist eine
+Zuarbeit: Audit, Change-Nachweis, Übergabe.
 
 **Was die Ansicht ehrlich sagen muss:** Für Zeiträume vor der Einführung gibt es
 nichts. Eine Abfrage auf ein Datum davor darf nicht „keine Änderungen" melden,
 sondern „vor diesem Zeitpunkt wurde nicht aufgezeichnet". Der Unterschied ist
-der zwischen einer Auskunft und einer Falschaussage.
+der zwischen einer Auskunft und einer Falschaussage. Dasselbe gilt für die
+Zeichnung: Lässt sich der Zustand am Stichtag nicht vollständig rekonstruieren,
+gehört das auf das Blatt und nicht in eine Fußnote.
 
 ---
 
@@ -292,17 +376,25 @@ der zwischen einer Auskunft und einer Falschaussage.
 | 1 | Änderungsmenge je Sync eine Woche lang messen | Zahlen statt Schätzung, Entscheidung über Aufbewahrung |
 | 2 | Je Objektart festlegen, welche Felder fachlich zählen | Grundlage für Hash und Anzeige — die eigentliche Arbeit |
 | 3 | `change_log` + Hash-Spalte, Sync auf Abgleich umstellen | FortiManager-Änderungen laufen auf |
-| 4 | **Ansicht mit DNS und ARP** | erster Nutzen aus bereits vorhandenen Daten, ohne Wartezeit |
+| 4 | **Ansicht mit DNS und ARP**: Zeitstrahl + Karten (7.1, 7.3) | erster Nutzen aus bereits vorhandenen Daten, ohne Wartezeit |
 | 5 | FortiManager in der Ansicht | der Hauptteil, sobald Protokoll aufgelaufen ist |
-| 6 | iTop-Änderungslog prüfen und anbinden | CI- und Netzänderungen, rückwirkend |
-| 7 | LibreNMS: Geräte, VLANs, LLDP | Änderungen an der Verkabelung |
-| 8 | FDB-Wechsel als eigene, gedämpfte Reihe | „wo hing dieser Host im Februar" |
-| 9 | FortiManager-Revision als Beleg mitschreiben | Belegbarkeit |
-| 10 | CSV-Export und Sprungmarken | Zuarbeit und Weiterarbeit |
+| 6 | Gewichtung nach fachlicher Bedeutung (7.4) | die eine Route geht nicht im Policy-Push unter |
+| 7 | Zustandsrekonstruktion zum Stichtag | Voraussetzung der Zeichnung |
+| 8 | **Vorher-Nachher-Zeichnung** (7.2) | der eigentliche Grund für dieses Feature |
+| 9 | iTop-Änderungslog prüfen und anbinden | CI- und Netzänderungen, rückwirkend |
+| 10 | LibreNMS: Geräte, VLANs, LLDP | Änderungen an der Verkabelung |
+| 11 | FDB-Wechsel als eigene, gedämpfte Reihe | „wo hing dieser Host im Februar" |
+| 12 | FortiManager-Revision als Beleg mitschreiben | Belegbarkeit |
+| 13 | CSV-Export und Sprungmarken | Zuarbeit und Weiterarbeit |
 
 Schritt 4 steht bewusst vor dem FortiManager: Er nutzt Daten, die seit Monaten
 auflaufen, und liefert sofort ein Ergebnis. Alles ab Schritt 5 kann
 naturgemäß erst zeigen, was seit der Einführung passiert ist.
+
+Schritt 7 ist die Stelle, an der sich zeigt, ob Abschnitt 4 richtig entschieden
+wurde. Fällt die Rekonstruktion schwerer als gedacht, ist die Zeichnung teuer
+und der Zeitstrahl trägt die Ansicht allein — brauchbar, aber ohne das
+druckbare Ergebnis.
 
 ---
 
@@ -318,9 +410,10 @@ naturgemäß erst zeigen, was seit der Einführung passiert ist.
 4. **Wer darf die Zeitmaschine sehen?** Das Protokoll enthält vollständige
    Objektinhalte. Das ist mehr als die heutige Leseberechtigung — womöglich
    gehört die Ansicht hinter die Admin-Rolle.
-5. **Sollen Policy-Änderungen feldgenau protokolliert werden?** Eine Policy ist
-   ein großes Objekt. Feldgenau ist die Anzeige gut lesbar und die Tabelle
-   größer; objektgenau ist es umgekehrt.
+5. **Reicht die Zustandsrekonstruktion für die Zeichnung?** Abschnitt 4 legt
+   fest, was dafür gespeichert wird. Ob das genügt, lässt sich erst sagen, wenn
+   der Netzplan-Renderer einmal mit einem rekonstruierten Stand gefüttert wurde.
+   Das sollte früh ausprobiert werden, nicht erst in Schritt 8.
 6. **Was passiert bei einem ADOM-Umbau?** Wird ein ADOM umbenannt oder
    aufgeteilt, sieht das nach einem vollständigen Austausch aus. Ob das
    akzeptabel ist oder abgefangen werden muss, hängt davon ab, wie oft es
