@@ -8,3 +8,4 @@ dist/
 
 # Entpacktes Design-Paket (Quelle: design/*.zip)
 design/a38-design/
+.venv/
