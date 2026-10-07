@@ -77,6 +77,18 @@ async def poller_state(request: Request, _admin: dict = Depends(require_admin)) 
     return {k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in poll.items()}
 
 
+@router.post("/reload")
+async def reload(request: Request, _admin: dict = Depends(require_admin)) -> dict:
+    """Letzte 24 h neu aus Graylog einlesen — nach Änderungen an Stream oder Abfragen."""
+    cfg = await read_config("webdrive")
+    await request.app.state.webdrive_store.reset_poll()
+    try:
+        stats = await request.app.state.webdrive_poller.run_once(cfg, datetime.now(timezone.utc))
+    except Exception as exc:
+        raise HTTPException(502, f"Einlesen fehlgeschlagen: {exc}") from exc
+    return {"ok": True, "stats": stats}
+
+
 @router.post("/probe")
 async def probe(request: Request, _admin: dict = Depends(require_admin)) -> dict:
     """Diagnose fürs Settings-Panel: die tatsächlichen Abfragen, die Treffer der

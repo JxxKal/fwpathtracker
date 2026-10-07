@@ -1,7 +1,7 @@
 import { Check, CheckCircle2, Copy, XCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
-  getConfig, patchConfig, webdrivePoller, webdriveProbe, webdriveTest,
+  getConfig, patchConfig, webdrivePoller, webdriveProbe, webdriveReload, webdriveTest,
   type WebdriveProbe, type WebdriveProbeSource,
 } from '../../api';
 import { de } from '../../i18n/de';
@@ -67,6 +67,18 @@ export default function WebdrivePanel() {
     } finally { setBusy(false); }
   }
 
+  async function reload() {
+    setBusy(true);
+    setTest(null);
+    try {
+      const r = await webdriveReload();
+      setTest({ ok: true, text: de.settings.webdriveReloaded(r.stats.fac_events ?? 0, r.stats.oc_events ?? 0) });
+      setPoll(await webdrivePoller());
+    } catch (e) {
+      setTest({ ok: false, text: e instanceof Error ? e.message : String(e) });
+    } finally { setBusy(false); }
+  }
+
   const s = poll?.stats ?? {};
   return (
     <div className="fwpt-card space-y-3">
@@ -112,6 +124,8 @@ export default function WebdrivePanel() {
         <button type="button" className="fwpt-btn-ghost" onClick={runTest} disabled={busy}>{de.settings.test}</button>
         <button type="button" className="fwpt-btn-ghost" onClick={runProbe} disabled={busy}
           title={de.settings.webdriveProbeHint}>{de.settings.webdriveProbe}</button>
+        <button type="button" className="fwpt-btn-ghost" onClick={reload} disabled={busy}>
+          {de.settings.webdriveReload}</button>
         {status && <span className="text-sm text-slate-400">{status}</span>}
       </div>
       {poll && (

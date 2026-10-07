@@ -615,6 +615,8 @@ export const de = {
     webdriveProbeRecognized: 'erkannt',
     webdriveProbeDropped: 'Verworfene Beispiele',
     webdriveCopy: 'Alles kopieren',
+    webdriveReload: 'Letzte 24 h neu einlesen',
+    webdriveReloaded: (fac: number, oc: number) => `Neu eingelesen: FAC ${fac}, OpenCloud ${oc} Ereignisse`,
     webdriveCopied: 'Kopiert',
   },
   webdrive: {

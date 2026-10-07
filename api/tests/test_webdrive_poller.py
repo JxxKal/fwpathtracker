@@ -9,7 +9,7 @@ import pytest
 
 from webdrive.graylog import PAGE, GraylogClient, GraylogError, GraylogNotConfigured
 from webdrive.parse import parse_ts
-from webdrive.poller import WebdrivePoller, build_query, queries
+from webdrive.poller import PARSER_VERSION, WebdrivePoller, build_query, queries
 from webdrive_fixtures import CFG, IDENTITIES, at, reference_day
 
 GL_CFG = {**CFG, "base_url": "http://10.0.0.5:9000/api/", "token": "tok", "stream_id": "s1",
@@ -118,6 +118,9 @@ class FakeStore:
     async def mark_ok(self, polled_until, at, stats):
         self.poll.update(polled_until=polled_until, last_ok=at, last_error=None, stats=stats)
 
+    async def reset_poll(self):
+        self.poll["polled_until"] = None
+
     async def mark_error(self, msg, at):
         self.poll["last_error"] = msg
 
@@ -139,7 +142,8 @@ def test_queries_are_optional_with_a_stream():
 
 
 async def test_stream_only_recognizes_both_sources():
-    gl, store = FakeGraylog(reference_day()), FakeStore(poll={"polled_until": NOW - timedelta(hours=6)})
+    gl, store = FakeGraylog(reference_day()), FakeStore(poll={"polled_until": NOW - timedelta(hours=6),
+                                                                  "stats": {"parser": PARSER_VERSION}})
     stats = await WebdrivePoller(gl, store).run_once({**GL_CFG, "fac_query": "", "oc_query": ""}, NOW)
     assert stats["fac_events"] > 0 and stats["oc_events"] > 0
     assert store.identities == IDENTITIES
@@ -169,6 +173,7 @@ async def test_next_run_overlaps_two_minutes_without_duplicates():
     await poller.run_once(GL_CFG, NOW)
     n = len(store.events)
     store.poll["polled_until"] = at("10:44:00")                  # Stand zurückdrehen → Überlappung
+    assert store.poll["stats"]["parser"] == PARSER_VERSION
     gl.calls.clear()
     await poller.run_once(GL_CFG, NOW)
     assert gl.calls[0][1] == at("10:42:00")
@@ -177,7 +182,7 @@ async def test_next_run_overlaps_two_minutes_without_duplicates():
 
 async def test_outage_keeps_progress_and_raises():
     gl = FakeGraylog(reference_day(), fail_on_call=5)            # 3. Scheibe, FAC
-    store = FakeStore(poll={"polled_until": NOW - timedelta(hours=5)})
+    store = FakeStore(poll={"polled_until": NOW - timedelta(hours=5), "stats": {"parser": PARSER_VERSION}})
     with pytest.raises(GraylogError):
         await WebdrivePoller(gl, store).run_once(GL_CFG, NOW)
     start = NOW - timedelta(hours=5, minutes=2)
@@ -192,7 +197,25 @@ async def test_long_outage_is_capped_at_24h():
 
 
 async def test_source_without_query_is_skipped():
-    gl, store = FakeGraylog(reference_day()), FakeStore(poll={"polled_until": NOW - timedelta(minutes=1)})
+    gl, store = FakeGraylog(reference_day()), FakeStore(poll={"polled_until": NOW - timedelta(minutes=1),
+                                                                    "stats": {"parser": PARSER_VERSION}})
     await WebdrivePoller(gl, store).run_once({**GL_CFG, "oc_query": ""}, NOW)
     assert all("source:fac01" in q for q, _, _ in gl.calls)
     assert not any("source:opencloud" in q for q, _, _ in gl.calls)
+
+
+async def test_new_parser_rereads_24h():
+    """Was ein älterer Parser verworfen hat, wird nach einem Update nachgeholt."""
+    gl = FakeGraylog(reference_day())
+    store = FakeStore(poll={"polled_until": NOW - timedelta(minutes=1), "stats": {"parser": PARSER_VERSION - 1}})
+    await WebdrivePoller(gl, store).run_once(GL_CFG, NOW)
+    assert gl.calls[0][1] == NOW - timedelta(hours=24)
+    assert store.identities == IDENTITIES
+
+
+async def test_reset_rereads_24h():
+    gl = FakeGraylog([])
+    store = FakeStore(poll={"polled_until": NOW - timedelta(minutes=1), "stats": {"parser": PARSER_VERSION}})
+    await store.reset_poll()
+    await WebdrivePoller(gl, store).run_once(GL_CFG, NOW)
+    assert gl.calls[0][1] == NOW - timedelta(hours=24)

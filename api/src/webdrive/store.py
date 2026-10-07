@@ -77,6 +77,11 @@ class WebdriveStore:
                 polled_until, at, stats,
             )
 
+    async def reset_poll(self) -> None:
+        """Nächster Lauf liest die letzten 24 h neu ein (Doppelte verhindert der Unique-Index)."""
+        async with self._pool.acquire() as conn:
+            await conn.execute("UPDATE webdrive_poll SET polled_until = NULL WHERE id = 1")
+
     async def mark_error(self, msg: str, at: datetime) -> None:
         async with self._pool.acquire() as conn:
             await conn.execute(

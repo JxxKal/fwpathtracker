@@ -20,6 +20,9 @@ from webdrive.parse import detect_source, parse_message
 SLICE = timedelta(hours=1)
 OVERLAP = timedelta(minutes=2)
 MAX_CATCHUP = timedelta(hours=24)
+# Erhöhen, wenn der Parser mehr erkennt: Der nächste Lauf liest dann die
+# letzten 24 h neu ein, statt Verworfenes für immer verworfen zu lassen.
+PARSER_VERSION = 2
 # Ein verwaister Browser-Tab erzeugt rund 1.400 dieser Zeilen am Tag.
 FAC_NOISE = '"Failed to send user info"'
 
@@ -46,11 +49,14 @@ class WebdrivePoller:
     async def run_once(self, cfg: dict, now: datetime) -> dict:
         poll = await self._store.get_poll()
         until = poll.get("polled_until")
+        if (poll.get("stats") or {}).get("parser") != PARSER_VERSION:
+            until = None
         start = max(until - OVERLAP, now - MAX_CATCHUP) if until else now - MAX_CATCHUP
         qs = queries(cfg)
         if not qs:
             raise GraylogNotConfigured("Weder Stream-ID noch Abfrage eingetragen.")
         counts: Counter = Counter()
+        counts["parser"] = PARSER_VERSION
         t = start
         try:
             while t < now:

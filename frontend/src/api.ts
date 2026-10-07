@@ -998,3 +998,8 @@ export async function webdriveProbe(): Promise<WebdriveProbe> {
   }
   return request('/api/webdrive/probe', { method: 'POST' });
 }
+
+export async function webdriveReload(): Promise<{ ok: boolean; stats: Record<string, number> }> {
+  if (isDemoMode()) return { ok: true, stats: { fac_events: 120, oc_events: 900 } };
+  return request('/api/webdrive/reload', { method: 'POST' });
+}
