@@ -8,11 +8,15 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from deps import get_current_user, require_admin
 from routers.config import read_config
 from webdrive.graylog import GraylogNotConfigured, base_url
+from webdrive.parse import detect_source, parse_message
+from webdrive.poller import queries
 from webdrive.state import build
 
 router = APIRouter(prefix="/api/webdrive", tags=["webdrive"])
 
 STALE_AFTER = timedelta(minutes=3)
+PROBE_WINDOW = timedelta(minutes=15)
+PROBE_SAMPLES = 3
 
 
 def clamp_since(since: datetime | None, now: datetime, retention_days: int) -> datetime:
@@ -71,3 +75,34 @@ async def test_connection(request: Request, _admin: dict = Depends(require_admin
 async def poller_state(request: Request, _admin: dict = Depends(require_admin)) -> dict:
     poll = await request.app.state.webdrive_store.get_poll()
     return {k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in poll.items()}
+
+
+@router.post("/probe")
+async def probe(request: Request, _admin: dict = Depends(require_admin)) -> dict:
+    """Diagnose fürs Settings-Panel: die tatsächlichen Abfragen, die Treffer der
+    letzten 15 min je erkannter Quelle und Rohnachrichten, so wie A38 sie
+    bekommt — damit sich ein abweichendes Logformat ohne Graylog-Zugang erkennen lässt."""
+    cfg = await read_config("webdrive")
+    client = request.app.state.webdrive_poller.client
+    now = datetime.now(timezone.utc)
+    qs = queries(cfg)
+    out = {"queries": qs, "stream_id": cfg.get("stream_id") or None, "error": None,
+           "fac": {"hits": 0, "recognized": {}, "dropped_samples": []},
+           "oc": {"hits": 0, "recognized": {}, "dropped_samples": []}}
+    if not qs:
+        out["error"] = "Weder Stream-ID noch Abfrage eingetragen."
+        return out
+    try:
+        for q in qs:
+            for m in await client.search(cfg, q, now - PROBE_WINDOW, now):
+                src = detect_source(m)
+                bucket = out[src]
+                bucket["hits"] += 1
+                ev = parse_message(src, m, cfg)
+                if ev:
+                    bucket["recognized"][ev.kind] = bucket["recognized"].get(ev.kind, 0) + 1
+                elif len(bucket["dropped_samples"]) < PROBE_SAMPLES:
+                    bucket["dropped_samples"].append(m)
+    except Exception as exc:
+        out["error"] = str(exc)
+    return out

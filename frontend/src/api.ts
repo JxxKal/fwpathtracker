@@ -981,3 +981,20 @@ export async function webdrivePoller(): Promise<WebdrivePollerState> {
   if (isDemoMode()) return { last_ok: new Date().toISOString(), stats: { fac_events: 12, fac_dropped: 40, oc_events: 9, oc_dropped: 310 } };
   return request('/api/webdrive/poller');
 }
+
+export interface WebdriveProbeSource {
+  hits: number; recognized: Record<string, number>; dropped_samples: Record<string, unknown>[];
+}
+export interface WebdriveProbe {
+  queries: string[]; stream_id: string | null; error: string | null;
+  fac: WebdriveProbeSource; oc: WebdriveProbeSource;
+}
+
+export async function webdriveProbe(): Promise<WebdriveProbe> {
+  if (isDemoMode()) {
+    return { queries: ['(*) AND NOT "Failed to send user info"'], stream_id: '6ac65d19981aaf2334c18dd7', error: null,
+      fac: { hits: 52, recognized: { userinfo_ok: 40, portal_login_ok: 2 }, dropped_samples: [] },
+      oc: { hits: 310, recognized: { session_seen: 38 }, dropped_samples: [] } };
+  }
+  return request('/api/webdrive/probe', { method: 'POST' });
+}

@@ -156,3 +156,48 @@ def test_reference_day_parses_without_noise():
     assert all(e.username != "ldaps/user-a.ra" for e in evs)
     assert sum(e.kind == "provision_failed" for e in evs) == 1
     assert sum(e.kind == "sync_start" for e in evs) == 6
+
+
+# ── Syslog-Format, wie es in Graylog ankommt (OT-Prod-Offline, 07.10.2026) ────
+
+def syslog(text: str, gl_id: str = "s1"):
+    return parse_message("auto", {"_id": gl_id, "timestamp": "2026-10-07T15:05:14.583Z",
+                                  "message": text, "source": "svo3038-ot"}, CFG)
+
+
+def test_syslog_userinfo():
+    ev = syslog('svo3038-ot db[18260]: category="Event" subcategory="Authentication" typeid=20000 '
+                'level="information" user="" nas="10.0.18.69" userip="10.0.18.69" action="" status="" '
+                'Successfully returned user info (CETa***************hCsn)')
+    assert (ev.source, ev.kind, ev.token) == ("fac", "userinfo_ok", "CETa***************hCsn")
+
+
+def test_syslog_portal_login():
+    ev = syslog('svo3038-ot db[18260]: category="Event" subcategory="Authentication" typeid=20701 '
+                'level="information" user="user-d.ra" nas="10.0.8.4" userip="10.0.8.4" action="Login" '
+                'status="Success" [user-d.ra] has successfully logged in OAuth portal[OAuth Authentication]')
+    assert (ev.kind, ev.username, ev.data["client_ip"]) == ("portal_login_ok", "user-d.ra", "10.0.8.4")
+
+
+def test_syslog_failure_reason_and_sync():
+    ev = syslog('svo3038-ot db[1]: category="Event" subcategory="Authentication" typeid=20102 '
+                'level="information" user="user-d.ra" nas="FAC_GUI:13" userip="" action="Authentication" '
+                'status="Failed" Remote LDAP user authentication from 10.0.8.4  with no token failed: invalid password.')
+    assert (ev.kind, ev.data["reason"]) == ("auth_failed_reason", "invalid password")
+    ev = syslog('svo3038-ot db[1]: category="Event" subcategory="System" typeid=30303 level="information" '
+                'user="" nas="" userip="" action="" status="" Retrieved 25 user(s) from the remote LDAP server '
+                '"dc01 (10.0.17.37)". (sync rule: Webdrive-User)')
+    assert (ev.kind, ev.data["users"]) == ("sync_retrieved", 25)
+
+
+def test_syslog_rest_debug_lines_are_dropped():
+    assert syslog("svo3038-ot rest_api_dbg_log: 2026-10-07 15:05:14,582 debug 18260 140406809409216 "
+                  "Userinfo access valid for <oauthlib.Request SANITIZED>.") is None
+
+
+def test_auto_detects_opencloud_json():
+    m = {"_id": "o1", "timestamp": "2026-10-07T15:05:14.537Z", "source": "svo3120-ot",
+         "message": '{"level":"info","service":"auth-machine","message":"user idp:\\"https://fac/oauth\\" '
+                    'opaque_id:\\"59aeb4b1\\" type:USER_TYPE_PRIMARY authenticated"}'}
+    ev = parse_message("auto", m, CFG)
+    assert (ev.source, ev.kind, ev.opaque_id) == ("oc", "session_seen", "59aeb4b1")

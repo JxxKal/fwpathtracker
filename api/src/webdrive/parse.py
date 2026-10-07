@@ -39,24 +39,33 @@ def normalize_user(raw: str | None) -> str | None:
     return u or None
 
 
-# msg="…" kann selbst Anführungszeichen enthalten ("… server "dc01" …"). Die
+# Der FAC kennt zwei Formate:
+#  Log-Export:  … logid=20000 cat="Event" subcat="…" nas="…" action="" status="" msg="…" user="…" requestid=
+#  Syslog:      svo3038-ot db[18260]: category="Event" subcategory="…" typeid=20000 level="…" user="" nas="…"
+#               userip="…" action="" status="" Successfully returned user info (…)
+# msg="…" kann selbst Anführungszeichen enthalten ("… server "dc01" …"); die
 # Felder danach sind immer user="…" requestid=…, also bis dorthin gierig lesen.
+# Im Syslog-Format steht der Text ohne Schlüssel hinter status="…".
 _MSG = re.compile(r'\bmsg="(?P<msg>.*)"\s+user="(?P<user>[^"]*)"')
+_TAIL = re.compile(r'\bstatus="[^"]*"[ \t]*(?P<msg>.*)$')
 _KV = re.compile(r'(\w+)="([^"]*)"|(\w+)=(\S+)')
+_ALIASES = {"typeid": "logid", "category": "cat", "subcategory": "subcat"}
 
 
 def parse_kv(text: str) -> dict[str, str]:
     out: dict[str, str] = {}
+    text = text.strip()
     m = _MSG.search(text)
-    head = text[: m.start()] if m else text
+    tail = None if m else _TAIL.search(text)
+    head = text[: m.start()] if m else text[: tail.start("msg")] if tail else text
     for k1, v1, k2, v2 in _KV.findall(head):
-        if k1:
-            out[k1] = v1
-        else:
-            out[k2] = v2
+        k, v = (k1, v1) if k1 else (k2, v2)
+        out[_ALIASES.get(k, k)] = v
     if m:
         out["msg"] = m.group("msg")
         out["user"] = m.group("user")
+    elif tail and tail.group("msg"):
+        out["msg"] = tail.group("msg")
     return out
 
 
@@ -196,12 +205,22 @@ def parse_ts(raw) -> datetime | None:
         return None
 
 
+def detect_source(m: dict) -> str:
+    """OpenCloud schreibt JSON-Zeilen (oder Graylog hat daraus Felder wie
+    `service` gemacht), alles andere ist FAC. So reicht ein gemeinsamer Stream."""
+    text = str(m.get("message") or "").lstrip()
+    return "oc" if text.startswith("{") or "service" in m else "fac"
+
+
 def parse_message(source: str, m: dict, cfg: dict) -> Event | None:
-    """Graylog-Nachricht (das Objekt unter messages[].message) → Ereignis."""
+    """Graylog-Nachricht (das Objekt unter messages[].message) → Ereignis.
+    source: 'fac', 'oc' oder 'auto' (am Inhalt erkennen)."""
     gl_id = str(m.get("_id") or "")
     ts = parse_ts(m.get("timestamp"))
     if not gl_id or ts is None:
         return None
+    if source == "auto":
+        source = detect_source(m)
     text = str(m.get("message") or "")
     fields = {k: v for k, v in m.items() if not k.startswith("_")}
     if source == "fac":

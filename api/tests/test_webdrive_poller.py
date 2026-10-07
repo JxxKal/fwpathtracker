@@ -9,7 +9,7 @@ import pytest
 
 from webdrive.graylog import PAGE, GraylogClient, GraylogError, GraylogNotConfigured
 from webdrive.parse import parse_ts
-from webdrive.poller import WebdrivePoller, build_query
+from webdrive.poller import WebdrivePoller, build_query, queries
 from webdrive_fixtures import CFG, IDENTITIES, at, reference_day
 
 GL_CFG = {**CFG, "base_url": "http://10.0.0.5:9000/api/", "token": "tok", "stream_id": "s1",
@@ -82,8 +82,13 @@ class FakeGraylog:
         self.calls.append((query, frm, to))
         if self.fail_on_call is not None and len(self.calls) == self.fail_on_call:
             raise GraylogError("Graylog nicht erreichbar")
-        src = "fac" if "source:fac01" in query else "oc"
-        return [m for s, m in self.messages if s == src and frm <= parse_ts(m["timestamp"]) <= to]
+        if "source:fac01" in query:
+            want = {"fac"}
+        elif "source:opencloud" in query:
+            want = {"oc"}
+        else:
+            want = {"fac", "oc"}                                 # ganzer Stream
+        return [m for s, m in self.messages if s in want and frm <= parse_ts(m["timestamp"]) <= to]
 
 
 class FakeStore:
@@ -123,9 +128,27 @@ class FakeStore:
 NOW = at("11:00:00")
 
 
-def test_fac_query_excludes_userinfo_noise():
-    assert build_query("fac", "source:fac01") == '(source:fac01) AND NOT "Failed to send user info"'
-    assert build_query("oc", "source:opencloud") == "source:opencloud"
+def test_query_excludes_userinfo_noise():
+    assert build_query("source:fac01") == '(source:fac01) AND NOT "Failed to send user info"'
+
+
+def test_queries_are_optional_with_a_stream():
+    assert queries({"stream_id": "s1"}) == ['(*) AND NOT "Failed to send user info"']
+    assert queries({"stream_id": "s1", "fac_query": "a", "oc_query": "a"}) == [build_query("a")]
+    assert queries({}) == []
+
+
+async def test_stream_only_recognizes_both_sources():
+    gl, store = FakeGraylog(reference_day()), FakeStore(poll={"polled_until": NOW - timedelta(hours=6)})
+    stats = await WebdrivePoller(gl, store).run_once({**GL_CFG, "fac_query": "", "oc_query": ""}, NOW)
+    assert stats["fac_events"] > 0 and stats["oc_events"] > 0
+    assert store.identities == IDENTITIES
+
+
+async def test_nothing_to_query_is_an_error():
+    with pytest.raises(GraylogNotConfigured):
+        await WebdrivePoller(FakeGraylog([]), FakeStore()).run_once(
+            {**GL_CFG, "fac_query": "", "oc_query": "", "stream_id": ""}, NOW)
 
 
 async def test_first_run_catches_up_24h_in_slices():
@@ -172,3 +195,4 @@ async def test_source_without_query_is_skipped():
     gl, store = FakeGraylog(reference_day()), FakeStore(poll={"polled_until": NOW - timedelta(minutes=1)})
     await WebdrivePoller(gl, store).run_once({**GL_CFG, "oc_query": ""}, NOW)
     assert all("source:fac01" in q for q, _, _ in gl.calls)
+    assert not any("source:opencloud" in q for q, _, _ in gl.calls)

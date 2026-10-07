@@ -1,14 +1,17 @@
 import { CheckCircle2, XCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { getConfig, patchConfig, webdrivePoller, webdriveTest } from '../../api';
+import {
+  getConfig, patchConfig, webdrivePoller, webdriveProbe, webdriveTest,
+  type WebdriveProbe, type WebdriveProbeSource,
+} from '../../api';
 import { de } from '../../i18n/de';
 import type { WebdrivePollerState } from '../../types';
 
 const TEXT_FIELDS: [key: string, label: string, placeholder: string][] = [
   ['base_url', 'Base-URL', 'https://graylog.example:9000'],
-  ['fac_query', de.settings.webdriveFacQuery, 'source:fac01'],
-  ['oc_query', de.settings.webdriveOcQuery, 'source:opencloud'],
-  ['stream_id', de.settings.webdriveStream, ''],
+  ['stream_id', de.settings.webdriveStream, '6ac65d19981aaf2334c18dd7'],
+  ['fac_query', de.settings.webdriveFacQuery, 'source:svo3038-ot'],
+  ['oc_query', de.settings.webdriveOcQuery, 'source:svo3120-ot'],
   ['oc_ip', de.settings.webdriveOcIp, '10.180.18.69'],
   ['sync_rule', de.settings.webdriveSyncRule, 'Webdrive-User'],
 ];
@@ -25,6 +28,7 @@ export default function WebdrivePanel() {
   const [test, setTest] = useState<{ ok: boolean; text: string } | null>(null);
   const [poll, setPoll] = useState<WebdrivePollerState | null>(null);
   const [busy, setBusy] = useState(false);
+  const [probe, setProbe] = useState<WebdriveProbe | null>(null);
 
   useEffect(() => {
     getConfig('webdrive').then(setCfg);
@@ -48,6 +52,16 @@ export default function WebdrivePanel() {
     try {
       const r = await webdriveTest();
       setTest({ ok: true, text: `OK — Graylog ${r.version}` });
+    } catch (e) {
+      setTest({ ok: false, text: e instanceof Error ? e.message : String(e) });
+    } finally { setBusy(false); }
+  }
+
+  async function runProbe() {
+    setBusy(true);
+    setProbe(null);
+    try {
+      setProbe(await webdriveProbe());
     } catch (e) {
       setTest({ ok: false, text: e instanceof Error ? e.message : String(e) });
     } finally { setBusy(false); }
@@ -96,6 +110,8 @@ export default function WebdrivePanel() {
       <div className="flex items-center gap-2">
         <button type="button" className="fwpt-btn" onClick={save} disabled={busy}>{de.settings.save}</button>
         <button type="button" className="fwpt-btn-ghost" onClick={runTest} disabled={busy}>{de.settings.test}</button>
+        <button type="button" className="fwpt-btn-ghost" onClick={runProbe} disabled={busy}
+          title={de.settings.webdriveProbeHint}>{de.settings.webdriveProbe}</button>
         {status && <span className="text-sm text-slate-400">{status}</span>}
       </div>
       {poll && (
@@ -110,6 +126,38 @@ export default function WebdrivePanel() {
           )}
           {poll.last_error && <p className="mt-0.5 text-red-400">{poll.last_error}</p>}
         </div>
+      )}
+      {probe && (
+        <div className="space-y-2 rounded-md border border-slate-800 bg-slate-950/40 p-3 text-xs">
+          {probe.stream_id && <p className="text-slate-400">Stream: <span className="font-mono">{probe.stream_id}</span></p>}
+          {probe.queries.map((q) => <p key={q} className="font-mono text-slate-500">{q}</p>)}
+          {probe.error && <p className="text-red-400">{probe.error}</p>}
+          <ProbeBlock title="FortiAuthenticator" src={probe.fac} />
+          <ProbeBlock title="OpenCloud" src={probe.oc} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProbeBlock({ title, src }: { title: string; src: WebdriveProbeSource }) {
+  const rec = Object.entries(src.recognized);
+  return (
+    <div>
+      <p className="font-medium text-slate-300">{title}</p>
+      <p className="text-slate-400">
+        {de.settings.webdriveProbeHits(src.hits)}
+        {rec.length > 0 && ` · ${de.settings.webdriveProbeRecognized}: ${rec.map(([k, n]) => `${k} ${n}`).join(', ')}`}
+      </p>
+      {src.dropped_samples.length > 0 && (
+        <details className="mt-1">
+          <summary className="cursor-pointer text-slate-400">
+            {de.settings.webdriveProbeDropped} ({src.dropped_samples.length})
+          </summary>
+          <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap break-all rounded bg-slate-900 p-2 text-[11px] text-slate-300">
+            {JSON.stringify(src.dropped_samples, null, 2)}
+          </pre>
+        </details>
       )}
     </div>
   );
