@@ -614,6 +614,8 @@ export const de = {
     webdriveProbeHits: (n: number) => `${n} Treffer`,
     webdriveProbeRecognized: 'erkannt',
     webdriveProbeDropped: 'Verworfene Beispiele',
+    webdriveCopy: 'Alles kopieren',
+    webdriveCopied: 'Kopiert',
   },
   webdrive: {
     notConfigured: 'Graylog ist noch nicht eingerichtet – Einstellungen → Datenquellen → Webdrive / Graylog.',

@@ -1,4 +1,4 @@
-import { CheckCircle2, XCircle } from 'lucide-react';
+import { Check, CheckCircle2, Copy, XCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
   getConfig, patchConfig, webdrivePoller, webdriveProbe, webdriveTest,
@@ -129,7 +129,12 @@ export default function WebdrivePanel() {
       )}
       {probe && (
         <div className="space-y-2 rounded-md border border-slate-800 bg-slate-950/40 p-3 text-xs">
-          {probe.stream_id && <p className="text-slate-400">Stream: <span className="font-mono">{probe.stream_id}</span></p>}
+          <div className="flex items-start justify-between gap-2">
+            {probe.stream_id
+              ? <p className="text-slate-400">Stream: <span className="font-mono">{probe.stream_id}</span></p>
+              : <span />}
+            <CopyButton text={JSON.stringify(probe, null, 2)} />
+          </div>
           {probe.queries.map((q) => <p key={q} className="font-mono text-slate-500">{q}</p>)}
           {probe.error && <p className="text-red-400">{probe.error}</p>}
           <ProbeBlock title="FortiAuthenticator" src={probe.fac} />
@@ -160,5 +165,33 @@ function ProbeBlock({ title, src }: { title: string; src: WebdriveProbeSource })
         </details>
       )}
     </div>
+  );
+}
+
+/** Kopiert in die Zwischenablage — auch ohne HTTPS, wo navigator.clipboard fehlt. */
+function CopyButton({ text }: { text: string }) {
+  const [done, setDone] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+    setDone(true);
+    window.setTimeout(() => setDone(false), 2000);
+  }
+
+  return (
+    <button type="button" className="fwpt-btn-ghost shrink-0" onClick={copy}>
+      {done ? <Check size={13} /> : <Copy size={13} />} {done ? de.settings.webdriveCopied : de.settings.webdriveCopy}
+    </button>
   );
 }
