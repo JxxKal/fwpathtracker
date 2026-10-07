@@ -256,3 +256,33 @@ export interface SslStatus {
   domains?: string[] | null;
   hostname?: string | null;
 }
+
+// ── Webdrive-Dashboard ───────────────────────────────────────────────────────
+
+export interface WebdriveProblem {
+  username: string; category: 'login' | 'file'; reason: string;
+  count: number; first: string; last: string;
+}
+export interface WebdriveHint {
+  username: string; kind: 'resolved' | 'retry_ok' | 'attr_changed' | 'scan_skipped'; text: string; ts: string;
+}
+export interface WebdriveUser { username: string; first: string; last: string; uploads: number; }
+export interface WebdriveFileIssue { reason: string; detail: string; ts: string; }
+export interface WebdriveSync {
+  last_run: string; users: number | null; modified: number | null; ok: boolean;
+  error: string | null; manual: boolean;
+  last_change: { ts: string; username: string; text: string; manual: boolean } | null;
+}
+export interface WebdriveStatus {
+  configured: boolean;
+  now?: string; since?: string; graylog_url?: string; sync_rule?: string;
+  poll?: { last_ok: string | null; last_error: string | null; stale: boolean };
+  sync?: WebdriveSync | null;
+  problems?: WebdriveProblem[]; hints?: WebdriveHint[];
+  active?: WebdriveUser[]; inactive?: WebdriveUser[];
+  unknown_sessions?: number; unattributed?: WebdriveFileIssue[];
+}
+export interface WebdrivePollerState {
+  polled_until?: string | null; last_ok?: string | null; last_error?: string | null;
+  stats?: Record<string, number>;
+}

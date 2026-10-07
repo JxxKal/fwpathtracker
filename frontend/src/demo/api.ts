@@ -1,7 +1,7 @@
 // Demo-Antworten: entsprechen der Phase-4-Testmatrix (Lab-Fixtures).
 import type {
   InventorySummary, PortTraceResult, SearchHit, Session, SyncStatus,
-  SessionProbe, TraceHistoryEntry, TraceRequest, TraceResult,
+  SessionProbe, TraceHistoryEntry, TraceRequest, TraceResult, WebdriveStatus,
 } from '../types';
 
 export function login(): Session {
@@ -180,5 +180,38 @@ export function inventorySummary(): InventorySummary {
       'fw-b': { adom: 'corp', vdoms: ['root'] },
     },
     counts: { policies: 4, addresses: 2, services: 1, vips: 1, zones: 3 },
+  };
+}
+
+/** Webdrive-Dashboard: ein Morgen mit einer gescheiterten Erstanmeldung. */
+export function webdriveStatus(): WebdriveStatus {
+  const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
+  return {
+    configured: true, now: ago(0), since: ago(600), graylog_url: 'https://graylog.example',
+    sync_rule: 'Webdrive-User',
+    poll: { last_ok: ago(0.5), last_error: null, stale: false },
+    sync: {
+      last_run: ago(20), users: 25, modified: 0, ok: true, error: null, manual: false,
+      last_change: { ts: ago(95), username: 'mmuster.ra', text: 'first name, last name', manual: true },
+    },
+    problems: [
+      { username: 'akoopman.ot', category: 'login', reason: 'Falsches Passwort', count: 4, first: ago(40), last: ago(38) },
+      { username: 'tvoogd.ra', category: 'file', reason: 'Virus gefunden: report.pdf (Win.Test.EICAR_HDB-1), gelöscht', count: 1, first: ago(12), last: ago(12) },
+    ],
+    hints: [
+      { username: 'mmuster.ra', kind: 'resolved', text: 'Erstanmeldung scheiterte (Name fehlt im AD – Vor- oder Nachname leer), behoben', ts: ago(93) },
+      { username: 'aglueck.ra', kind: 'retry_ok', text: '1 Fehlversuch (Falsches Passwort), danach erfolgreich', ts: ago(300) },
+    ],
+    active: [
+      { username: 'tvoogd.ra', first: ago(320), last: ago(2), uploads: 13 },
+      { username: 'aglueck.ra', first: ago(300), last: ago(6), uploads: 1 },
+      { username: 'mmuster.ra', first: ago(93), last: ago(1), uploads: 0 },
+    ],
+    inactive: [
+      { username: 'jkaluza.ra', first: ago(150), last: ago(55), uploads: 0 },
+      { username: 'tschrade.ra', first: ago(230), last: ago(70), uploads: 1 },
+    ],
+    unknown_sessions: 2,
+    unattributed: [],
   };
 }

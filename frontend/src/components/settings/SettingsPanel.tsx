@@ -14,6 +14,7 @@ import SitesPanel from './SitesPanel';
 import SslPanel from './SslPanel';
 import TitleBlockPanel from './TitleBlockPanel';
 import UsersPanel from './UsersPanel';
+import WebdrivePanel from './WebdrivePanel';
 
 // Zwölf Panels untereinander waren eine Scrollstrecke. Dieselbe Seitenleiste
 // wie im Tracker und in den Network Tools, nach Aufgabe gruppiert: woher die
@@ -26,6 +27,7 @@ const PANELS: Record<string, () => JSX.Element> = {
   fmg: () => <FmgPanel />,
   itop: () => <ItopPanel />,
   librenms: () => <LibrenmsPanel />,
+  webdrive: () => <WebdrivePanel />,
   dns: () => <DnsPanel />,
   drawio: () => <DrawioPanel />,
   titleblock: () => <TitleBlockPanel />,
@@ -44,6 +46,7 @@ const GROUPS: NavGroup[] = [
       { id: 'fmg', label: de.settingsNav.fmg },
       { id: 'itop', label: de.settingsNav.itop },
       { id: 'librenms', label: de.settingsNav.librenms },
+      { id: 'webdrive', label: de.settingsNav.webdrive },
       { id: 'dns', label: de.settingsNav.dns },
     ],
   },

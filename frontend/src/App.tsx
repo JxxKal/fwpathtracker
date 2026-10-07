@@ -14,11 +14,17 @@ import SideNav, { type NavGroup } from './components/SideNav';
 import ToolsPanel, { isToolId, type ToolId } from './components/ToolsPanel';
 import TraceForm, { type TraceMode } from './components/TraceForm';
 import SettingsPanel from './components/settings/SettingsPanel';
+import WebdriveDashboard from './components/webdrive/WebdriveDashboard';
 import { readCheckLink } from './checkLink';
 import { de } from './i18n/de';
 import type { Hop, PortTraceResult, Session, TraceRequest, TraceResult } from './types';
 
-type Tab = 'tracker' | 'tools' | 'einstellungen';
+type Tab = 'tracker' | 'tools' | 'webdrive' | 'einstellungen';
+
+const TAB_LABEL: Record<Tab, string> = {
+  tracker: de.tabs.tracker, tools: de.tabs.tools, webdrive: de.tabs.webdrive,
+  einstellungen: de.tabs.settings,
+};
 /** Ansichten innerhalb des Trackers — Prüfung, gespeicherte Checks, Verlauf. */
 type TrackerView = 'pfad' | 'checks' | 'verlauf';
 
@@ -46,6 +52,7 @@ function readTab(hasCheckLink: boolean, hasToolLink: boolean): [Tab, TrackerView
   if (t === 'tools' || t === 'werkzeuge' || hasToolLink) return ['tools', 'pfad'];
   if (t === 'checks' || view === 'checks' || hasCheckLink) return ['tracker', 'checks'];
   if (t === 'verlauf' || view === 'verlauf') return ['tracker', 'verlauf'];
+  if (t === 'webdrive') return ['webdrive', 'pfad'];
   if (t === 'einstellungen') return ['einstellungen', 'pfad'];
   return ['tracker', 'pfad'];
 }
@@ -152,7 +159,7 @@ export default function App() {
           <span className="font-semibold text-slate-100">{de.appTitle}</span>
         </div>
         <nav className="flex gap-1">
-          {(['tracker', 'tools', 'einstellungen'] as Tab[])
+          {(['tracker', 'tools', 'webdrive', 'einstellungen'] as Tab[])
             .filter((t) => t !== 'einstellungen' || session.role === 'admin')
             .map((t) => (
               <button
@@ -162,8 +169,7 @@ export default function App() {
                 }`}
                 onClick={() => setTab(t)}
               >
-                {t === 'tracker' ? de.tabs.tracker
-                  : t === 'tools' ? de.tabs.tools : de.tabs.settings}
+                {TAB_LABEL[t]}
               </button>
             ))}
         </nav>
@@ -263,6 +269,8 @@ export default function App() {
         )}
 
         {tab === 'tools' && <ToolsPanel initial={toolLink} />}
+
+        {tab === 'webdrive' && <WebdriveDashboard />}
 
         {tab === 'einstellungen' && session.role === 'admin' && <SettingsPanel />}
         </ErrorBoundary>

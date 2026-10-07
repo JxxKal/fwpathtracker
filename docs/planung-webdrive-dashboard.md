@@ -3,7 +3,7 @@
 Planung für eine Übersicht über das Webdrive (OpenCloud) in der Umgebung
 OT-Prod-Offline: Wer ist angemeldet, wer hat ein Problem und warum.
 
-**Stand:** 07.10.2026 · Entwurf, noch nichts umgesetzt
+**Stand:** 07.10.2026 · umgesetzt (V1), Muster ○ noch an echten Fällen zu prüfen
 **Betrifft:** neues Backend-Modul `api/src/webdrive/`, Migration
 `006_webdrive.sql`, neuer Reiter „Webdrive“, neues Einstellungs-Panel
 
@@ -85,7 +85,6 @@ Ereignis oder verwirft sie. Gespeichert werden nur Ereignisse, keine Rohzeilen.
 | `portal_login_ok` | `20701` „[U] has successfully logged in OAuth portal“ | user, client_ip |
 | `portal_login_failed` | `20702` „[U] has failed to log in OAuth portal“ | user (wie eingegeben), client_ip |
 | `auth_failed_reason` | Zeile ≤ 2 s vor `20702`, gleicher User: `20102`/`20103`/`20104`/`20324`/`20355`/`20100 … not been imported` | user, reason (siehe 3.3) |
-| `login_abandoned` | `20114` „Failed 'FAC_GUI' login attempt was not followed by a successful login“ | user |
 | `token_issued` | `20000` „Successful OAuth token login (<maske>)“ | token (Maske), client_ip |
 | `userinfo_ok` | `20000` „Successfully returned user info (<maske>)“, nas = OpenCloud-IP | token |
 | `sync_run` | `30303` „Performing … / Retrieved N user(s) / Found M modified / Successfully synced (rule: R)“, zusammengefasst je Lauf | rule, users, modified, ok |
@@ -106,14 +105,14 @@ Service Provider, Admin-Logins und Systemmeldungen.
 | `file_scanned` | service `antivirus`, „File scanned“ | opaque_id (`user`), filename, infected, virus, outcome |
 | `scan_skipped` ○ | antivirus „max scan size“ o. ä. | opaque_id, filename |
 | `upload_failed` ○ | access-log `PUT`/`POST`/`PATCH` auf `/dav/…` oder `/data/…` mit Status 400/413/423/507 | status, path; **User noch nicht zuordenbar** |
-| `upload_incomplete` ○ | storage-users `ChunkWriteStart` ohne `UploadFinished` nach 30 min | upload-id |
+| `upload_started` / `upload_finished` | storage-users `ChunkWriteStart` / `UploadFinished` (tus) | upload-id; ohne `UploadFinished` nach 30 min → „Upload abgebrochen“ |
 | `postprocessing_failed` ○ | service `postprocessing`, Level error | upload-id |
 
 **○ = Muster noch nicht an einem echten Fall geprüft.** Im Log vom 07.10. gab
 es weder Virusfunde noch Upload-Fehler. Nach der Inbetriebnahme helfen ein
 Test-Upload von EICAR und eine Datei über dem Limit, die Muster zu prüfen.
-Fehler der Dienste antivirus, postprocessing und storage-users, die zu keinem
-Muster passen, erscheinen bis dahin als „Datei-Problem (unbekannt)“.
+Fehler der Dienste antivirus und postprocessing, die zu keinem Muster passen
+(storage-users nicht: dort laufen harmlose Cache-Fehler auf Level error), erscheinen bis dahin als „Datei-Problem (unbekannt)“.
 
 Das Access-Log enthält keinen Usernamen, und `remote-addr` ist der Reverse
 Proxy. Upload-Fehler aus dem Access-Log lassen sich deshalb vorerst keinem
@@ -153,11 +152,15 @@ Bild:
 Username ──(FAC 20701, ±2 s)──▶ Token-Maske ──(FAC Userinfo / Zeit)──▶ OpenCloud opaque_id
 ```
 
-1. **User → Token:** `token_issued` ≤ 2 s nach `portal_login_ok`. Bevorzugt
-   wird dieselbe Client-IP. Die IP kann aber abweichen (am 07.10.: Login über
-   .4, Token über .5); bei nur einem Kandidaten zählt deshalb die Zeit allein.
-2. **Token → opaque_id:** Die erste `session_seen` einer bisher unbekannten
-   opaque_id fällt sekundengenau auf den ersten `userinfo_ok` eines Tokens.
+1. **User → Token:** `token_issued` ≤ 5 s nach `portal_login_ok` (am 07.10.
+   bis zu 4 s Abstand). Bevorzugt wird dieselbe Client-IP. Die IP kann aber
+   abweichen (Login über .4, Token über .5); bei nur einem Kandidaten zählt
+   deshalb die Zeit allein. Mehrdeutig → keine Zuordnung.
+2. **Token → opaque_id:** Jeder Userinfo-Abruf von OpenCloud beim FAC fällt
+   sekundengenau auf eine `session_seen` desselben Users (am 07.10.: 33/33,
+   60/60, 12/13). Zugeordnet wird die opaque_id, die mindestens 2 und
+   mindestens die Hälfte der Abrufe eines Tokens trifft, eindeutig vor allen
+   anderen. Ein einzelnes zufälliges Zusammentreffen reicht nie.
 3. Die Zuordnung opaque_id → Username wird **dauerhaft** gespeichert
    (`webdrive_identity`). Sie muss länger leben als die 7 Tage der Ereignisse,
    denn eine einmal angelegte OpenCloud-Identität ändert sich nicht mehr.
@@ -184,7 +187,7 @@ gut testen.
 | **Problem: Anmeldung** | Das letzte Anmelde-Ereignis des Users ist ein Fehler (`portal_login_failed` mit Grund, `provision_failed`, `user_locked`), und danach kam keine erfolgreiche Sitzung. |
 | **Problem: Datei** | Virusfund oder Datei-Fehler im gewählten Zeitraum. Bleibt bis Ende des Zeitraums stehen, weil es kein „behoben“ gibt. |
 | **Hinweis: behoben** | Es gab ein Anmelde-Problem, danach war eine Sitzung erfolgreich, z. B. „Erstanmeldung scheiterte (Name fehlte im AD), behoben 10:43“. |
-| **Hinweis: Fehlversuch** | Ein Fehlversuch mit späterem Erfolg, z. B. „1 Fehlversuch (Passwort), danach erfolgreich“. |
+| **Hinweis: Fehlversuch** | Fehlversuche mit späterem Erfolg, je User zusammengefasst, z. B. „1 Fehlversuch (Passwort), danach erfolgreich“. Bei „E-Mail statt Username“ genügt ein späterer Login vom selben Client, weil die E-Mail kein Konto ist. |
 | **Hinweis: Attribut geändert** | `attr_changed` für einen User, der schon eine OpenCloud-Identität hat. Warnung, weil OpenCloud den User sonst evtl. doppelt anlegt. |
 | **Aktiv** | Aktivität ≤ 15 min, mit „seit“ und Zahl der Uploads. |
 | **Nicht aktiv** | Heute gesehen, aber > 15 min nichts mehr. |
@@ -219,7 +222,9 @@ Minute der letzten 24 Läufe.
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Zeitraum:** Heute (ab 00:00 Ortszeit, Standard), 24 h, 7 Tage.
+- **Zeitraum:** Heute (ab 00:00 Ortszeit, Standard), 24 h, 7 Tage. Den Beginn
+  berechnet der Browser (`?since=`), weil nur er die Ortszeit kennt; der
+  Server begrenzt ihn auf die Aufbewahrung.
 - **Uhrzeiten** in Europe/Berlin. Die Logs liefern UTC.
 - **Aktualisierung** jede Minute, solange der Reiter offen ist.
 - **„im Graylog ↗“** je User öffnet die Graylog-Suche nach diesem User im
@@ -248,7 +253,7 @@ Spur.
 | `state.py` | reine Funktion → Dashboard-Modell |
 | `store.py` | Ereignisse schreiben (dedupliziert), lesen, Identitäten, Abfrage-Stand, Aufräumen nach 7 Tagen |
 | `poller.py` | `_periodic_webdrive_poll` im `lifespan` von `main.py`, Muster wie `_periodic_arp_sweep` |
-| `routers/webdrive.py` | `GET /api/webdrive/status?range=today\|24h\|7d` (alle Rollen), `POST /api/webdrive/test` (Admin), `GET /api/webdrive/poller` (Admin: letzter Lauf, Fehler, verworfen/erkannt) |
+| `routers/webdrive.py` | `GET /api/webdrive/status?since=<ISO>` (alle Rollen), `POST /api/webdrive/test` (Admin), `GET /api/webdrive/poller` (Admin: letzter Lauf, Fehler, verworfen/erkannt) |
 
 ### Migration `006_webdrive.sql`
 

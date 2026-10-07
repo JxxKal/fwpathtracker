@@ -23,6 +23,7 @@ Schreibzugriff** auf den FortiManager (No-Write-Garantie, s.u.).
 - [No-Write-Garantie & FMG-Profil](#no-write-garantie--fmg-profil)
 - [FortiManager-Besonderheiten](#fortimanager-besonderheiten)
 - [Switchport-Suche (LibreNMS)](#switchport-suche-librenms)
+- [Webdrive-Dashboard](#webdrive-dashboard)
 - [Entwicklung & Tests](#entwicklung--tests)
 - [Sicherheit](#sicherheit)
 
@@ -756,6 +757,28 @@ die Suche blind — ihre Firmware implementiert `dot1qTpFdbTable` als Stub,
 während die vollständige Tabelle in der BRIDGE-MIB liegt. Der Fix an LibreNMS
 ist dokumentiert in
 [docs/wiki/LibreNMS-MOXA-FDB.md](docs/wiki/LibreNMS-MOXA-FDB.md).
+
+---
+
+## Webdrive-Dashboard
+
+Reiter **Webdrive**: Anmelde- und Datei-Probleme am Webdrive (OpenCloud mit
+FortiAuthenticator als OAuth-Provider) auf einen Blick, ohne Logzeilen.
+
+- **Quelle:** Graylog-REST-API (`/api/search/universal/absolute`), nur lesend,
+  jede Minute. Einstellungen → Datenquellen → *Webdrive / Graylog*: URL,
+  API-Token (eigener Graylog-User mit Leserechten), je eine Abfrage für FAC und
+  OpenCloud (z. B. `source:fac01`), optional Stream-ID.
+- **Gespeichert** werden nur erkannte Ereignisse (`webdrive_event`, 7 Tage)
+  und die Zuordnung OpenCloud-ID → Username (`webdrive_identity`, dauerhaft).
+- **Erkannt:** falsches Passwort, Passwortwechsel nötig, User unbekannt,
+  E-Mail statt Username, nicht in der Webdrive-Gruppe, noch nicht importiert,
+  fehlende AD-Attribute bei der Erstanmeldung (Name, E-Mail,
+  sAMAccountName), Virusfunde, Upload-Fehler, Attribut-Änderung nach der
+  Erstanmeldung, letzter LDAP-Sync.
+- Je User führt ein Link mit passendem Zeitraum in die Graylog-Suche.
+
+Hintergrund und Erkennungsregeln: [docs/planung-webdrive-dashboard.md](docs/planung-webdrive-dashboard.md).
 
 ---
 

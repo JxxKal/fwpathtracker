@@ -4,6 +4,7 @@ import { isDemoMode } from './demo/mode';
 import type {
   InventorySummary, PortTraceResult, SamlConfig, SearchHit, Session, SslStatus,
   SyncStatus, TraceHistoryEntry, TraceRequest, TraceResult, UserEntry,
+  WebdrivePollerState, WebdriveStatus,
 } from './types';
 
 let token: string | null = localStorage.getItem('fwpt-token');
@@ -962,4 +963,21 @@ export async function uploadSslPfx(pfx: File, password: string): Promise<SslStat
   fd.append('pfx', pfx);
   fd.append('password', password);
   return uploadForm('/api/ssl/upload-pfx', fd);
+}
+
+// ── Webdrive-Dashboard ───────────────────────────────────────────────────────
+
+export async function webdriveStatus(since: string): Promise<WebdriveStatus> {
+  if (isDemoMode()) return demo.webdriveStatus();
+  return request(`/api/webdrive/status?since=${encodeURIComponent(since)}`);
+}
+
+export async function webdriveTest(): Promise<{ ok: boolean; version: string }> {
+  if (isDemoMode()) return { ok: true, version: '6.1.4' };
+  return request('/api/webdrive/test', { method: 'POST' });
+}
+
+export async function webdrivePoller(): Promise<WebdrivePollerState> {
+  if (isDemoMode()) return { last_ok: new Date().toISOString(), stats: { fac_events: 12, fac_dropped: 40, oc_events: 9, oc_dropped: 310 } };
+  return request('/api/webdrive/poller');
 }
