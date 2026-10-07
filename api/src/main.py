@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -30,9 +31,12 @@ from resolver.dns_cache import DnsCache
 from routers import auth as auth_router
 from routers import config as config_router
 from routers import (checks, diagram, dns_admin, fmg_admin, itop_admin, librenms_admin,
-                     locate, saml, search, ssl, switchview, trace, users, vlans)
+                     locate, saml, search, ssl, switchview, trace, users, vlans, webdrive)
 from routers.auth import hash_password
 from routers.config import read_config
+from webdrive.graylog import GraylogClient
+from webdrive.poller import WebdrivePoller
+from webdrive.store import WebdriveStore
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -156,6 +160,23 @@ async def _periodic_itop_refresh(app: FastAPI) -> None:
             log.warning("Periodischer iTop-Refresh fehlgeschlagen: %s", exc)
 
 
+async def _periodic_webdrive_poll(app: FastAPI) -> None:
+    """Webdrive-Dashboard: FAC- und OpenCloud-Logs aus Graylog holen
+    (poll_interval_s, Default und Minimum 60 s). <= 0 oder nicht konfiguriert →
+    alle 5 min erneut nachsehen."""
+    while True:
+        cfg = await read_config("webdrive")
+        interval = int(cfg.get("poll_interval_s", 60))
+        if interval <= 0 or not cfg.get("base_url") or not cfg.get("token"):
+            await asyncio.sleep(300)
+            continue
+        try:
+            await app.state.webdrive_poller.run_once(cfg, datetime.now(timezone.utc))
+        except Exception as exc:
+            log.warning("Webdrive: Graylog-Abfrage fehlgeschlagen: %s", exc)
+        await asyncio.sleep(max(interval, 60))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     cfg = Config()
@@ -170,6 +191,8 @@ async def lifespan(app: FastAPI):
     app.state.dns_cache = DnsCache(pool)
     app.state.arp_sweeper = ArpSweeper()
     app.state.locate = LocateChain(store=app.state.arp_store)
+    app.state.webdrive_store = WebdriveStore(pool)
+    app.state.webdrive_poller = WebdrivePoller(GraylogClient(), app.state.webdrive_store)
     app.state.set_inventory = lambda inv: _rebuild_state(app, inv)
     await _rebuild_state(app, await load_inventory(pool))
 
@@ -177,6 +200,7 @@ async def lifespan(app: FastAPI):
     itop_task = asyncio.create_task(_periodic_itop_refresh(app))
     arp_task = asyncio.create_task(_periodic_arp_sweep(app))
     dns_task = asyncio.create_task(_periodic_dns_purge(app))
+    webdrive_task = asyncio.create_task(_periodic_webdrive_poll(app))
     try:
         yield
     finally:
@@ -184,6 +208,7 @@ async def lifespan(app: FastAPI):
         itop_task.cancel()
         arp_task.cancel()
         dns_task.cancel()
+        webdrive_task.cancel()
         await database.close_pool()
 
 
@@ -204,6 +229,7 @@ app.include_router(switchview.router)  # Switch-Ansicht: was hängt an welchem P
 app.include_router(trace.router)
 app.include_router(checks.router)  # Check-Gruppen (Batch-Regressions-Checks)
 app.include_router(ssl.router)     # SSL/TLS-Cert + Hostname (Endpoints admin-gated)
+app.include_router(webdrive.router)  # Webdrive-Dashboard (FAC + OpenCloud via Graylog)
 app.include_router(saml.router)    # SAML/SSO (public — Login-Flow)
 
 
