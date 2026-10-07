@@ -1,7 +1,7 @@
 import { Check, CheckCircle2, Copy, XCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
-  getConfig, patchConfig, webdrivePoller, webdriveProbe, webdriveReload, webdriveTest,
+  getConfig, patchConfig, webdriveFacTest, webdrivePoller, webdriveProbe, webdriveReload, webdriveTest,
   type WebdriveProbe, type WebdriveProbeSource,
 } from '../../api';
 import { de } from '../../i18n/de';
@@ -67,6 +67,17 @@ export default function WebdrivePanel() {
     } finally { setBusy(false); }
   }
 
+  async function facTest() {
+    setBusy(true);
+    setTest(null);
+    try {
+      const r = await webdriveFacTest();
+      setTest({ ok: true, text: de.settings.webdriveFacOk(r.ldapusers) });
+    } catch (e) {
+      setTest({ ok: false, text: e instanceof Error ? e.message : String(e) });
+    } finally { setBusy(false); }
+  }
+
   async function reload() {
     setBusy(true);
     setTest(null);
@@ -113,17 +124,52 @@ export default function WebdrivePanel() {
           onChange={(e) => set('ssl_verify', e.target.checked)} />
         TLS-Zertifikat prüfen
       </label>
+      <div className="space-y-3 border-t border-slate-800 pt-3">
+        <div>
+          <h3 className="text-sm font-medium text-slate-200">{de.settings.webdriveFac}</h3>
+          <p className="mt-0.5 text-xs text-slate-500">{de.settings.webdriveFacHint}</p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <label className="mb-1 block text-xs text-slate-400">{de.settings.webdriveFacUrl}</label>
+            <input className="fwpt-input" value={(cfg.fac_url as string) ?? ''} placeholder="https://svo3038-ot.op-tech.com"
+              onChange={(e) => set('fac_url', e.target.value)} />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-slate-400">{de.settings.webdriveFacUser}</label>
+            <input className="fwpt-input" value={(cfg.fac_user as string) ?? ''}
+              onChange={(e) => set('fac_user', e.target.value)} />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-slate-400">{de.settings.webdriveFacKey}</label>
+            <input className="fwpt-input" type="password" value={(cfg.fac_api_key as string) ?? ''}
+              onChange={(e) => set('fac_api_key', e.target.value)} />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="mb-1 block text-xs text-slate-400">{de.settings.webdriveFacDn}</label>
+            <input className="fwpt-input" value={(cfg.fac_dn_filter as string) ?? ''}
+              onChange={(e) => set('fac_dn_filter', e.target.value)} />
+          </div>
+        </div>
+        <label className="flex items-center gap-2 text-sm text-slate-300">
+          <input type="checkbox" checked={(cfg.fac_ssl_verify as boolean) ?? true}
+            onChange={(e) => set('fac_ssl_verify', e.target.checked)} />
+          TLS-Zertifikat des FAC prüfen
+        </label>
+      </div>
       {test && (
         <div className={`flex items-start gap-2 text-sm ${test.ok ? 'text-emerald-400' : 'text-red-400'}`}>
           {test.ok ? <CheckCircle2 size={16} className="mt-0.5" /> : <XCircle size={16} className="mt-0.5" />}
           <span>{test.text}</span>
         </div>
       )}
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <button type="button" className="fwpt-btn" onClick={save} disabled={busy}>{de.settings.save}</button>
         <button type="button" className="fwpt-btn-ghost" onClick={runTest} disabled={busy}>{de.settings.test}</button>
         <button type="button" className="fwpt-btn-ghost" onClick={runProbe} disabled={busy}
           title={de.settings.webdriveProbeHint}>{de.settings.webdriveProbe}</button>
+        <button type="button" className="fwpt-btn-ghost" onClick={facTest} disabled={busy}>
+          {de.settings.webdriveFacTest}</button>
         <button type="button" className="fwpt-btn-ghost" onClick={reload} disabled={busy}>
           {de.settings.webdriveReload}</button>
         {status && <span className="text-sm text-slate-400">{status}</span>}

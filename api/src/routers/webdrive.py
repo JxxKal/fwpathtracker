@@ -7,10 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from deps import get_current_user, require_admin
 from routers.config import read_config
+from webdrive.fac import FacNotConfigured
 from webdrive.graylog import GraylogNotConfigured, base_url
 from webdrive.parse import detect_source, parse_message
 from webdrive.poller import queries
-from webdrive.state import build
+from webdrive.state import build, user_list
 
 router = APIRouter(prefix="/api/webdrive", tags=["webdrive"])
 
@@ -42,8 +43,17 @@ async def status(request: Request, since: datetime | None = None,
     events = await store.load_events(since - timedelta(hours=24))   # Sync-Kopf braucht Vorlauf
     model = build(events, await store.load_identities(), now, since,
                   int(cfg.get("active_window_min", 15)))
+    users, users_error = None, None
+    if cfg.get("fac_url"):
+        try:
+            fac_users = await request.app.state.webdrive_fac.ldapusers(cfg)
+            users = user_list(fac_users, await store.load_identities(), model, cfg.get("fac_dn_filter") or "")
+        except Exception as exc:
+            users_error = str(exc)
     last_ok = poll.get("last_ok")
     return {
+        "users": users,
+        "users_error": users_error,
         "configured": True,
         "now": now.isoformat(),
         "since": since.isoformat(),
@@ -64,6 +74,20 @@ async def test_connection(request: Request, _admin: dict = Depends(require_admin
     try:
         return await request.app.state.webdrive_poller.client.test(cfg)
     except GraylogNotConfigured as exc:
+        raise HTTPException(400, f"{exc} Bitte zuerst speichern.") from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"Verbindung fehlgeschlagen: {exc}") from exc
+
+
+@router.post("/fac-test")
+async def fac_test(request: Request, _admin: dict = Depends(require_admin)) -> dict:
+    cfg = await read_config("webdrive")
+    request.app.state.webdrive_fac.invalidate()
+    try:
+        return await request.app.state.webdrive_fac.test(cfg)
+    except FacNotConfigured as exc:
         raise HTTPException(400, f"{exc} Bitte zuerst speichern.") from exc
     except HTTPException:
         raise

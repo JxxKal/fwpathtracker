@@ -11,7 +11,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 
 from webdrive.correlate import Failure, pair_failures
-from webdrive.parse import Event
+from webdrive.parse import Event, normalize_user
 
 PORTAL_REASONS = {
     "invalid password": "Falsches Passwort",
@@ -253,3 +253,42 @@ def build(events: list[Event], identities: dict[str, tuple[str, datetime]],
         "unknown_sessions": len(unknown),
         "unattributed": sorted(unattributed, key=lambda u: u["ts"], reverse=True),
     }
+
+
+# ── Userliste aus dem FortiAuthenticator ──────────────────────────────────────
+
+# Was OpenCloud für die Erstanmeldung braucht: E-Mail und einen Anzeigenamen
+# (aus Vor- und Nachname). sAMAccountName ist der Username selbst.
+FAC_ATTRS = (("email", "E-Mail"), ("first_name", "Vorname"), ("last_name", "Nachname"))
+
+
+def user_list(fac_users: list[dict], identities: dict[str, tuple[str, datetime]],
+              model: dict, dn_filter: str = "") -> list[dict]:
+    """FAC-User mit fehlenden Attributen und Webdrive-Zustand.
+    status: problem | active | inactive | known (schon einmal in OpenCloud) | never"""
+    known = {u for u, _ in identities.values()}
+    active = {r["username"]: r for r in model.get("active", [])}
+    inactive = {r["username"]: r for r in model.get("inactive", [])}
+    problems = {p["username"] for p in model.get("problems", [])}
+    needle = dn_filter.strip().lower()
+    rows = []
+    for u in fac_users:
+        name = normalize_user(u.get("username"))
+        if not name or (needle and needle not in str(u.get("dn") or "").lower()):
+            continue
+        missing = [label for key, label in FAC_ATTRS if not str(u.get(key) or "").strip()]
+        seen = active.get(name) or inactive.get(name)
+        status = ("problem" if name in problems else "active" if name in active
+                  else "inactive" if name in inactive else "known" if name in known else "never")
+        rows.append({
+            "username": name,
+            "name": " ".join(x for x in (u.get("first_name"), u.get("last_name")) if x),
+            "email": u.get("email") or "",
+            "enabled": bool(u.get("active", True)),
+            "missing": missing,
+            "status": status,
+            "last": seen["last"] if seen else None,
+        })
+    rank = {"problem": 0, "active": 2, "inactive": 3, "known": 4, "never": 5}
+    rows.sort(key=lambda r: (0 if r["missing"] else 1, rank[r["status"]], r["username"]))
+    return rows

@@ -273,8 +273,13 @@ export interface WebdriveSync {
   error: string | null; manual: boolean;
   last_change: { ts: string; username: string; text: string; manual: boolean } | null;
 }
+export interface WebdriveFacUser {
+  username: string; name: string; email: string; enabled: boolean; missing: string[];
+  status: 'problem' | 'active' | 'inactive' | 'known' | 'never'; last: string | null;
+}
 export interface WebdriveStatus {
   configured: boolean;
+  users?: WebdriveFacUser[] | null; users_error?: string | null;
   now?: string; since?: string; graylog_url?: string; sync_rule?: string;
   poll?: { last_ok: string | null; last_error: string | null; stale: boolean };
   sync?: WebdriveSync | null;

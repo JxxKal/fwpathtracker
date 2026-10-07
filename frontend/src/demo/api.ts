@@ -213,5 +213,13 @@ export function webdriveStatus(): WebdriveStatus {
     ],
     unknown_sessions: 2,
     unattributed: [],
+    users_error: null,
+    users: [
+      { username: 'nneu.ra', name: 'Nina', email: 'nneu.ra@example.com', enabled: true, missing: ['Nachname'], status: 'never', last: null },
+      { username: 'akoopman.ot', name: 'Anke Koopman', email: 'akoopman@example.com', enabled: true, missing: [], status: 'problem', last: null },
+      { username: 'tvoogd.ra', name: 'Tim Voogd', email: 'tvoogd.ra@example.com', enabled: true, missing: [], status: 'active', last: ago(2) },
+      { username: 'jkaluza.ra', name: 'Jan Kaluza', email: 'jkaluza.ra@example.com', enabled: true, missing: [], status: 'inactive', last: ago(55) },
+      { username: 'pmeier.ra', name: 'Paul Meier', email: 'pmeier.ra@example.com', enabled: true, missing: [], status: 'never', last: null },
+    ],
   };
 }

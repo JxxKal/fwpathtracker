@@ -2,7 +2,7 @@ import { AlertTriangle, CheckCircle2, Circle, ExternalLink, Info, XCircle } from
 import { useCallback, useEffect, useState } from 'react';
 import { webdriveStatus } from '../../api';
 import { de } from '../../i18n/de';
-import type { WebdriveStatus, WebdriveUser } from '../../types';
+import type { WebdriveFacUser, WebdriveStatus, WebdriveUser } from '../../types';
 
 // Webdrive auf einen Blick: wer hat ein Problem und warum, wer ist aktiv,
 // wann lief der Sync. Bewusst keine Logzeilen — dafür der Link ins Graylog.
@@ -201,6 +201,9 @@ export default function WebdriveDashboard() {
         <p className="px-1 text-xs text-slate-500">{de.webdrive.unknownSessions(st.unknown_sessions ?? 0)}</p>
       )}
 
+      {st.users_error && <div className="fwpt-card text-sm text-red-400">{de.webdrive.usersError(st.users_error)}</div>}
+      {st.users && <FacUsers users={st.users} withDate={withDate} />}
+
       {unattributed.length > 0 && (
         <Section title={de.webdrive.unattributed} count={unattributed.length} tone="amber">
           <ul className="space-y-1">
@@ -212,6 +215,49 @@ export default function WebdriveDashboard() {
           </ul>
         </Section>
       )}
+    </div>
+  );
+}
+
+const STATUS_COLOR: Record<WebdriveFacUser['status'], string> = {
+  problem: 'text-red-400', active: 'text-emerald-400', inactive: 'text-slate-300',
+  known: 'text-slate-500', never: 'text-slate-500',
+};
+
+/** Alle User, die der FAC kennt — mit fehlenden AD-Attributen, bevor sie bei
+ *  der Erstanmeldung daran scheitern. */
+function FacUsers({ users, withDate }: { users: WebdriveFacUser[]; withDate: boolean }) {
+  const missing = users.filter((u) => u.missing.length > 0).length;
+  return (
+    <div className="fwpt-card space-y-2">
+      <div className="flex flex-wrap items-baseline gap-x-2 text-[11px] font-medium uppercase tracking-wide text-slate-400">
+        <span>{de.webdrive.users} ({users.length})</span>
+        {missing > 0 && <span className="text-amber-400">· {de.webdrive.usersMissing(missing)}</span>}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <tbody>
+            {users.map((u) => (
+              <tr key={u.username} className="border-t border-slate-800/60">
+                <td className="py-1 pr-3 text-slate-200">{u.username}</td>
+                <td className="py-1 pr-3 text-slate-400">{u.name || '–'}</td>
+                <td className="py-1 pr-3 text-xs text-slate-500">{u.email || '–'}</td>
+                <td className="py-1 pr-3 text-xs">
+                  {u.missing.length > 0 && (
+                    <span className="inline-flex items-center gap-1 text-amber-400">
+                      <AlertTriangle size={12} /> {de.webdrive.missing(u.missing.join(', '))}
+                    </span>
+                  )}
+                  {!u.enabled && <span className="ml-2 text-red-400">{de.webdrive.disabled}</span>}
+                </td>
+                <td className={`py-1 text-right text-xs ${STATUS_COLOR[u.status]}`}>
+                  {de.webdrive.userStatus[u.status]}{u.last && ` · ${fmt(u.last, withDate)}`}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

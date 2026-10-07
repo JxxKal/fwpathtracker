@@ -1003,3 +1003,8 @@ export async function webdriveReload(): Promise<{ ok: boolean; stats: Record<str
   if (isDemoMode()) return { ok: true, stats: { fac_events: 120, oc_events: 900 } };
   return request('/api/webdrive/reload', { method: 'POST' });
 }
+
+export async function webdriveFacTest(): Promise<{ ok: boolean; ldapusers: number }> {
+  if (isDemoMode()) return { ok: true, ldapusers: 34 };
+  return request('/api/webdrive/fac-test', { method: 'POST' });
+}

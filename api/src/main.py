@@ -34,6 +34,7 @@ from routers import (checks, diagram, dns_admin, fmg_admin, itop_admin, librenms
                      locate, saml, search, ssl, switchview, trace, users, vlans, webdrive)
 from routers.auth import hash_password
 from routers.config import read_config
+from webdrive.fac import FacClient
 from webdrive.graylog import GraylogClient
 from webdrive.poller import WebdrivePoller
 from webdrive.store import WebdriveStore
@@ -193,6 +194,7 @@ async def lifespan(app: FastAPI):
     app.state.locate = LocateChain(store=app.state.arp_store)
     app.state.webdrive_store = WebdriveStore(pool)
     app.state.webdrive_poller = WebdrivePoller(GraylogClient(), app.state.webdrive_store)
+    app.state.webdrive_fac = FacClient()
     app.state.set_inventory = lambda inv: _rebuild_state(app, inv)
     await _rebuild_state(app, await load_inventory(pool))
 
