@@ -329,12 +329,28 @@ export interface DiagramScopes {
 }
 export type DiagramHosts = 'auto' | 'all' | 'netdev' | 'none';
 export type DiagramScope = 'vdom' | 'firewall' | 'site' | 'global';
-export type DiagramView = 'struktur' | 'logisch' | 'physisch-l1';
+export type DiagramView = 'struktur' | 'logisch' | 'physisch-l1' | 'services';
 export interface DiagramResult {
   filename: string; xml: string; hosts_mode: DiagramHosts; warnings: string[];
   stats: { devices: number; vdoms: number; networks: number; hosts_found: number;
     hosts_shown: number; neighbors: number; switches: number; sites: number;
-    hosts_reduced: boolean };
+    hosts_reduced: boolean;
+    // nur Service-Sicht
+    families?: number; services?: number; firewalls?: number; hosts?: number;
+    hosts_not_in_itop?: number; cis_unplaced?: number };
+}
+export interface ServiceFamilies {
+  families: { id: string; name: string; services: number }[];
+  errors: string[];
+}
+export async function diagramServiceFamilies(): Promise<ServiceFamilies> {
+  if (isDemoMode()) {
+    return { errors: [], families: [
+      { id: '1', name: 'Global Tier-0 BU Germany', services: 3 },
+      { id: '2', name: 'PLS iFix', services: 2 },
+    ] };
+  }
+  return request('/api/diagram/service-families');
 }
 export async function diagramScopes(): Promise<DiagramScopes> {
   if (isDemoMode()) {
@@ -462,7 +478,21 @@ export async function drawioTest(): Promise<DrawioTest> {
 export async function buildDiagram(scope: DiagramScope, device: string | null, vdom: string | null,
   site: string | null, hosts: DiagramHosts, expandHosts = false,
   view: DiagramView = 'struktur',
-  location: string | null = null, group: string | null = null): Promise<DiagramResult> {
+  location: string | null = null, group: string | null = null,
+  family: string | null = null): Promise<DiagramResult> {
+  if (isDemoMode() && view === 'services') {
+    const xml = '<?xml version="1.0" encoding="UTF-8"?>\n<mxfile host="A38"><diagram name="Demo" id="demo"><mxGraphModel><root>'
+      + '<mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>';
+    return {
+      filename: `A38_Netzplan_services_${family ? 'Global_Tier-0_BU_Germany' : 'alle'}.drawio`, xml,
+      hosts_mode: 'all',
+      warnings: ['1 CIs lassen sich keinem Firewall-Netz zuordnen (ohne Management-IP oder IP außerhalb aller Netze) — sie stehen als Liste im jeweiligen Service.',
+        '4 von 23 Hosts sind nicht im iTop geführt — rot markiert.'],
+      stats: { devices: 0, vdoms: 0, networks: 4, hosts_found: 23, hosts_shown: 23, neighbors: 0,
+        switches: 0, sites: 0, hosts_reduced: false, families: family ? 1 : 2, services: family ? 3 : 5,
+        firewalls: 2, hosts: 23, hosts_not_in_itop: 4, cis_unplaced: 1 },
+    };
+  }
   if (isDemoMode()) {
     const xml = '<?xml version="1.0" encoding="UTF-8"?>\n<mxfile host="A38"><diagram name="Demo" id="demo"><mxGraphModel><root>'
       + '<mxCell id="0"/><mxCell id="1" parent="0"/>'
@@ -483,7 +513,7 @@ export async function buildDiagram(scope: DiagramScope, device: string | null, v
   return request('/api/diagram', {
     method: 'POST',
     body: JSON.stringify({ scope, device, vdom, site, hosts, expand_hosts: expandHosts,
-      view, location, group }),
+      view, location, group, family }),
   });
 }
 

@@ -1,6 +1,6 @@
 import { Download, ExternalLink, Map, Play } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { buildDiagram, diagramFilters, diagramScopes, type PhysicalFilters, type DiagramHosts, type DiagramResult, type DiagramScope, type DiagramScopes, type DiagramView } from '../api';
+import { buildDiagram, diagramFilters, diagramScopes, diagramServiceFamilies, type ServiceFamilies, type PhysicalFilters, type DiagramHosts, type DiagramResult, type DiagramScope, type DiagramScopes, type DiagramView } from '../api';
 import { de } from '../i18n/de';
 
 // Netzplan als draw.io: Scope wählen, Datei bauen lassen, herunterladen.
@@ -40,6 +40,11 @@ export default function NetDiagram() {
   // Die physischen Sichten kommen aus LibreNMS und kennen weder Scope noch
   // Detailstufe — die Felder dafür bleiben ausgeblendet.
   const physical = view.startsWith('physisch');
+  // Die Service-Sicht kommt aus iTop: Servicefamilie statt Scope, immer alle Hosts.
+  const svcView = view === 'services';
+  const noScope = physical || svcView;
+  const [families, setFamilies] = useState<ServiceFamilies | null>(null);
+  const [family, setFamily] = useState('');
   const [res, setRes] = useState<DiagramResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -60,6 +65,12 @@ export default function NetDiagram() {
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   }, [physical, filters]);
 
+  useEffect(() => {
+    if (!svcView || families) return;
+    diagramServiceFamilies().then(setFamilies)
+      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+  }, [svcView, families]);
+
   const vdoms = useMemo(() => scopes?.devices.find((d) => d.device === device)?.vdoms ?? [], [scopes, device]);
   useEffect(() => { if (vdoms.length > 0 && !vdoms.includes(vdom)) setVdom(vdoms[0]); }, [vdoms, vdom]);
 
@@ -69,7 +80,8 @@ export default function NetDiagram() {
       setRes(await buildDiagram(
         scope, scope === 'vdom' || scope === 'firewall' ? device : null,
         scope === 'vdom' ? vdom : null, scope === 'site' ? site : null, hosts, expand, view,
-        physical ? location || null : null, physical ? group || null : null));
+        physical ? location || null : null, physical ? group || null : null,
+        svcView ? family || null : null));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally { setBusy(false); }
@@ -94,9 +106,21 @@ export default function NetDiagram() {
             <option value="struktur">{de.diagram.viewStruktur}</option>
             <option value="logisch">{de.diagram.viewLogisch}</option>
             <option value="physisch-l1">{de.diagram.viewPhysL1}</option>
+            <option value="services">{de.diagram.viewServices}</option>
           </select>
         </label>
-        <label className={`flex flex-col gap-1 ${physical ? 'hidden' : ''}`}>
+        {svcView && (
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-slate-500">{de.diagram.family}</span>
+            <select className="fwpt-input w-72" value={family} onChange={(e) => setFamily(e.target.value)}>
+              <option value="">{de.diagram.familyAll}</option>
+              {(families?.families ?? []).map((f) => (
+                <option key={f.id} value={f.id}>{f.name} ({f.services})</option>
+              ))}
+            </select>
+          </label>
+        )}
+        <label className={`flex flex-col gap-1 ${noScope ? 'hidden' : ''}`}>
           <span className="text-[11px] text-slate-500">{de.diagram.scope}</span>
           <select className="fwpt-input w-52" value={scope} onChange={(e) => setScope(e.target.value as DiagramScope)}>
             <option value="vdom">{de.diagram.scopeVdom}</option>
@@ -105,7 +129,7 @@ export default function NetDiagram() {
             <option value="global">{de.diagram.scopeGlobal}</option>
           </select>
         </label>
-        {!physical && (scope === 'vdom' || scope === 'firewall') && (
+        {!noScope && (scope === 'vdom' || scope === 'firewall') && (
           <label className="flex flex-col gap-1">
             <span className="text-[11px] text-slate-500">{de.diagram.device}</span>
             <select className="fwpt-input w-44 font-mono" value={device} onChange={(e) => setDevice(e.target.value)}>
@@ -117,7 +141,7 @@ export default function NetDiagram() {
             </select>
           </label>
         )}
-        {!physical && scope === 'vdom' && (
+        {!noScope && scope === 'vdom' && (
           <label className="flex flex-col gap-1">
             <span className="text-[11px] text-slate-500">{de.diagram.vdom}</span>
             <select className="fwpt-input w-32 font-mono" value={vdom} onChange={(e) => setVdom(e.target.value)}>
@@ -125,7 +149,7 @@ export default function NetDiagram() {
             </select>
           </label>
         )}
-        {!physical && scope === 'site' && (
+        {!noScope && scope === 'site' && (
           <label className="flex flex-col gap-1">
             <span className="text-[11px] text-slate-500">{de.diagram.site}</span>
             <select className="fwpt-input w-52" value={site} onChange={(e) => setSite(e.target.value)}>
@@ -162,7 +186,7 @@ export default function NetDiagram() {
             </label>
           </>
         )}
-        <label className={`flex flex-col gap-1 ${physical || scope === 'global' ? 'hidden' : ''}`}>
+        <label className={`flex flex-col gap-1 ${noScope || scope === 'global' ? 'hidden' : ''}`}>
           <span className="text-[11px] text-slate-500">{de.diagram.hosts}</span>
           <select className="fwpt-input w-44" value={hosts} onChange={(e) => setHosts(e.target.value as DiagramHosts)}>
             <option value="auto">{de.diagram.hostsAuto}</option>
@@ -172,18 +196,19 @@ export default function NetDiagram() {
           </select>
         </label>
         <label className={`flex items-center gap-1.5 pb-2 text-xs text-slate-300 ${
-          physical || view === 'logisch' || scope === 'global' || hosts === 'none' ? 'hidden' : ''}`} title={de.diagram.expandHint}>
+          noScope || view === 'logisch' || scope === 'global' || hosts === 'none' ? 'hidden' : ''}`} title={de.diagram.expandHint}>
           <input type="checkbox" checked={expand} onChange={(e) => setExpand(e.target.checked)} />
           {de.diagram.expand}
         </label>
         <button type="button" className="fwpt-btn" onClick={build}
-          disabled={busy || (physical ? false
+          disabled={busy || (noScope ? false
             : scope === 'site' ? !site : scope !== 'global' && !device)}>
           <Play size={14} /> {busy ? de.diagram.building : de.diagram.build}
         </button>
       </div>
       <p className="text-[11px] text-slate-600">
-        {physical ? `${de.diagram.viewPhysL1Hint} ${de.diagram.filterHint}`
+        {svcView ? de.diagram.viewServicesHint
+          : physical ? `${de.diagram.viewPhysL1Hint} ${de.diagram.filterHint}`
           : view === 'logisch' ? de.diagram.viewLogischHint
           : scope === 'global' ? de.diagram.globalHint
           : de.diagram.hostsHint.replace('{n}', String(scopes?.max_hosts ?? 1500))}
@@ -195,7 +220,13 @@ export default function NetDiagram() {
         && filters.groups.length === 0 && filters.warnings.length === 0 && (
         <p className="text-xs text-slate-600">{de.diagram.noFilters}</p>
       )}
-      {!physical && scope === 'site' && scopes?.sites.length === 0 && (
+      {svcView && (families?.errors ?? []).map((w) => (
+        <p key={w} className="text-sm text-amber-400">{w}</p>
+      ))}
+      {svcView && families && families.families.length === 0 && families.errors.length === 0 && (
+        <p className="text-sm text-amber-400">{de.diagram.noFamilies}</p>
+      )}
+      {!noScope && scope === 'site' && scopes?.sites.length === 0 && (
         <p className="text-sm text-amber-400">{de.diagram.noSites}</p>
       )}
 
@@ -224,12 +255,22 @@ export default function NetDiagram() {
               ? <p className="text-slate-600">{de.diagram.openDrawioHint}</p>
               : <p className="text-amber-500">{de.diagram.tooBigForLink}</p>
           )}
+          {res.stats.services !== undefined ? (
+          <p className="text-slate-500">
+            {res.stats.families} {de.diagram.statFamilies} · {res.stats.services} {de.diagram.statServices}
+            {' · '}{res.stats.networks} {de.diagram.statNets} · {res.stats.firewalls} {de.diagram.statDevices}
+            {' · '}{res.stats.hosts} {de.diagram.statHosts}
+            {' · '}<span className={res.stats.hosts_not_in_itop ? 'text-red-400' : ''}>{res.stats.hosts_not_in_itop} {de.diagram.statNotInItop}</span>
+            {res.stats.cis_unplaced ? ` · ${res.stats.cis_unplaced} ${de.diagram.statUnplaced}` : ''}
+          </p>
+          ) : (
           <p className="text-slate-500">
             {res.stats.sites > 0 && `${res.stats.sites} ${de.diagram.statSites} · `}
             {res.stats.devices} {de.diagram.statDevices} · {res.stats.vdoms} {de.diagram.statVdoms} · {res.stats.networks} {de.diagram.statNets}
             {res.hosts_mode !== 'none' && ` · ${res.stats.hosts_shown}/${res.stats.hosts_found} ${de.diagram.statHosts} (${de.diagram.modeShown[res.hosts_mode]})`}
             {' · '}{res.stats.neighbors} {de.diagram.statNeighbors} · {res.stats.switches} {de.diagram.statSwitches}
           </p>
+          )}
           <p className="text-slate-600">{de.diagram.open}</p>
         </div>
       )}

@@ -122,7 +122,7 @@ def host_shape(h: dict) -> str:
     kind = (h.get("kind") or "").lower()
     if kind in ("networkdevice", "switch"):
         return "switch"
-    if kind == "server":
+    if kind in ("server", "virtualmachine"):
         return "server"
     desc = (h.get("description") or "").lower()
     if any(k in desc for k in ("server", "srv", "vm", "host")):

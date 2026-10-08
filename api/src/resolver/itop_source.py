@@ -18,6 +18,9 @@ log = logging.getLogger("resolver.itop")
 _CI_CLASSES: dict[str, str] = {
     "Server": "name,managementip_id_friendlyname,description",
     "NetworkDevice": "name,managementip_id_friendlyname,description",
+    # Nicht jede iTop-Installation führt an VMs eine Management-IP; fehlt das
+    # Feld, schlägt nur diese Klasse fehl und wird übersprungen.
+    "VirtualMachine": "name,managementip_id_friendlyname,description",
 }
 
 
@@ -90,7 +93,8 @@ class ItopSource:
                         continue
                     hosts.append({"name": name, "ip": ip_raw.split("/")[0],
                                   "description": (ci.get("description") or "").strip(),
-                                  "kind": cls})   # Server | NetworkDevice
+                                  "kind": cls,    # Server | NetworkDevice | VirtualMachine
+                                  "id": str(ci.get("_key") or "")})
         self._hosts = hosts
         self._loaded_at = time.monotonic()
         return hosts
@@ -196,6 +200,58 @@ class ItopSource:
                                "dhcp": str(r.get("dhcp") or "").lower() in ("yes", "1", "true")})
         self._ipam = {"subnets": subnets, "ranges": ranges, "loaded_at": time.monotonic()}
         return self._ipam
+
+    async def services(self, cfg: dict) -> dict:
+        """Servicefamilien, Services und welche CIs an welchem Service hängen.
+
+        Standardklassen aus itop-service-mgmt: ServiceFamily → Service
+        (servicefamily_id) → lnkFunctionalCIToService. Die Netze ergeben sich
+        später aus den IPs der CIs — an einem Service wird kein Netz gepflegt.
+        Jede Klasse einzeln fehlertolerant: fehlende Links kosten die Netze,
+        nicht die Familien.
+        """
+        empty = {"families": [], "services": [], "links": [], "errors": []}
+        if not cfg.get("base_url") or not cfg.get("enabled", True):
+            return empty
+        guard_egress_url(cfg["base_url"], "iTop-URL")
+        org = (cfg.get("org_filter") or "").strip()
+        where = f" WHERE org_name = '{_oql_str(org)}'" if org else ""
+        out = dict(empty, errors=[])
+        args = (cfg["base_url"], cfg["user"], cfg["password"])
+        async with self._client(cfg) as client:
+            try:
+                rows = await _core_get(client, *args, "ServiceFamily", "name",
+                                       "SELECT ServiceFamily")
+                out["families"] = [{"id": str(r.get("_key")), "name": str(r.get("name") or "").strip()}
+                                   for r in rows]
+            except Exception as exc:
+                out["errors"].append(f"ServiceFamily: {exc}")
+            try:
+                rows = await _core_get(client, *args, "Service",
+                                       "name,servicefamily_id,servicefamily_name,description,status",
+                                       f"SELECT Service{where}")
+                out["services"] = [{"id": str(r.get("_key")), "name": str(r.get("name") or "").strip(),
+                                    "family_id": str(r.get("servicefamily_id") or "0"),
+                                    "family_name": str(r.get("servicefamily_name") or "").strip(),
+                                    "description": str(r.get("description") or "").strip(),
+                                    "status": str(r.get("status") or "").strip()}
+                                   for r in rows]
+            except Exception as exc:
+                out["errors"].append(f"Service: {exc}")
+            ids = [s["id"] for s in out["services"] if s["id"].isdigit()]
+            if ids:
+                try:
+                    rows = await _core_get(
+                        client, *args, "lnkFunctionalCIToService",
+                        "service_id,functionalci_id,functionalci_name",
+                        f"SELECT lnkFunctionalCIToService WHERE service_id IN ({','.join(ids)})")
+                    out["links"] = [{"service_id": str(r.get("service_id")),
+                                     "ci_id": str(r.get("functionalci_id")),
+                                     "ci_name": str(r.get("functionalci_name") or "").strip()}
+                                    for r in rows]
+                except Exception as exc:
+                    out["errors"].append(f"lnkFunctionalCIToService: {exc}")
+        return out
 
     async def addresses(self, cfg: dict, subnet_ids: list[str]) -> dict[str, dict]:
         """IPv4Address-Objekte der Subnetze — immer frisch, denn genau hier
