@@ -236,6 +236,8 @@ export const de = {
     viewServicesHint: 'Je Servicefamilie eine Seite: die Services darin, darunter die VLANs, in denen ihre CIs (lnkFunctionalCIToService) per Management-IP liegen, mit allen Hosts dieser Netze. Rot = im Netz gesehen (FortiManager, ARP, DNS), aber nicht im iTop geführt. Pfeil = Firewall, an der das Netz terminiert.',
     family: 'Servicefamilie',
     familyAll: '— alle (je eine Seite) —',
+    showFirewalls: 'Firewalls einblenden',
+    showFirewallsHint: 'Firewall-Symbole mit Linien von jedem VLAN. Ohne: die Firewall steht als Text im VLAN-Kasten.',
     noFamilies: 'Keine Servicefamilien mit Services im iTop sichtbar.',
     statFamilies: 'Familien', statServices: 'Services', statNotInItop: 'nicht im iTop', statUnplaced: 'CIs ohne Netz',
     viewPhysL1Hint: 'Wie die Netzwerkkomponenten untereinander hängen — Knoten und Kanten aus den LLDP-Nachbarschaften in LibreNMS, mit den Ports an beiden Enden.',

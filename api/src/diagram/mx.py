@@ -78,13 +78,21 @@ class Doc:
         return cid
 
     def edge(self, src: str, dst: str, label: str, style: str,
-             parent: str | None = None) -> str:
+             parent: str | None = None,
+             points: list[tuple[float, float]] | None = None) -> str:
+        """points: Wegpunkte in Koordinaten des parent — damit läuft die Linie
+        genau dort, wo Platz ist, statt dass draw.io quer durch Kästen routet."""
         cid = self._id()
         cell = ET.SubElement(self.root, "mxCell", id=cid, style=style, edge="1",
                              parent=parent or self._layer, source=src, target=dst,
                              value=label)
         geo = ET.SubElement(cell, "mxGeometry", relative="1")
         geo.set("as", "geometry")
+        if points:
+            arr = ET.SubElement(geo, "Array")
+            arr.set("as", "points")
+            for x, y in points:
+                ET.SubElement(arr, "mxPoint", x=str(int(x)), y=str(int(y)))
         return cid
 
     def to_xml(self) -> str:

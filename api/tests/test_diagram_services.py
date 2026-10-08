@@ -146,3 +146,39 @@ async def test_render_without_any_family_still_is_a_valid_file(inventory):
                              itop_subnets=[])
     _root, pages = _cells(services.render(m))
     assert len(pages) == 1
+
+
+async def test_lines_run_through_the_column_gaps_not_through_boxes(inventory):
+    m = await _build(inventory, family="1")
+    _root, pages = _cells(services.render(m))
+    objs = {o.get("id"): o for o in pages[0].iter("object")}
+
+    def geo(oid):
+        g = objs[oid].find("mxCell/mxGeometry")
+        return float(g.get("x")), float(g.get("width"))
+
+    # Netz-Kästen: x relativ zur Familie = x des Service + x im Service.
+    boxes = []
+    for o in objs.values():
+        cell = o.find("mxCell")
+        if "startSize=48" in cell.get("style"):
+            sx, _ = geo(cell.get("parent"))
+            nx, nw = geo(o.get("id"))
+            boxes.append((sx + nx, sx + nx + nw))
+    edges = [c for c in pages[0].iter("mxCell") if c.get("edge") == "1"]
+    assert edges and boxes
+    for e in edges:
+        pts = [(float(p.get("x")), float(p.get("y"))) for p in e.iter("mxPoint")]
+        assert len(pts) == 3 and pts[0][0] == pts[1][0]          # senkrecht nach oben
+        assert pts[1][1] == pts[2][1]                            # waagerecht zur Firewall
+        assert all(not (lo < pts[0][0] < hi) for lo, hi in boxes)
+
+
+async def test_firewalls_can_be_left_out(inventory):
+    m = await _build(inventory, family="1")
+    xml = services.render(m, show_firewalls=False)
+    _root, pages = _cells(xml)
+    assert not [c for c in pages[0].iter("mxCell") if c.get("edge") == "1"]
+    assert "mxgraph.networks.firewall" not in xml
+    net = next(o for o in pages[0].iter("object") if "10.1.1.0/24" in (o.get("label") or ""))
+    assert "an fw-a/root" in net.get("label")

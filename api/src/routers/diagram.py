@@ -70,6 +70,7 @@ class DiagramRequest(BaseModel):
                       pattern="^(struktur|logisch|physisch-l1|services)$")
     # Nur für die Service-Sicht: ID oder Name einer Servicefamilie; leer = alle.
     family: str | None = Field(default=None, max_length=200)
+    show_firewalls: bool = True
     # Nur für die physische Sicht: Einschränkung auf einen LibreNMS-Standort
     # (bei uns teils raumscharf) oder eine Gerätegruppe.
     location: str | None = Field(default=None, max_length=200)
@@ -436,7 +437,7 @@ async def _services(body: DiagramRequest, request: Request, user: dict) -> dict:
                       f" · {st['hosts_not_in_itop']} nicht im iTop"),
             author=str(user.get("username") or ""), drawing_no=f"{prefix}-{stem.upper()}",
             note="Erzeugt von A38 aus iTop, FortiManager, ARP-Historie und DNS")
-    return {"filename": f"A38_Netzplan_{stem}.drawio", "xml": service_view.render(mdl, tb),
+    return {"filename": f"A38_Netzplan_{stem}.drawio", "xml": service_view.render(mdl, tb, body.show_firewalls),
             "stats": st, "hosts_mode": "all", "warnings": warnings}
 
 

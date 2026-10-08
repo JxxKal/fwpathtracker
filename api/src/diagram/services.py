@@ -164,7 +164,14 @@ async def build(inv: Inventory, *, families: list[dict], services: list[dict],
 NET_COLS = 4
 PAD, GAP = 24, 24
 FAM_HEAD, SVC_HEAD = 40, 32
-FW_W, FW_H, FW_SLOT, FW_BAND = 56, 48, 230, 110
+FW_W, FW_H, FW_SLOT, FW_TOP = 56, 48, 230, 12
+# Linienführung: vom Netz-Kasten nach rechts in die Lücke zur nächsten Spalte,
+# dort senkrecht nach oben bis in den Firewall-Streifen, waagerecht zur
+# Firewall und von unten hinein. Die Lücken liegen in allen Services an
+# derselben Stelle, also läuft keine Linie durch einen Kasten. Linien zur
+# selben Firewall decken sich und lesen sich wie eine Sammelschiene.
+LANE_IN, LANE_STEP = 6, 5        # Abstand der Senkrechten vom Kasten, je Firewall versetzt
+BUS_GAP, BUS_STEP = 14, 8        # Waagerechte unter den Firewalls, je Firewall versetzt
 EMPTY_H = 44
 LEGEND_W, LEGEND_H = 300, 92
 RED = "#e51400"
@@ -177,8 +184,12 @@ STYLE = {
     "empty": "text;html=1;fontSize=10;fontStyle=2;fontColor=#7a5c00;align=left;"
              "verticalAlign=top;spacingLeft=4;whiteSpace=wrap;",
     "edge": "edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;"
-            "strokeColor=#666666;fontSize=9;labelBackgroundColor=#ffffff;"
-            "exitX=0.5;exitY=0;exitDx=0;exitDy=0;",
+            "strokeColor=#666666;exitX=1;exitY={exit_y:.4f};exitDx=0;exitDy=0;"
+            "entryX=0.5;entryY=1;entryDx=0;entryDy=0;",
+    "firewall": drawio.icon_style("firewall").replace(
+        "verticalLabelPosition=bottom;verticalAlign=top;",
+        "labelPosition=right;verticalLabelPosition=middle;align=left;verticalAlign=middle;"
+        "spacingLeft=4;"),
     "legend": "rounded=0;html=1;whiteSpace=wrap;align=left;verticalAlign=top;fontSize=10;"
               "spacingLeft=8;spacingTop=4;fillColor=#ffffff;strokeColor=#999999;",
 }
@@ -216,10 +227,20 @@ def _fw_label(fw: dict) -> str:
     return name
 
 
+def _unplaced_height(svc: dict) -> float:
+    """Die Liste steht in EINER Spaltenbreite — die Linien zur Firewall laufen
+    rechts daneben durch die Lücke, nicht durch den Text. Lange Zeilen brechen um."""
+    if not svc["unplaced"]:
+        return 0
+    lines = 1 + sum(1 + len(f"{u['name']} {u.get('ip') or ''} {u['reason']}") // 40
+                    for u in svc["unplaced"])
+    return lines * 14 + 12
+
+
 def _measure_service(svc: dict, nets: dict) -> tuple[float, float, list]:
     sizes = [_net_size(nets[nid]) for nid in svc["networks"]]
     pos, w, h = drawio._pack(sizes, NET_COLS, GAP)
-    unplaced_h = (len(svc["unplaced"]) * 14 + 20) if svc["unplaced"] else 0
+    unplaced_h = _unplaced_height(svc)
     if not sizes:
         h = EMPTY_H + unplaced_h
         w = max(w, 2 * drawio.NET_W)
@@ -236,29 +257,43 @@ def _unplaced_text(svc: dict) -> str:
     return "<br>".join(lines)
 
 
-def _draw_family(doc: Doc, fam: dict, mdl: dict, title_block: dict | None) -> None:
+def _fw_band(n: int) -> float:
+    return FW_TOP + FW_H + BUS_GAP + n * BUS_STEP + BUS_GAP if n else 0
+
+
+def _net_label(net: dict, show_firewalls: bool) -> str:
+    label = drawio._net_label(net)
+    # Ohne Firewall-Symbole steht die terminierende Firewall im Kasten selbst —
+    # in der dritten Zeile, der Kopf hat nur Platz für drei.
+    return label if show_firewalls else label + f" · an {esc(net['fw_id'])}"
+
+
+def _draw_family(doc: Doc, fam: dict, mdl: dict, title_block: dict | None,
+                 show_firewalls: bool = True) -> None:
     nets, fws = mdl["networks"], mdl["firewalls"]
+    fw_ids = sorted(fam["firewalls"]) if show_firewalls else []
+    band = _fw_band(len(fw_ids))
     measured = [_measure_service(s, nets) for s in fam["services"]]
-    inner_w = max([m[0] for m in measured] + [len(fam["firewalls"]) * FW_SLOT, 2 * drawio.NET_W])
-    fam_h = FAM_HEAD + FW_BAND + sum(m[1] + GAP for m in measured) + PAD
+    inner_w = max([m[0] for m in measured] + [len(fw_ids) * FW_SLOT, 2 * drawio.NET_W])
+    fam_h = FAM_HEAD + band + sum(m[1] + GAP for m in measured) + PAD
     x0, y0 = 40, 40
     fam_w = inner_w + 2 * PAD
     tip = f"Servicefamilie {fam['name']} · {len(fam['services'])} Services"
     fam_id = doc.vertex(esc(fam["name"]), STYLE["family"], x0, y0, fam_w, fam_h, tooltip=tip)
 
-    # Firewalls oben in der Familie, über den Services — die Linien der
-    # VLAN-Kästen laufen alle nach oben.
-    fw_cell: dict[str, str] = {}
-    n = len(fam["firewalls"])
-    start = PAD + (inner_w - n * FW_SLOT) / 2
-    for i, fw_id in enumerate(sorted(fam["firewalls"])):
+    # Firewalls oben in der Familie, über den Services; Beschriftung rechts
+    # neben dem Symbol, damit die Linie von unten frei hineinläuft.
+    fw_cell: dict[str, tuple[str, float, int]] = {}      # id → (Zelle, Mitte x, Index)
+    start = PAD + (inner_w - len(fw_ids) * FW_SLOT) / 2
+    for i, fw_id in enumerate(fw_ids):
         fw = fws[fw_id]
-        fx = start + i * FW_SLOT + (FW_SLOT - FW_W) / 2
-        fw_cell[fw_id] = doc.vertex(_fw_label(fw), drawio.icon_style("firewall"),
-                                    fx, FAM_HEAD + 10, FW_W, FW_H, parent=fam_id,
-                                    tooltip=f"FortiGate {fw['device']} · VDOM {fw['vdom']}")
+        fx = start + i * FW_SLOT
+        cell = doc.vertex(_fw_label(fw), STYLE["firewall"], fx, FAM_HEAD + FW_TOP, FW_W, FW_H,
+                          parent=fam_id, tooltip=f"FortiGate {fw['device']} · VDOM {fw['vdom']}")
+        fw_cell[fw_id] = (cell, fx + FW_W / 2, i)
+    bus_top = FAM_HEAD + FW_TOP + FW_H + BUS_GAP
 
-    y = FAM_HEAD + FW_BAND
+    y = FAM_HEAD + band
     for svc, (w, h, pos) in zip(fam["services"], measured):
         stip = "\n".join(p for p in (
             f"Service {svc['name']}", svc.get("description") or None,
@@ -271,7 +306,7 @@ def _draw_family(doc: Doc, fam: dict, mdl: dict, title_block: dict | None) -> No
         for nid, (px, py) in zip(svc["networks"], pos):
             net = nets[nid]
             nw, nh = _net_size(net)
-            net_id = doc.vertex(drawio._net_label(net), drawio.STYLE["net"], PAD + px,
+            net_id = doc.vertex(_net_label(net, show_firewalls), drawio.STYLE["net"], PAD + px,
                                 SVC_HEAD + PAD + py, nw, nh, parent=svc_id,
                                 tooltip=drawio._net_tooltip(net) + f"\nFirewall: {net['fw_id']}")
             bottom = max(bottom, SVC_HEAD + PAD + py + nh)
@@ -286,8 +321,14 @@ def _draw_family(doc: Doc, fam: dict, mdl: dict, title_block: dict | None) -> No
                            drawio.STYLE["more"], 12, hy, drawio.HOST_W, drawio.HOST_H,
                            parent=net_id)
             if net["fw_id"] in fw_cell:
-                doc.edge(net_id, fw_cell[net["fw_id"]], esc(net["interface"]), STYLE["edge"],
-                         parent=fam_id)
+                cell, fw_x, i = fw_cell[net["fw_id"]]
+                head_y = drawio.NET_HEAD / 2
+                lane_x = PAD + PAD + px + nw + min(LANE_IN + i * LANE_STEP, GAP - 2)
+                bus_y = bus_top + i * BUS_STEP
+                doc.edge(net_id, cell, "", STYLE["edge"].format(exit_y=head_y / nh),
+                         parent=fam_id,
+                         points=[(lane_x, y + SVC_HEAD + PAD + py + head_y),
+                                 (lane_x, bus_y), (fw_x, bus_y)])
         if not svc["networks"]:
             text = ("Keine CIs am Service." if not svc["ci_count"] else "")
             if svc["unplaced"]:
@@ -296,7 +337,7 @@ def _draw_family(doc: Doc, fam: dict, mdl: dict, title_block: dict | None) -> No
                        parent=svc_id)
         elif svc["unplaced"]:
             doc.vertex(_unplaced_text(svc), STYLE["empty"], PAD, bottom + GAP / 2,
-                       w - 2 * PAD, len(svc["unplaced"]) * 14 + 20, parent=svc_id)
+                       drawio.NET_W, _unplaced_height(svc), parent=svc_id)
         y += h + GAP
 
     # Legende und Schriftfeld rechts neben der Familie.
@@ -304,20 +345,22 @@ def _draw_family(doc: Doc, fam: dict, mdl: dict, title_block: dict | None) -> No
     legend = (f"<b>Legende</b><br>"
               f"<span style='color:{RED};font-weight:bold'>■ rot</span> = im Netz gesehen, "
               "aber nicht im iTop geführt (nur FortiManager, ARP oder DNS)<br>"
-              "Pfeil = Netz terminiert an dieser Firewall")
+              + ("Pfeil = Netz terminiert an dieser Firewall" if show_firewalls
+                 else "„an …“ = Firewall/VDOM, an der das Netz terminiert"))
     doc.vertex(legend, STYLE["legend"], lx, y0, LEGEND_W, LEGEND_H)
     if title_block:
         titleblock.draw(doc, lx, max(y0 + LEGEND_H + GAP, y0 + fam_h - titleblock.HEIGHT),
                         title_block)
 
 
-def render(mdl: dict, title_block: dict | None = None) -> str:
-    """Eine Seite je Servicefamilie."""
+def render(mdl: dict, title_block: dict | None = None, show_firewalls: bool = True) -> str:
+    """Eine Seite je Servicefamilie. show_firewalls=False lässt Firewall-Symbole
+    und Linien weg; die Firewall steht dann als Zeile im Netz-Kasten."""
     fams = mdl["families"] or [{"id": "0", "name": "Keine Servicefamilien", "services": [],
                                 "firewalls": []}]
     doc = Doc(fams[0]["name"])
     for i, fam in enumerate(fams):
         if i:
             doc.page(fam["name"])
-        _draw_family(doc, fam, mdl, title_block)
+        _draw_family(doc, fam, mdl, title_block, show_firewalls)
     return doc.to_xml()

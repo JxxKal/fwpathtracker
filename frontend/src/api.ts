@@ -479,7 +479,7 @@ export async function buildDiagram(scope: DiagramScope, device: string | null, v
   site: string | null, hosts: DiagramHosts, expandHosts = false,
   view: DiagramView = 'struktur',
   location: string | null = null, group: string | null = null,
-  family: string | null = null): Promise<DiagramResult> {
+  family: string | null = null, showFirewalls = true): Promise<DiagramResult> {
   if (isDemoMode() && view === 'services') {
     const xml = '<?xml version="1.0" encoding="UTF-8"?>\n<mxfile host="A38"><diagram name="Demo" id="demo"><mxGraphModel><root>'
       + '<mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>';
@@ -513,7 +513,7 @@ export async function buildDiagram(scope: DiagramScope, device: string | null, v
   return request('/api/diagram', {
     method: 'POST',
     body: JSON.stringify({ scope, device, vdom, site, hosts, expand_hosts: expandHosts,
-      view, location, group, family }),
+      view, location, group, family, show_firewalls: showFirewalls }),
   });
 }
 
