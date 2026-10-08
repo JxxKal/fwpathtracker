@@ -8,8 +8,13 @@ Die Kette kommt vollständig aus Daten, die ohnehin gepflegt sind:
 An einem Service trägt niemand ein Netz ein. Das Netz ergibt sich aus der IP
 des CIs, und gezeichnet wird dann das GANZE Netz — mit allem, was iTop, der
 FortiManager, die ARP-Historie und das Reverse-DNS darin kennen. Genau dort
-liegt die Auskunft der Zeichnung: Hosts, die nur aus FortiManager, ARP oder
-DNS bekannt sind, stehen nicht im iTop und werden rot markiert.
+liegt die Auskunft der Zeichnung, in zwei Stufen:
+
+  * rot (Symbol und Name): im iTop geführt und im VLAN, aber kein CI dieses
+    Service — liegt also im Netz des Service, ohne ihm zugeordnet zu sein;
+  * rot umrandet: gar nicht im iTop, nur aus FortiManager, ARP oder DNS bekannt.
+
+CIs des Service selbst stehen unmarkiert.
 
 Über jedem VLAN-Kasten führt eine Linie zur Firewall, die das Netz terminiert.
 """
@@ -145,6 +150,11 @@ async def build(inv: Inventory, *, families: list[dict], services: list[dict],
                             "ha": (inv.devices.get(d) or {}).get("ha")}
 
     hosts = [h for n in nets.values() for h in n["hosts"]]
+    # Fremde Hosts zählen je Service: dasselbe VLAN kann in einem Service
+    # sauber und im nächsten voller Fremder sein.
+    foreign = sum(1 for fam in wanted for svc in fam["services"]
+                  for nid in svc["networks"] for h in nets[nid]["hosts"]
+                  if h["in_itop"] and h["ip"] not in set(svc["ips"]))
     title = (f"Services {wanted[0]['name']}" if family and wanted else "Services nach Servicefamilie")
     return {
         "title": title, "families": wanted, "networks": nets, "firewalls": firewalls,
@@ -154,6 +164,7 @@ async def build(inv: Inventory, *, families: list[dict], services: list[dict],
                   "networks": len(nets), "firewalls": len(firewalls),
                   "hosts": len(hosts),
                   "hosts_not_in_itop": sum(1 for h in hosts if not h["in_itop"]),
+                  "hosts_not_in_service": foreign,
                   "cis_unplaced": sum(len(s["unplaced"]) for f in wanted for s in f["services"]),
                   "names_from_dns": resolved},
     }
@@ -173,7 +184,7 @@ FW_W, FW_H, FW_SLOT, FW_TOP = 56, 48, 230, 12
 LANE_IN, LANE_STEP = 6, 5        # Abstand der Senkrechten vom Kasten, je Firewall versetzt
 BUS_GAP, BUS_STEP = 14, 8        # Waagerechte unter den Firewalls, je Firewall versetzt
 EMPTY_H = 44
-LEGEND_W, LEGEND_H = 300, 92
+LEGEND_W, LEGEND_H = 320, 110
 RED = "#e51400"
 
 STYLE = {
@@ -190,17 +201,23 @@ STYLE = {
         "verticalLabelPosition=bottom;verticalAlign=top;",
         "labelPosition=right;verticalLabelPosition=middle;align=left;verticalAlign=middle;"
         "spacingLeft=4;"),
+    "outline": f"rounded=1;arcSize=12;html=1;fillColor=none;strokeColor={RED};strokeWidth=2;",
     "legend": "rounded=0;html=1;whiteSpace=wrap;align=left;verticalAlign=top;fontSize=10;"
               "spacingLeft=8;spacingTop=4;fillColor=#ffffff;strokeColor=#999999;",
 }
 
 
-def _host_style(h: dict) -> str:
+def _foreign(h: dict, service_ips: set[str]) -> bool:
+    """Im iTop, aber kein CI dieses Service."""
+    return bool(h.get("in_itop")) and h["ip"] not in service_ips
+
+
+def _host_style(h: dict, service_ips: set[str]) -> str:
     style = drawio.host_style(h)
-    if h.get("in_itop"):
+    if not _foreign(h, service_ips):
         return style
-    # Rot heißt: im Netz gesehen, im iTop nicht geführt. Symbol UND Schrift,
-    # damit es auch im Schwarz-Weiß-Ausdruck am fetten Namen auffällt.
+    # Symbol UND Schrift rot, damit es auch im Schwarz-Weiß-Ausdruck am fetten
+    # Namen auffällt.
     style = re.sub(r"fillColor=#[0-9A-Fa-f]{6};", f"fillColor={RED};", style)
     return style + f"fontColor={RED};fontStyle=1;"
 
@@ -209,9 +226,9 @@ def _host_tooltip(h: dict, service_ips: set[str]) -> str:
     tip = drawio._host_tooltip(h)
     if not h.get("in_itop"):
         return "NICHT IM iTOP – nur bekannt aus " + ", ".join(h.get("sources") or ["?"]) + "\n" + tip
-    if h["ip"] in service_ips:
-        return "CI dieses Service\n" + tip
-    return tip
+    if _foreign(h, service_ips):
+        return "Im iTop, aber NICHT diesem Service zugeordnet\n" + tip
+    return "CI dieses Service\n" + tip
 
 
 def _net_size(net: dict) -> tuple[float, float]:
@@ -312,7 +329,12 @@ def _draw_family(doc: Doc, fam: dict, mdl: dict, title_block: dict | None,
             bottom = max(bottom, SVC_HEAD + PAD + py + nh)
             hy = drawio.NET_HEAD + 4
             for host in net["hosts"][:drawio.HOST_MAX_ROWS]:
-                doc.vertex(drawio._host_label(host), _host_style(host), 12,
+                if not host.get("in_itop"):
+                    # Rahmen um die ganze Zeile, wie im Visio-Vorbild — vor dem
+                    # Symbol gezeichnet, damit er hinter ihm liegt.
+                    doc.vertex("", STYLE["outline"], 6, hy + 1, nw - 12, drawio.HOST_H - 2,
+                               parent=net_id, tooltip=_host_tooltip(host, ips))
+                doc.vertex(drawio._host_label(host), _host_style(host, ips), 12,
                            hy + (drawio.HOST_H - drawio.ICON) // 2, drawio.ICON, drawio.ICON,
                            parent=net_id, tooltip=_host_tooltip(host, ips))
                 hy += drawio.HOST_H + 4
@@ -343,8 +365,10 @@ def _draw_family(doc: Doc, fam: dict, mdl: dict, title_block: dict | None,
     # Legende und Schriftfeld rechts neben der Familie.
     lx = x0 + fam_w + 2 * GAP
     legend = (f"<b>Legende</b><br>"
-              f"<span style='color:{RED};font-weight:bold'>■ rot</span> = im Netz gesehen, "
-              "aber nicht im iTop geführt (nur FortiManager, ARP oder DNS)<br>"
+              f"<span style='color:{RED};font-weight:bold'>■ rot</span> = im iTop und im VLAN, "
+              "aber nicht diesem Service zugeordnet<br>"
+              f"<span style='color:{RED}'>□ rot umrandet</span> = nicht im iTop geführt "
+              "(nur FortiManager, ARP oder DNS)<br>"
               + ("Pfeil = Netz terminiert an dieser Firewall" if show_firewalls
                  else "„an …“ = Firewall/VDOM, an der das Netz terminiert"))
     doc.vertex(legend, STYLE["legend"], lx, y0, LEGEND_W, LEGEND_H)

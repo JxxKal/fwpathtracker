@@ -121,20 +121,57 @@ def _cells(xml: str):
     return root, root.findall(".//diagram")
 
 
-async def test_render_one_page_per_family_with_red_hosts_and_firewall_edges(inventory):
+async def _with_foreign_host(inventory, **kw):
+    """10.1.1.30 steht im iTop (Adressobjekt), ist aber kein CI eines Service."""
+    async def addresses(cidrs):
+        return {"10.1.1.30": {"status": "allocated", "name": "fremd-30"}}
+    return await _build(inventory, addresses=addresses, **kw)
+
+
+def _row(page, ip):
+    """(Host-Objekt, Rahmen-Zelle oder None) der Zeile mit dieser IP."""
+    host = next(o for o in page.iter("object") if ip in (o.get("label") or ""))
+    parent = host.find("mxCell").get("parent")
+    tip = host.get("tooltip")
+    frame = next((o for o in page.iter("object")
+                  if o.get("label") == "" and o.get("tooltip") == tip
+                  and o.find("mxCell").get("parent") == parent), None)
+    return host, frame
+
+
+async def test_red_means_in_itop_but_not_assigned_to_the_service(inventory):
+    m = await _with_foreign_host(inventory, family="1")
+    _root, pages = _cells(services.render(m))
+    host, frame = _row(pages[0], "fremd-30")
+    assert services.RED in host.find("mxCell").get("style") and frame is None
+    assert "NICHT diesem Service" in host.get("tooltip")
+    assert m["stats"]["hosts_not_in_service"] == 2       # dasselbe VLAN in zwei Services
+
+
+async def test_hosts_outside_itop_are_framed_not_coloured(inventory):
+    m = await _with_foreign_host(inventory, family="1")
+    _root, pages = _cells(services.render(m))
+    host, frame = _row(pages[0], "10.1.1.77")
+    assert services.RED not in host.find("mxCell").get("style")
+    assert frame is not None and f"strokeColor={services.RED}" in frame.find("mxCell").get("style")
+    assert "NICHT IM iTOP" in host.get("tooltip")
+
+
+async def test_service_cis_stay_unmarked(inventory):
+    m = await _with_foreign_host(inventory, family="1")
+    _root, pages = _cells(services.render(m))
+    host, frame = _row(pages[0], "srv-web")
+    assert services.RED not in host.find("mxCell").get("style") and frame is None
+    assert host.get("tooltip").startswith("CI dieses Service")
+
+
+async def test_render_one_page_per_family_with_firewall_edges(inventory):
     m = await _build(inventory)
-    xml = services.render(m, title_block=None)
-    root, pages = _cells(xml)
+    root, pages = _cells(services.render(m, title_block=None))
     assert [p.get("name") for p in pages] == ["Global Tier-0 BU Germany", "PLS",
                                               services.NO_FAMILY]
     first = pages[0]
-    objs = {o.get("label"): o for o in first.iter("object")}
-    assert any("Tier-0 Core Infrastructure" == k for k in objs)
-    red = [o for o in first.iter("object") if "10.1.1.77" in (o.get("label") or "")]
-    assert red and services.RED in red[0].find("mxCell").get("style")
-    assert "NICHT IM iTOP" in red[0].get("tooltip")
-    ok = next(o for o in first.iter("object") if "srv-web" in (o.get("label") or ""))
-    assert services.RED not in ok.find("mxCell").get("style")
+    assert any(o.get("label") == "Tier-0 Core Infrastructure" for o in first.iter("object"))
     edges = [c for c in first.iter("mxCell") if c.get("edge") == "1"]
     assert len(edges) == 2          # 10.1.1.0/24 in zwei Services → je ein Pfeil zur Firewall
     fw = next(o for o in first.iter("object") if "fw-a" in (o.get("label") or ""))

@@ -421,9 +421,12 @@ async def _services(body: DiagramRequest, request: Request, user: dict) -> dict:
         warnings.append(f"{st['cis_unplaced']} CIs lassen sich keinem Firewall-Netz zuordnen "
                         "(ohne Management-IP oder IP außerhalb aller Netze) — sie stehen "
                         "als Liste im jeweiligen Service.")
+    if st["hosts_not_in_service"]:
+        warnings.append(f"{st['hosts_not_in_service']}× steht ein iTop-Host in einem VLAN des "
+                        "Service, ohne ihm zugeordnet zu sein — rot markiert.")
     if st["hosts_not_in_itop"]:
         warnings.append(f"{st['hosts_not_in_itop']} von {st['hosts']} Hosts sind nicht im iTop "
-                        "geführt — rot markiert.")
+                        "geführt — rot umrandet.")
 
     raw = body.family and (mdl["families"][0]["name"] if mdl["families"] else body.family)
     stem = "services_" + (re.sub(r"[^A-Za-z0-9_.-]+", "_", raw or "alle").strip("_") or "alle")
@@ -434,6 +437,7 @@ async def _services(body: DiagramRequest, request: Request, user: dict) -> dict:
         tb = titleblock.info_from(
             cfg_tb, title=mdl["title"],
             subtitle=(f"{st['services']} Services · {st['networks']} Netze · {st['hosts']} Hosts"
+                      f" · {st['hosts_not_in_service']}× nicht am Service"
                       f" · {st['hosts_not_in_itop']} nicht im iTop"),
             author=str(user.get("username") or ""), drawing_no=f"{prefix}-{stem.upper()}",
             note="Erzeugt von A38 aus iTop, FortiManager, ARP-Historie und DNS")

@@ -267,6 +267,7 @@ export default function NetDiagram() {
             {res.stats.families} {de.diagram.statFamilies} · {res.stats.services} {de.diagram.statServices}
             {' · '}{res.stats.networks} {de.diagram.statNets} · {res.stats.firewalls} {de.diagram.statDevices}
             {' · '}{res.stats.hosts} {de.diagram.statHosts}
+            {' · '}<span className={res.stats.hosts_not_in_service ? 'text-red-400' : ''}>{res.stats.hosts_not_in_service}{de.diagram.statNotInService}</span>
             {' · '}<span className={res.stats.hosts_not_in_itop ? 'text-red-400' : ''}>{res.stats.hosts_not_in_itop} {de.diagram.statNotInItop}</span>
             {res.stats.cis_unplaced ? ` · ${res.stats.cis_unplaced} ${de.diagram.statUnplaced}` : ''}
           </p>

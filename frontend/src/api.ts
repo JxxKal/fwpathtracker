@@ -337,7 +337,7 @@ export interface DiagramResult {
     hosts_reduced: boolean;
     // nur Service-Sicht
     families?: number; services?: number; firewalls?: number; hosts?: number;
-    hosts_not_in_itop?: number; cis_unplaced?: number };
+    hosts_not_in_itop?: number; hosts_not_in_service?: number; cis_unplaced?: number };
 }
 export interface ServiceFamilies {
   families: { id: string; name: string; services: number }[];
@@ -487,10 +487,11 @@ export async function buildDiagram(scope: DiagramScope, device: string | null, v
       filename: `A38_Netzplan_services_${family ? 'Global_Tier-0_BU_Germany' : 'alle'}.drawio`, xml,
       hosts_mode: 'all',
       warnings: ['1 CIs lassen sich keinem Firewall-Netz zuordnen (ohne Management-IP oder IP außerhalb aller Netze) — sie stehen als Liste im jeweiligen Service.',
-        '4 von 23 Hosts sind nicht im iTop geführt — rot markiert.'],
+        '6× steht ein iTop-Host in einem VLAN des Service, ohne ihm zugeordnet zu sein — rot markiert.',
+        '4 von 23 Hosts sind nicht im iTop geführt — rot umrandet.'],
       stats: { devices: 0, vdoms: 0, networks: 4, hosts_found: 23, hosts_shown: 23, neighbors: 0,
         switches: 0, sites: 0, hosts_reduced: false, families: family ? 1 : 2, services: family ? 3 : 5,
-        firewalls: 2, hosts: 23, hosts_not_in_itop: 4, cis_unplaced: 1 },
+        firewalls: 2, hosts: 23, hosts_not_in_itop: 4, hosts_not_in_service: 6, cis_unplaced: 1 },
     };
   }
   if (isDemoMode()) {
