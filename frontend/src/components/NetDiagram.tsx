@@ -46,6 +46,8 @@ export default function NetDiagram() {
   const [families, setFamilies] = useState<ServiceFamilies | null>(null);
   const [family, setFamily] = useState('');
   const [showFw, setShowFw] = useState(true);
+  const [hideNoItop, setHideNoItop] = useState(false);
+  const [hideNoSvc, setHideNoSvc] = useState(false);
   const [res, setRes] = useState<DiagramResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -82,7 +84,7 @@ export default function NetDiagram() {
         scope, scope === 'vdom' || scope === 'firewall' ? device : null,
         scope === 'vdom' ? vdom : null, scope === 'site' ? site : null, hosts, expand, view,
         physical ? location || null : null, physical ? group || null : null,
-        svcView ? family || null : null, showFw));
+        svcView ? family || null : null, showFw, hideNoItop, hideNoSvc));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally { setBusy(false); }
@@ -125,6 +127,18 @@ export default function NetDiagram() {
           <label className="flex items-center gap-1.5 pb-2 text-xs text-slate-300" title={de.diagram.showFirewallsHint}>
             <input type="checkbox" checked={showFw} onChange={(e) => setShowFw(e.target.checked)} />
             {de.diagram.showFirewalls}
+          </label>
+        )}
+        {svcView && (
+          <label className="flex items-center gap-1.5 pb-2 text-xs text-slate-300" title={de.diagram.hideNotInItopHint}>
+            <input type="checkbox" checked={hideNoItop} onChange={(e) => setHideNoItop(e.target.checked)} />
+            {de.diagram.hideNotInItop}
+          </label>
+        )}
+        {svcView && (
+          <label className="flex items-center gap-1.5 pb-2 text-xs text-slate-300" title={de.diagram.hideNotInServiceHint}>
+            <input type="checkbox" checked={hideNoSvc} onChange={(e) => setHideNoSvc(e.target.checked)} />
+            {de.diagram.hideNotInService}
           </label>
         )}
         <label className={`flex flex-col gap-1 ${noScope ? 'hidden' : ''}`}>

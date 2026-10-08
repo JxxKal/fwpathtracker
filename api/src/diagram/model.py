@@ -338,6 +338,11 @@ async def _collect_hosts(net: dict, inv: Inventory, itop_hosts: list[dict],
         except Exception as exc:
             log.warning("ARP-Historie für %s nicht lesbar: %s", net["cidr"], exc)
     hosts.pop(net["fw_ip"], None)
+    # Netz- und Broadcast-Adresse sind nie ein Gerät — tauchen aber auf, wenn
+    # im iTop ein Adressobjekt dafür angelegt ist. /31 und /32 haben keine.
+    if cidr.prefixlen <= 30:
+        hosts.pop(str(cidr.network_address), None)
+        hosts.pop(str(cidr.broadcast_address), None)
     for ip, s in hosts.items():
         if s["name"] is None:
             hit = fmg_source.resolve_ip(inv, ip)

@@ -214,6 +214,10 @@ def _foreign(h: dict, service_ips: set[str]) -> bool:
 
 def _host_style(h: dict, service_ips: set[str]) -> str:
     style = drawio.host_style(h)
+    if not h.get("in_itop"):
+        # Nicht im iTop: roter Rahmen um die Zeile (siehe _draw_family) und
+        # rote Schrift, das Symbol bleibt in seiner Klassenfarbe.
+        return style + f"fontColor={RED};"
     if not _foreign(h, service_ips):
         return style
     # Symbol UND Schrift rot, damit es auch im Schwarz-Weiß-Ausdruck am fetten
@@ -285,12 +289,26 @@ def _net_label(net: dict, show_firewalls: bool) -> str:
     return label if show_firewalls else label + f" · an {esc(net['fw_id'])}"
 
 
+def _visible(net: dict, service_ips: set[str], hide_not_in_itop: bool,
+             hide_not_in_service: bool) -> dict:
+    """Das Netz so, wie es in EINEM Service gezeigt wird — gefiltert und mit
+    der Anzahl der gezeigten Hosts im Kopf."""
+    hosts = [h for h in net["hosts"]
+             if not (hide_not_in_itop and not h.get("in_itop"))
+             and not (hide_not_in_service and _foreign(h, service_ips))]
+    return dict(net, hosts=hosts, host_count=len(hosts))
+
+
 def _draw_family(doc: Doc, fam: dict, mdl: dict, title_block: dict | None,
-                 show_firewalls: bool = True) -> None:
-    nets, fws = mdl["networks"], mdl["firewalls"]
+                 show_firewalls: bool = True, hide_not_in_itop: bool = False,
+                 hide_not_in_service: bool = False) -> None:
+    fws = mdl["firewalls"]
     fw_ids = sorted(fam["firewalls"]) if show_firewalls else []
     band = _fw_band(len(fw_ids))
-    measured = [_measure_service(s, nets) for s in fam["services"]]
+    svc_nets = [{nid: _visible(mdl["networks"][nid], set(s["ips"]), hide_not_in_itop,
+                               hide_not_in_service) for nid in s["networks"]}
+                for s in fam["services"]]
+    measured = [_measure_service(s, n) for s, n in zip(fam["services"], svc_nets)]
     inner_w = max([m[0] for m in measured] + [len(fw_ids) * FW_SLOT, 2 * drawio.NET_W])
     fam_h = FAM_HEAD + band + sum(m[1] + GAP for m in measured) + PAD
     x0, y0 = 40, 40
@@ -311,7 +329,7 @@ def _draw_family(doc: Doc, fam: dict, mdl: dict, title_block: dict | None,
     bus_top = FAM_HEAD + FW_TOP + FW_H + BUS_GAP
 
     y = FAM_HEAD + band
-    for svc, (w, h, pos) in zip(fam["services"], measured):
+    for svc, nets, (w, h, pos) in zip(fam["services"], svc_nets, measured):
         stip = "\n".join(p for p in (
             f"Service {svc['name']}", svc.get("description") or None,
             f"{svc['ci_count']} CIs am Service, {len(svc['networks'])} Netze",
@@ -364,11 +382,14 @@ def _draw_family(doc: Doc, fam: dict, mdl: dict, title_block: dict | None,
 
     # Legende und Schriftfeld rechts neben der Familie.
     lx = x0 + fam_w + 2 * GAP
-    legend = (f"<b>Legende</b><br>"
-              f"<span style='color:{RED};font-weight:bold'>■ rot</span> = im iTop und im VLAN, "
-              "aber nicht diesem Service zugeordnet<br>"
-              f"<span style='color:{RED}'>□ rot umrandet</span> = nicht im iTop geführt "
-              "(nur FortiManager, ARP oder DNS)<br>"
+    lines = ["<b>Legende</b>",
+             (f"<span style='color:{RED};font-weight:bold'>■ rot</span> = im iTop und im VLAN, "
+              "aber nicht diesem Service zugeordnet") if not hide_not_in_service
+             else "ausgeblendet: Hosts, die nicht diesem Service zugeordnet sind",
+             (f"<span style='color:{RED}'>□ rot umrandet, rote Schrift</span> = nicht im iTop "
+              "geführt (nur FortiManager, ARP oder DNS)") if not hide_not_in_itop
+             else "ausgeblendet: Hosts, die nicht im iTop geführt sind"]
+    legend = ("<br>".join(lines) + "<br>"
               + ("Pfeil = Netz terminiert an dieser Firewall" if show_firewalls
                  else "„an …“ = Firewall/VDOM, an der das Netz terminiert"))
     doc.vertex(legend, STYLE["legend"], lx, y0, LEGEND_W, LEGEND_H)
@@ -377,14 +398,17 @@ def _draw_family(doc: Doc, fam: dict, mdl: dict, title_block: dict | None,
                         title_block)
 
 
-def render(mdl: dict, title_block: dict | None = None, show_firewalls: bool = True) -> str:
+def render(mdl: dict, title_block: dict | None = None, show_firewalls: bool = True,
+           hide_not_in_itop: bool = False, hide_not_in_service: bool = False) -> str:
     """Eine Seite je Servicefamilie. show_firewalls=False lässt Firewall-Symbole
-    und Linien weg; die Firewall steht dann als Zeile im Netz-Kasten."""
+    und Linien weg; die Firewall steht dann als Zeile im Netz-Kasten.
+    hide_*: die rot umrandeten bzw. die roten Hosts gar nicht erst zeichnen."""
     fams = mdl["families"] or [{"id": "0", "name": "Keine Servicefamilien", "services": [],
                                 "firewalls": []}]
     doc = Doc(fams[0]["name"])
     for i, fam in enumerate(fams):
         if i:
             doc.page(fam["name"])
-        _draw_family(doc, fam, mdl, title_block, show_firewalls)
+        _draw_family(doc, fam, mdl, title_block, show_firewalls, hide_not_in_itop,
+                     hide_not_in_service)
     return doc.to_xml()

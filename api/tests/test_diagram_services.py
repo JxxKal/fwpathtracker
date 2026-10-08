@@ -148,11 +148,12 @@ async def test_red_means_in_itop_but_not_assigned_to_the_service(inventory):
     assert m["stats"]["hosts_not_in_service"] == 2       # dasselbe VLAN in zwei Services
 
 
-async def test_hosts_outside_itop_are_framed_not_coloured(inventory):
+async def test_hosts_outside_itop_are_framed_with_red_text(inventory):
     m = await _with_foreign_host(inventory, family="1")
     _root, pages = _cells(services.render(m))
     host, frame = _row(pages[0], "10.1.1.77")
-    assert services.RED not in host.find("mxCell").get("style")
+    style = host.find("mxCell").get("style")
+    assert f"fontColor={services.RED}" in style and f"fillColor={services.RED}" not in style
     assert frame is not None and f"strokeColor={services.RED}" in frame.find("mxCell").get("style")
     assert "NICHT IM iTOP" in host.get("tooltip")
 
@@ -219,3 +220,29 @@ async def test_firewalls_can_be_left_out(inventory):
     assert "mxgraph.networks.firewall" not in xml
     net = next(o for o in pages[0].iter("object") if "10.1.1.0/24" in (o.get("label") or ""))
     assert "an fw-a/root" in net.get("label")
+
+
+async def test_network_and_broadcast_address_are_not_hosts(inventory):
+    async def addresses(cidrs):
+        return {"10.1.1.0": {"status": "allocated", "name": "netz"},
+                "10.1.1.255": {"status": "reserved", "name": "broadcast"},
+                "10.1.1.30": {"status": "allocated", "name": "fremd-30"}}
+    m = await _build(inventory, addresses=addresses, family="1")
+    ips = {h["ip"] for n in m["networks"].values() for h in n["hosts"]}
+    assert "10.1.1.0" not in ips and "10.1.1.255" not in ips and "10.1.1.30" in ips
+
+
+async def test_hosts_outside_itop_can_be_hidden(inventory):
+    m = await _with_foreign_host(inventory, family="1")
+    xml = services.render(m, hide_not_in_itop=True)
+    assert "10.1.1.77" not in xml and "fremd-30" in xml and "srv-web" in xml
+    assert "2 Hosts" in xml                     # Kopf zählt nur die gezeigten
+
+
+async def test_hosts_not_at_the_service_can_be_hidden(inventory):
+    m = await _with_foreign_host(inventory, family="1")
+    xml = services.render(m, hide_not_in_service=True)
+    assert "fremd-30" not in xml and "10.1.1.77" in xml and "srv-web" in xml
+    both = services.render(m, hide_not_in_itop=True, hide_not_in_service=True)
+    assert "fremd-30" not in both and "10.1.1.77" not in both and "srv-web" in both
+    assert m["networks"][next(iter(m["networks"]))]["host_count"] == 3   # Modell bleibt unberührt

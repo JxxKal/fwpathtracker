@@ -71,6 +71,8 @@ class DiagramRequest(BaseModel):
     # Nur für die Service-Sicht: ID oder Name einer Servicefamilie; leer = alle.
     family: str | None = Field(default=None, max_length=200)
     show_firewalls: bool = True
+    hide_not_in_itop: bool = False
+    hide_not_in_service: bool = False
     # Nur für die physische Sicht: Einschränkung auf einen LibreNMS-Standort
     # (bei uns teils raumscharf) oder eine Gerätegruppe.
     location: str | None = Field(default=None, max_length=200)
@@ -423,10 +425,12 @@ async def _services(body: DiagramRequest, request: Request, user: dict) -> dict:
                         "als Liste im jeweiligen Service.")
     if st["hosts_not_in_service"]:
         warnings.append(f"{st['hosts_not_in_service']}× steht ein iTop-Host in einem VLAN des "
-                        "Service, ohne ihm zugeordnet zu sein — rot markiert.")
+                        "Service, ohne ihm zugeordnet zu sein — "
+                        + ("ausgeblendet." if body.hide_not_in_service else "rot markiert."))
     if st["hosts_not_in_itop"]:
         warnings.append(f"{st['hosts_not_in_itop']} von {st['hosts']} Hosts sind nicht im iTop "
-                        "geführt — rot umrandet.")
+                        "geführt — " + ("ausgeblendet." if body.hide_not_in_itop
+                                        else "rot umrandet."))
 
     raw = body.family and (mdl["families"][0]["name"] if mdl["families"] else body.family)
     stem = "services_" + (re.sub(r"[^A-Za-z0-9_.-]+", "_", raw or "alle").strip("_") or "alle")
@@ -441,7 +445,8 @@ async def _services(body: DiagramRequest, request: Request, user: dict) -> dict:
                       f" · {st['hosts_not_in_itop']} nicht im iTop"),
             author=str(user.get("username") or ""), drawing_no=f"{prefix}-{stem.upper()}",
             note="Erzeugt von A38 aus iTop, FortiManager, ARP-Historie und DNS")
-    return {"filename": f"A38_Netzplan_{stem}.drawio", "xml": service_view.render(mdl, tb, body.show_firewalls),
+    return {"filename": f"A38_Netzplan_{stem}.drawio", "xml": service_view.render(
+            mdl, tb, body.show_firewalls, body.hide_not_in_itop, body.hide_not_in_service),
             "stats": st, "hosts_mode": "all", "warnings": warnings}
 
 
