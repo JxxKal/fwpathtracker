@@ -16,8 +16,9 @@ liegt die Auskunft der Zeichnung, in zwei Stufen:
 
 CIs des Service selbst stehen unmarkiert.
 
-Jede Firewall steht oben in einem farbigen Kasten; die VLAN-Kästen tragen die
-Farbe der Firewall, an der das Netz terminiert — keine Linien zum Verfolgen.
+Die Firewalls stehen oben in einer Reihe, jede in einem farbigen Kasten. Darunter
+ist jede Firewall eine Spalte: in jedem Service steht ein VLAN genau unter der
+Firewall, an der es terminiert, und trägt ihre Farbe — keine Linien zum Verfolgen.
 """
 from __future__ import annotations
 
@@ -177,7 +178,7 @@ NET_COLS = 4
 PAD, GAP = 24, 24
 FAM_HEAD, SVC_HEAD = 40, 32
 FW_W, FW_H = 48, 40               # Firewall-Symbol im Kasten
-FWBOX_W, FWBOX_H = 220, 64        # farbiger Firewall-Kasten
+FWBOX_H = 64                      # farbiger Firewall-Kasten, so breit wie eine Spalte
 EMPTY_H = 44
 LEGEND_W, LEGEND_H = 320, 110
 RED = "#e51400"
@@ -255,9 +256,26 @@ def _unplaced_height(svc: dict) -> float:
     return lines * 14 + 12
 
 
-def _measure_service(svc: dict, nets: dict) -> tuple[float, float, list]:
+def _column_pack(svc: dict, nets: dict, cols: list[str]) -> tuple[list, float, float]:
+    """Je Firewall eine Spalte, die Netze untereinander. Leere Spalten halten
+    ihren Platz, damit die Spalten in allen Services unter ihrer Firewall stehen."""
+    col_y = [0.0] * len(cols)
+    pos = []
+    for nid in svc["networks"]:
+        c = cols.index(nets[nid]["fw_id"])
+        pos.append((c * (drawio.NET_W + GAP), col_y[c]))
+        col_y[c] += _net_size(nets[nid])[1] + GAP
+    w = len(cols) * (drawio.NET_W + GAP) - GAP
+    return pos, w, max(col_y) - GAP if pos else 0.0
+
+
+def _measure_service(svc: dict, nets: dict,
+                     cols: list[str] | None = None) -> tuple[float, float, list]:
     sizes = [_net_size(nets[nid]) for nid in svc["networks"]]
-    pos, w, h = drawio._pack(sizes, NET_COLS, GAP)
+    if cols:
+        pos, w, h = _column_pack(svc, nets, cols)
+    else:
+        pos, w, h = drawio._pack(sizes, NET_COLS, GAP)
     unplaced_h = _unplaced_height(svc)
     if not sizes:
         h = EMPTY_H + unplaced_h
@@ -275,14 +293,8 @@ def _unplaced_text(svc: dict) -> str:
     return "<br>".join(lines)
 
 
-def _fw_rows(n: int, inner_w: float) -> int:
-    per_row = max(1, int((inner_w + GAP) // (FWBOX_W + GAP)))
-    return -(-n // per_row) if n else 0
-
-
-def _fw_band(n: int, inner_w: float) -> float:
-    rows = _fw_rows(n, inner_w)
-    return rows * (FWBOX_H + GAP) + GAP / 2 if rows else 0
+def _fw_band(n: int) -> float:
+    return GAP / 2 + FWBOX_H + GAP if n else 0
 
 
 def _colored(style: str, color: tuple[str, str]) -> str:
@@ -318,26 +330,24 @@ def _draw_family(doc: Doc, fam: dict, mdl: dict, title_block: dict | None,
     svc_nets = [{nid: _visible(mdl["networks"][nid], set(s["ips"]), hide_not_in_itop,
                                hide_not_in_service) for nid in s["networks"]}
                 for s in fam["services"]]
-    measured = [_measure_service(s, n) for s, n in zip(fam["services"], svc_nets)]
-    inner_w = max([m[0] for m in measured] + [FWBOX_W, 2 * drawio.NET_W])
-    band = _fw_band(len(fw_ids), inner_w)
+    measured = [_measure_service(s, n, fw_ids) for s, n in zip(fam["services"], svc_nets)]
+    inner_w = max([m[0] for m in measured] + [2 * drawio.NET_W])
+    band = _fw_band(len(fw_ids))
     fam_h = FAM_HEAD + band + sum(m[1] + GAP for m in measured) + PAD
     x0, y0 = 40, 40
     fam_w = inner_w + 2 * PAD
     tip = f"Servicefamilie {fam['name']} · {len(fam['services'])} Services"
     fam_id = doc.vertex(esc(fam["name"]), STYLE["family"], x0, y0, fam_w, fam_h, tooltip=tip)
 
-    # Firewalls oben in der Familie, je in einem Kasten ihrer Farbe — bei
-    # vielen Firewalls in mehreren Reihen.
-    per_row = max(1, int((inner_w + GAP) // (FWBOX_W + GAP)))
+    # Firewalls oben in EINER Reihe, jede genau über ihrer Spalte: die Netze
+    # stehen im Service bei PAD (Service) + PAD (Rand im Service) + Spalte.
     for i, fw_id in enumerate(fw_ids):
         fw = fws[fw_id]
         fill, stroke = color[fw_id]
-        fx = PAD + (i % per_row) * (FWBOX_W + GAP)
-        fy = FAM_HEAD + GAP / 2 + (i // per_row) * (FWBOX_H + GAP)
+        fx = PAD + PAD + i * (drawio.NET_W + GAP)
         box = doc.vertex(_fw_label(fw), STYLE["fwbox"].format(pad=FW_W + 16, fill=fill,
                                                             stroke=stroke),
-                         fx, fy, FWBOX_W, FWBOX_H, parent=fam_id,
+                         fx, FAM_HEAD + GAP / 2, drawio.NET_W, FWBOX_H, parent=fam_id,
                          tooltip=f"FortiGate {fw['device']} · VDOM {fw['vdom']}")
         doc.vertex("", STYLE["firewall"], 8, (FWBOX_H - FW_H) / 2, FW_W, FW_H, parent=box)
 

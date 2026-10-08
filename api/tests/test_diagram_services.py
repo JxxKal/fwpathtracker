@@ -195,6 +195,33 @@ async def test_vlan_boxes_take_the_colour_of_their_firewall(inventory):
                and "mxgraph.networks.firewall" in o.find("mxCell").get("style") for o in objs)
 
 
+async def test_vlans_stand_in_the_column_of_their_firewall(inventory):
+    """fw-b ist die zweite Spalte: ihr VLAN steht unter ihr, auch im Service,
+    der an fw-a nichts hat."""
+    hosts = ITOP_HOSTS + [{"id": "105", "name": "srv-b", "ip": "10.2.1.10", "description": "",
+                           "kind": "Server"}]
+    links = LINKS + [{"service_id": "11", "ci_id": "105", "ci_name": "srv-b"}]
+    m = await _build(inventory, itop_hosts=hosts, links=links, family="1")
+    _root, pages = _cells(services.render(m))
+    objs = {o.get("id"): o for o in pages[0].iter("object")}
+
+    def x_in_family(o):
+        cell = o.find("mxCell")
+        x = float(cell.find("mxGeometry").get("x"))
+        parent = objs.get(cell.get("parent"))
+        if parent is not None and "startSize=32" in parent.find("mxCell").get("style"):
+            x += float(parent.find("mxCell/mxGeometry").get("x"))
+        return x
+
+    fw_x = {fw: x_in_family(next(o for o in objs.values()
+                                  if f"<b>{fw}</b>" in (o.get("label") or "")))
+            for fw in ("fw-a", "fw-b")}
+    assert fw_x["fw-a"] < fw_x["fw-b"]
+    for cidr, fw in (("10.1.1.0/24", "fw-a"), ("10.2.1.0/24", "fw-b")):
+        boxes = [o for o in objs.values() if cidr in (o.get("label") or "")]
+        assert boxes and all(x_in_family(b) == fw_x[fw] for b in boxes)
+
+
 def test_firewalls_of_a_family_get_distinct_colours():
     fws = {f"fw-{i}/root": {"id": f"fw-{i}/root", "device": f"fw-{i}", "vdom": "root",
                             "vdoms": 1, "ha": None} for i in range(3)}
