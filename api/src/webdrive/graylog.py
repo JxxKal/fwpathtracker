@@ -59,8 +59,13 @@ class GraylogClient:
         guard_egress_url(base, "Graylog-URL")
         async with self._client(cfg) as client:
             r = await client.get(f"{base}/api/{path}", params=params)
-        if r.status_code in (401, 403):
-            raise GraylogError("Graylog lehnt den Token ab (401/403).")
+        if r.status_code == 401:
+            raise GraylogError("Graylog lehnt den Token ab (401).")
+        if r.status_code == 403:
+            where = (f"den Stream {cfg['stream_id']}" if cfg.get("stream_id")
+                     else "den Stream „All messages“ (ohne Stream-ID wird alles durchsucht)")
+            raise GraylogError(f"Keine Leseberechtigung (403) – in Graylog {where} für den "
+                               "API-User freigeben (Share → Viewer).")
         if r.status_code >= 400:
             raise GraylogError(f"Graylog antwortet {r.status_code}: {r.text[:200]}")
         try:

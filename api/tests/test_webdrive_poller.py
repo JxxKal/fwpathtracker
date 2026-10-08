@@ -59,6 +59,14 @@ async def test_rejected_token():
         await client.search(GL_CFG, "q", at("09:00:00"), at("10:00:00"))
 
 
+async def test_missing_stream_permission_names_the_stream():
+    client, _ = mock_client([], status=403)
+    with pytest.raises(GraylogError, match="All messages"):
+        await client.search({**GL_CFG, "stream_id": ""}, "q", at("09:00:00"), at("10:00:00"))
+    with pytest.raises(GraylogError, match="Stream s1"):
+        await client.search(GL_CFG, "q", at("09:00:00"), at("10:00:00"))
+
+
 async def test_not_configured():
     client, _ = mock_client([])
     with pytest.raises(GraylogNotConfigured):
