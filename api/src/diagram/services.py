@@ -16,7 +16,8 @@ liegt die Auskunft der Zeichnung, in zwei Stufen:
 
 CIs des Service selbst stehen unmarkiert.
 
-Über jedem VLAN-Kasten führt eine Linie zur Firewall, die das Netz terminiert.
+Jede Firewall steht oben in einem farbigen Kasten; die VLAN-Kästen tragen die
+Farbe der Firewall, an der das Netz terminiert — keine Linien zum Verfolgen.
 """
 from __future__ import annotations
 
@@ -175,17 +176,17 @@ async def build(inv: Inventory, *, families: list[dict], services: list[dict],
 NET_COLS = 4
 PAD, GAP = 24, 24
 FAM_HEAD, SVC_HEAD = 40, 32
-FW_W, FW_H, FW_SLOT, FW_TOP = 56, 48, 230, 12
-# Linienführung: vom Netz-Kasten nach rechts in die Lücke zur nächsten Spalte,
-# dort senkrecht nach oben bis in den Firewall-Streifen, waagerecht zur
-# Firewall und von unten hinein. Die Lücken liegen in allen Services an
-# derselben Stelle, also läuft keine Linie durch einen Kasten. Linien zur
-# selben Firewall decken sich und lesen sich wie eine Sammelschiene.
-LANE_IN, LANE_STEP = 6, 5        # Abstand der Senkrechten vom Kasten, je Firewall versetzt
-BUS_GAP, BUS_STEP = 14, 8        # Waagerechte unter den Firewalls, je Firewall versetzt
+FW_W, FW_H = 48, 40               # Firewall-Symbol im Kasten
+FWBOX_W, FWBOX_H = 220, 64        # farbiger Firewall-Kasten
 EMPTY_H = 44
 LEGEND_W, LEGEND_H = 320, 110
 RED = "#e51400"
+# (Füllung, Rand) je Firewall — draw.io-Standardfarben, ohne Rot (Rot heißt
+# „auffällig“). Mehr Firewalls als Farben in einer Familie wiederholen sich;
+# dafür steht die Firewall zusätzlich im Tooltip jedes Netzes.
+PALETTE = [("#dae8fc", "#6c8ebf"), ("#d5e8d4", "#82b366"), ("#ffe6cc", "#d79b00"),
+           ("#e1d5e7", "#9673a6"), ("#fff2cc", "#d6b656"), ("#b0e3e6", "#0e8088"),
+           ("#ffcce6", "#cc0066"), ("#eeeeee", "#666666")]
 
 STYLE = {
     "family": "swimlane;html=1;startSize=40;fontStyle=1;fontSize=16;fillColor=#f5f5f5;"
@@ -194,13 +195,9 @@ STYLE = {
                "strokeColor=#333333;align=left;spacingLeft=8;swimlaneFillColor=#ffffff;",
     "empty": "text;html=1;fontSize=10;fontStyle=2;fontColor=#7a5c00;align=left;"
              "verticalAlign=top;spacingLeft=4;whiteSpace=wrap;",
-    "edge": "edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;"
-            "strokeColor=#666666;exitX=1;exitY={exit_y:.4f};exitDx=0;exitDy=0;"
-            "entryX=0.5;entryY=1;entryDx=0;entryDy=0;",
-    "firewall": drawio.icon_style("firewall").replace(
-        "verticalLabelPosition=bottom;verticalAlign=top;",
-        "labelPosition=right;verticalLabelPosition=middle;align=left;verticalAlign=middle;"
-        "spacingLeft=4;"),
+    "fwbox": "rounded=1;arcSize=10;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;"
+             "spacingLeft={pad};fontSize=11;fillColor={fill};strokeColor={stroke};strokeWidth=2;",
+    "firewall": drawio.icon_style("firewall"),
     "outline": f"rounded=1;arcSize=12;html=1;fillColor=none;strokeColor={RED};strokeWidth=2;",
     "legend": "rounded=0;html=1;whiteSpace=wrap;align=left;verticalAlign=top;fontSize=10;"
               "spacingLeft=8;spacingTop=4;fillColor=#ffffff;strokeColor=#999999;",
@@ -278,8 +275,21 @@ def _unplaced_text(svc: dict) -> str:
     return "<br>".join(lines)
 
 
-def _fw_band(n: int) -> float:
-    return FW_TOP + FW_H + BUS_GAP + n * BUS_STEP + BUS_GAP if n else 0
+def _fw_rows(n: int, inner_w: float) -> int:
+    per_row = max(1, int((inner_w + GAP) // (FWBOX_W + GAP)))
+    return -(-n // per_row) if n else 0
+
+
+def _fw_band(n: int, inner_w: float) -> float:
+    rows = _fw_rows(n, inner_w)
+    return rows * (FWBOX_H + GAP) + GAP / 2 if rows else 0
+
+
+def _colored(style: str, color: tuple[str, str]) -> str:
+    fill, stroke = color
+    style = re.sub(r"fillColor=#[0-9A-Fa-f]{6};", f"fillColor={fill};", style)
+    style = re.sub(r"strokeColor=#[0-9A-Fa-f]{6};", f"strokeColor={stroke};", style)
+    return style + "strokeWidth=2;"
 
 
 def _net_label(net: dict, show_firewalls: bool) -> str:
@@ -304,29 +314,32 @@ def _draw_family(doc: Doc, fam: dict, mdl: dict, title_block: dict | None,
                  hide_not_in_service: bool = False) -> None:
     fws = mdl["firewalls"]
     fw_ids = sorted(fam["firewalls"]) if show_firewalls else []
-    band = _fw_band(len(fw_ids))
+    color = {fw_id: PALETTE[i % len(PALETTE)] for i, fw_id in enumerate(fw_ids)}
     svc_nets = [{nid: _visible(mdl["networks"][nid], set(s["ips"]), hide_not_in_itop,
                                hide_not_in_service) for nid in s["networks"]}
                 for s in fam["services"]]
     measured = [_measure_service(s, n) for s, n in zip(fam["services"], svc_nets)]
-    inner_w = max([m[0] for m in measured] + [len(fw_ids) * FW_SLOT, 2 * drawio.NET_W])
+    inner_w = max([m[0] for m in measured] + [FWBOX_W, 2 * drawio.NET_W])
+    band = _fw_band(len(fw_ids), inner_w)
     fam_h = FAM_HEAD + band + sum(m[1] + GAP for m in measured) + PAD
     x0, y0 = 40, 40
     fam_w = inner_w + 2 * PAD
     tip = f"Servicefamilie {fam['name']} · {len(fam['services'])} Services"
     fam_id = doc.vertex(esc(fam["name"]), STYLE["family"], x0, y0, fam_w, fam_h, tooltip=tip)
 
-    # Firewalls oben in der Familie, über den Services; Beschriftung rechts
-    # neben dem Symbol, damit die Linie von unten frei hineinläuft.
-    fw_cell: dict[str, tuple[str, float, int]] = {}      # id → (Zelle, Mitte x, Index)
-    start = PAD + (inner_w - len(fw_ids) * FW_SLOT) / 2
+    # Firewalls oben in der Familie, je in einem Kasten ihrer Farbe — bei
+    # vielen Firewalls in mehreren Reihen.
+    per_row = max(1, int((inner_w + GAP) // (FWBOX_W + GAP)))
     for i, fw_id in enumerate(fw_ids):
         fw = fws[fw_id]
-        fx = start + i * FW_SLOT
-        cell = doc.vertex(_fw_label(fw), STYLE["firewall"], fx, FAM_HEAD + FW_TOP, FW_W, FW_H,
-                          parent=fam_id, tooltip=f"FortiGate {fw['device']} · VDOM {fw['vdom']}")
-        fw_cell[fw_id] = (cell, fx + FW_W / 2, i)
-    bus_top = FAM_HEAD + FW_TOP + FW_H + BUS_GAP
+        fill, stroke = color[fw_id]
+        fx = PAD + (i % per_row) * (FWBOX_W + GAP)
+        fy = FAM_HEAD + GAP / 2 + (i // per_row) * (FWBOX_H + GAP)
+        box = doc.vertex(_fw_label(fw), STYLE["fwbox"].format(pad=FW_W + 16, fill=fill,
+                                                            stroke=stroke),
+                         fx, fy, FWBOX_W, FWBOX_H, parent=fam_id,
+                         tooltip=f"FortiGate {fw['device']} · VDOM {fw['vdom']}")
+        doc.vertex("", STYLE["firewall"], 8, (FWBOX_H - FW_H) / 2, FW_W, FW_H, parent=box)
 
     y = FAM_HEAD + band
     for svc, nets, (w, h, pos) in zip(fam["services"], svc_nets, measured):
@@ -341,7 +354,10 @@ def _draw_family(doc: Doc, fam: dict, mdl: dict, title_block: dict | None,
         for nid, (px, py) in zip(svc["networks"], pos):
             net = nets[nid]
             nw, nh = _net_size(net)
-            net_id = doc.vertex(_net_label(net, show_firewalls), drawio.STYLE["net"], PAD + px,
+            style = drawio.STYLE["net"]
+            if net["fw_id"] in color:
+                style = _colored(style, color[net["fw_id"]])
+            net_id = doc.vertex(_net_label(net, show_firewalls), style, PAD + px,
                                 SVC_HEAD + PAD + py, nw, nh, parent=svc_id,
                                 tooltip=drawio._net_tooltip(net) + f"\nFirewall: {net['fw_id']}")
             bottom = max(bottom, SVC_HEAD + PAD + py + nh)
@@ -360,15 +376,6 @@ def _draw_family(doc: Doc, fam: dict, mdl: dict, title_block: dict | None,
                 doc.vertex(esc(f"… +{len(net['hosts']) - drawio.HOST_MAX_ROWS} weitere"),
                            drawio.STYLE["more"], 12, hy, drawio.HOST_W, drawio.HOST_H,
                            parent=net_id)
-            if net["fw_id"] in fw_cell:
-                cell, fw_x, i = fw_cell[net["fw_id"]]
-                head_y = drawio.NET_HEAD / 2
-                lane_x = PAD + PAD + px + nw + min(LANE_IN + i * LANE_STEP, GAP - 2)
-                bus_y = bus_top + i * BUS_STEP
-                doc.edge(net_id, cell, "", STYLE["edge"].format(exit_y=head_y / nh),
-                         parent=fam_id,
-                         points=[(lane_x, y + SVC_HEAD + PAD + py + head_y),
-                                 (lane_x, bus_y), (fw_x, bus_y)])
         if not svc["networks"]:
             text = ("Keine CIs am Service." if not svc["ci_count"] else "")
             if svc["unplaced"]:
@@ -390,7 +397,8 @@ def _draw_family(doc: Doc, fam: dict, mdl: dict, title_block: dict | None,
               "geführt (nur FortiManager, ARP oder DNS)") if not hide_not_in_itop
              else "ausgeblendet: Hosts, die nicht im iTop geführt sind"]
     legend = ("<br>".join(lines) + "<br>"
-              + ("Pfeil = Netz terminiert an dieser Firewall" if show_firewalls
+              + ("Farbe des VLAN-Kastens = Firewall gleicher Farbe, an der das Netz terminiert"
+                 if show_firewalls
                  else "„an …“ = Firewall/VDOM, an der das Netz terminiert"))
     doc.vertex(legend, STYLE["legend"], lx, y0, LEGEND_W, LEGEND_H)
     if title_block:
@@ -400,8 +408,8 @@ def _draw_family(doc: Doc, fam: dict, mdl: dict, title_block: dict | None,
 
 def render(mdl: dict, title_block: dict | None = None, show_firewalls: bool = True,
            hide_not_in_itop: bool = False, hide_not_in_service: bool = False) -> str:
-    """Eine Seite je Servicefamilie. show_firewalls=False lässt Firewall-Symbole
-    und Linien weg; die Firewall steht dann als Zeile im Netz-Kasten.
+    """Eine Seite je Servicefamilie. show_firewalls=False lässt die farbigen
+    Firewall-Kästen weg; die Firewall steht dann als Text im Netz-Kasten.
     hide_*: die rot umrandeten bzw. die roten Hosts gar nicht erst zeichnen."""
     fams = mdl["families"] or [{"id": "0", "name": "Keine Servicefamilien", "services": [],
                                 "firewalls": []}]

@@ -166,17 +166,43 @@ async def test_service_cis_stay_unmarked(inventory):
     assert host.get("tooltip").startswith("CI dieses Service")
 
 
-async def test_render_one_page_per_family_with_firewall_edges(inventory):
+def _fill(cell) -> str:
+    return next(p for p in cell.get("style").split(";") if p.startswith("fillColor="))
+
+
+async def test_render_one_page_per_family_without_lines(inventory):
     m = await _build(inventory)
     root, pages = _cells(services.render(m, title_block=None))
     assert [p.get("name") for p in pages] == ["Global Tier-0 BU Germany", "PLS",
                                               services.NO_FAMILY]
     first = pages[0]
     assert any(o.get("label") == "Tier-0 Core Infrastructure" for o in first.iter("object"))
-    edges = [c for c in first.iter("mxCell") if c.get("edge") == "1"]
-    assert len(edges) == 2          # 10.1.1.0/24 in zwei Services → je ein Pfeil zur Firewall
-    fw = next(o for o in first.iter("object") if "fw-a" in (o.get("label") or ""))
-    assert all(e.get("target") == fw.get("id") for e in edges)
+    assert not [c for c in first.iter("mxCell") if c.get("edge") == "1"]
+
+
+async def test_vlan_boxes_take_the_colour_of_their_firewall(inventory):
+    m = await _build(inventory, family="1")
+    _root, pages = _cells(services.render(m))
+    objs = list(pages[0].iter("object"))
+    fw = next(o for o in objs if "fw-a" in (o.get("label") or ""))
+    nets = [o for o in objs if "10.1.1.0/24" in (o.get("label") or "")]
+    assert len(nets) == 2                     # dasselbe VLAN in zwei Services
+    fw_fill = _fill(fw.find("mxCell"))
+    assert fw_fill == f"fillColor={services.PALETTE[0][0]}"
+    assert all(_fill(n.find("mxCell")) == fw_fill for n in nets)
+    # Das Firewall-Symbol sitzt im Kasten.
+    assert any(o.find("mxCell").get("parent") == fw.get("id")
+               and "mxgraph.networks.firewall" in o.find("mxCell").get("style") for o in objs)
+
+
+def test_firewalls_of_a_family_get_distinct_colours():
+    fws = {f"fw-{i}/root": {"id": f"fw-{i}/root", "device": f"fw-{i}", "vdom": "root",
+                            "vdoms": 1, "ha": None} for i in range(3)}
+    fam = {"id": "1", "name": "F", "services": [], "firewalls": sorted(fws)}
+    xml = services.render({"families": [fam], "networks": {}, "firewalls": fws})
+    _root, pages = _cells(xml)
+    boxes = [o for o in pages[0].iter("object") if "fw-" in (o.get("label") or "")]
+    assert len(boxes) == 3 and len({_fill(b.find("mxCell")) for b in boxes}) == 3
 
 
 async def test_render_without_any_family_still_is_a_valid_file(inventory):
@@ -186,40 +212,14 @@ async def test_render_without_any_family_still_is_a_valid_file(inventory):
     assert len(pages) == 1
 
 
-async def test_lines_run_through_the_column_gaps_not_through_boxes(inventory):
-    m = await _build(inventory, family="1")
-    _root, pages = _cells(services.render(m))
-    objs = {o.get("id"): o for o in pages[0].iter("object")}
-
-    def geo(oid):
-        g = objs[oid].find("mxCell/mxGeometry")
-        return float(g.get("x")), float(g.get("width"))
-
-    # Netz-Kästen: x relativ zur Familie = x des Service + x im Service.
-    boxes = []
-    for o in objs.values():
-        cell = o.find("mxCell")
-        if "startSize=48" in cell.get("style"):
-            sx, _ = geo(cell.get("parent"))
-            nx, nw = geo(o.get("id"))
-            boxes.append((sx + nx, sx + nx + nw))
-    edges = [c for c in pages[0].iter("mxCell") if c.get("edge") == "1"]
-    assert edges and boxes
-    for e in edges:
-        pts = [(float(p.get("x")), float(p.get("y"))) for p in e.iter("mxPoint")]
-        assert len(pts) == 3 and pts[0][0] == pts[1][0]          # senkrecht nach oben
-        assert pts[1][1] == pts[2][1]                            # waagerecht zur Firewall
-        assert all(not (lo < pts[0][0] < hi) for lo, hi in boxes)
-
-
 async def test_firewalls_can_be_left_out(inventory):
     m = await _build(inventory, family="1")
     xml = services.render(m, show_firewalls=False)
     _root, pages = _cells(xml)
-    assert not [c for c in pages[0].iter("mxCell") if c.get("edge") == "1"]
     assert "mxgraph.networks.firewall" not in xml
     net = next(o for o in pages[0].iter("object") if "10.1.1.0/24" in (o.get("label") or ""))
     assert "an fw-a/root" in net.get("label")
+    assert _fill(net.find("mxCell")) == "fillColor=#d5e8d4"     # ohne Firewalls: neutral
 
 
 async def test_network_and_broadcast_address_are_not_hosts(inventory):
