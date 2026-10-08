@@ -16,6 +16,9 @@ from netguard import guard_egress_url
 
 PAGE = 500
 MAX_PAGES = 20
+# „All messages“. Ohne Stream-Filter verlangt die klassische Suche eine globale
+# Suchberechtigung, die ein Reader nicht hat — mit Filter genügt Lesen auf dem Stream.
+DEFAULT_STREAM = "000000000000000000000001"
 
 
 class GraylogError(Exception):
@@ -63,7 +66,7 @@ class GraylogClient:
             raise GraylogError("Graylog lehnt den Token ab (401).")
         if r.status_code == 403:
             where = (f"den Stream {cfg['stream_id']}" if cfg.get("stream_id")
-                     else "den Stream „All messages“ (ohne Stream-ID wird alles durchsucht)")
+                     else "den Stream „All messages“")
             raise GraylogError(f"Keine Leseberechtigung (403) – in Graylog {where} für den "
                                "API-User freigeben (Share → Viewer).")
         if r.status_code >= 400:
@@ -80,8 +83,7 @@ class GraylogClient:
         for page in range(MAX_PAGES):
             params = {"query": query, "from": fmt_ts(frm), "to": fmt_ts(to),
                       "limit": PAGE, "offset": page * PAGE, "sort": "timestamp:asc"}
-            if cfg.get("stream_id"):
-                params["filter"] = f"streams:{cfg['stream_id']}"
+            params["filter"] = f"streams:{(cfg.get('stream_id') or '').strip() or DEFAULT_STREAM}"
             body = await self._get(cfg, "search/universal/absolute", params)
             msgs = [m.get("message") or {} for m in body.get("messages") or []]
             out.extend(msgs)

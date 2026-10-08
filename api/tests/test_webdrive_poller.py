@@ -41,6 +41,12 @@ async def test_search_pages_until_short_page():
     req = seen[0]
     assert req.url.path == "/api/search/universal/absolute"      # /api am Ende der URL nicht doppelt
     assert req.url.params["filter"] == "streams:s1"
+
+
+async def test_without_stream_id_filters_on_all_messages():
+    client, seen = mock_client([[]])
+    await client.search({**GL_CFG, "stream_id": ""}, "q", at("09:00:00"), at("10:00:00"))
+    assert seen[0].url.params["filter"] == "streams:000000000000000000000001"
     assert req.url.params["from"] == "2026-10-07T09:00:00.000Z"
     assert req.url.params["sort"] == "timestamp:asc"
     assert req.headers["authorization"] == "Basic " + base64.b64encode(b"tok:token").decode()
