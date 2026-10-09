@@ -240,14 +240,23 @@ class ItopSource:
                 out["errors"].append(f"Service: {exc}")
             ids = [s["id"] for s in out["services"] if s["id"].isdigit()]
             if ids:
+                oql = f"SELECT lnkFunctionalCIToService WHERE service_id IN ({','.join(ids)})"
+                fields = "service_id,functionalci_id,functionalci_name"
                 try:
-                    rows = await _core_get(
-                        client, *args, "lnkFunctionalCIToService",
-                        "service_id,functionalci_id,functionalci_name",
-                        f"SELECT lnkFunctionalCIToService WHERE service_id IN ({','.join(ids)})")
+                    # Mit der Klasse des CIs — Hypervisoren fallen später raus.
+                    # Kennt eine iTop-Version das Recall-Feld nicht, ohne es.
+                    try:
+                        rows = await _core_get(client, *args, "lnkFunctionalCIToService",
+                                               fields + ",functionalci_id_finalclass_recall", oql)
+                    except Exception as exc:
+                        log.warning("iTop: CI-Klasse am Service nicht lesbar (%s) — ohne.", exc)
+                        rows = await _core_get(client, *args, "lnkFunctionalCIToService",
+                                               fields, oql)
                     out["links"] = [{"service_id": str(r.get("service_id")),
                                      "ci_id": str(r.get("functionalci_id")),
-                                     "ci_name": str(r.get("functionalci_name") or "").strip()}
+                                     "ci_name": str(r.get("functionalci_name") or "").strip(),
+                                     "ci_class": str(r.get("functionalci_id_finalclass_recall")
+                                                     or "").strip()}
                                     for r in rows]
                 except Exception as exc:
                     out["errors"].append(f"lnkFunctionalCIToService: {exc}")

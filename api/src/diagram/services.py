@@ -32,6 +32,10 @@ from diagram.mx import Doc, esc
 from inventory.store import Inventory
 
 NO_FAMILY = "ohne Servicefamilie"
+# Leere Hüllen: Hypervisor und Farm (Cluster) tragen keine eigene IP, ihre Hosts hängen
+# als Server/VM ohnehin am Service. Über den Namen fielen sie sonst auf den
+# gleichnamigen Server und erschienen doppelt oder als „CI ohne Netz".
+SKIP_CI_CLASSES = {"hypervisor", "farm"}
 ITOP_SOURCES = {"itop-ci", "itop-ip"}
 
 AddrLookup = Callable[[list[str]], Awaitable[dict[str, dict]]]
@@ -53,20 +57,34 @@ def _network_index(inv: Inventory, itop_subnets: list[dict]) -> list[tuple]:
     return out
 
 
-def _place(ip: str, index: list[tuple]) -> tuple[dict | None, int]:
-    """Längster Präfix; bei Gleichstand gewinnt das eingeschaltete Interface.
-    Zweiter Wert: wie viele gleich gute Treffer es gab (>1 = mehrdeutig)."""
+def _place(ip: str, index: list[tuple]) -> tuple[dict | None, list[dict]]:
+    """Längster Präfix. Bei Gleichstand gewinnt das Interface, das das Gateway
+    aus dem iTop trägt — eine zweite Firewall, die z. B. nur mit ihrem
+    Management-Port im Admin-Netz hängt, führt das Netz nicht, sie ist darin
+    bloß Teilnehmer. Danach entscheidet „eingeschaltet".
+    Zweiter Wert: die gleich guten Treffer anderer Firewalls/VDOMs, wenn das
+    nicht eindeutig ist — für eine Warnung, die sagt, WO das Netz noch liegt."""
     try:
         addr = ipaddress.IPv4Address(ip)
     except ValueError:
-        return None, 0
+        return None, []
     hits = [(c, n) for c, n in index if addr in c]
     if not hits:
-        return None, 0
+        return None, []
     best = max(c.prefixlen for c, _ in hits)
     top = [n for c, n in hits if c.prefixlen == best]
-    top.sort(key=lambda n: (not n["enabled"], n["fw_id"], n["interface"]))
-    return top[0], len({n["fw_id"] for n in top})
+    top.sort(key=lambda n: (not _is_gateway(n), not n["enabled"], n["fw_id"], n["interface"]))
+    if _is_gateway(top[0]):
+        return top[0], []
+    return top[0], [n for n in top[1:] if n["fw_id"] != top[0]["fw_id"]]
+
+
+def _is_gateway(net: dict) -> bool:
+    return bool(net.get("itop_gateway")) and net["fw_ip"] == net["itop_gateway"]
+
+
+def _where(net: dict) -> str:
+    return f"{net['fw_id']} {net['interface']}" + ("" if net["enabled"] else " (abgeschaltet)")
 
 
 def _wanted(families: list[dict], services: list[dict], family: str | None) -> list[dict]:
@@ -101,6 +119,8 @@ async def build(inv: Inventory, *, families: list[dict], services: list[dict],
     ci_by_name = {h["name"].lower(): h for h in itop_hosts}
     links_of: dict[str, list[dict]] = {}
     for ln in links:
+        if (ln.get("ci_class") or "").lower() in SKIP_CI_CLASSES:
+            continue
         links_of.setdefault(ln["service_id"], []).append(ln)
 
     warnings: list[str] = []
@@ -116,14 +136,16 @@ async def build(inv: Inventory, *, families: list[dict], services: list[dict],
                 if host is None:
                     svc["unplaced"].append({"name": ln["ci_name"], "reason": "ohne Management-IP"})
                     continue
-                net, n_hits = _place(host["ip"], index)
+                net, others = _place(host["ip"], index)
                 if net is None:
                     svc["unplaced"].append({"name": ln["ci_name"], "ip": host["ip"],
                                             "reason": "IP in keinem Firewall-Netz"})
                     continue
-                if n_hits > 1:
-                    warnings.append(f"{host['ip']} ({ln['ci_name']}) liegt in einem Netz, das "
-                                    f"{n_hits} Firewalls führen — gezeichnet an {net['fw_id']}.")
+                if others:
+                    warnings.append(
+                        f"{host['ip']} ({ln['ci_name']}): {net['cidr']} ist auf mehreren "
+                        f"Firewalls konfiguriert — gezeichnet an {_where(net)}, außerdem an "
+                        + ", ".join(_where(o) for o in others) + ".")
                 svc["ips"].append(host["ip"])
                 nets.setdefault(net["id"], net)
                 if net["id"] not in svc["networks"]:

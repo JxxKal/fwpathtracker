@@ -273,3 +273,38 @@ async def test_hosts_not_at_the_service_can_be_hidden(inventory):
     both = services.render(m, hide_not_in_itop=True, hide_not_in_service=True)
     assert "fremd-30" not in both and "10.1.1.77" not in both and "srv-web" in both
     assert m["networks"][next(iter(m["networks"]))]["host_count"] == 3   # Modell bleibt unberührt
+
+
+async def test_hypervisors_are_left_out(inventory):
+    """Ein Hypervisor hat keine eigene IP; über den Namen fiele er sonst auf den
+    gleichnamigen Server oder landete als „CI ohne Netz" in der Liste."""
+    links = LINKS + [
+        {"service_id": "20", "ci_id": "201", "ci_name": "srv-web", "ci_class": "Hypervisor"},
+        {"service_id": "20", "ci_id": "202", "ci_name": "esx-leer", "ci_class": "Hypervisor"}]
+    m = await _build(inventory, links=links)
+    ifix = _svc(m, "iFix")
+    assert ifix["ci_count"] == 1 and ifix["ips"] == ["10.1.2.10"] and not ifix["unplaced"]
+
+
+async def test_warning_names_every_firewall_that_holds_the_network(inventory):
+    hosts = ITOP_HOSTS + [{"id": "106", "name": "xlink-ci", "ip": "10.99.0.2",
+                           "description": "", "kind": "Server"}]
+    links = LINKS + [{"service_id": "20", "ci_id": "106", "ci_name": "xlink-ci"}]
+    m = await _build(inventory, itop_hosts=hosts, links=links)
+    w = next(x for x in m["warnings"] if "xlink-ci" in x)
+    assert "10.99.0.0/30" in w and "fw-a/root xlink1" in w and "fw-b/root xlink1" in w
+
+
+async def test_the_firewall_holding_the_itop_gateway_owns_the_network(inventory):
+    """Hängt die zweite Firewall nur als Teilnehmer im Netz (Management-Port),
+    entscheidet das iTop-Gateway — ohne Warnung."""
+    hosts = ITOP_HOSTS + [{"id": "106", "name": "xlink-ci", "ip": "10.99.0.2",
+                           "description": "", "kind": "Server"}]
+    links = LINKS + [{"service_id": "20", "ci_id": "106", "ci_name": "xlink-ci"}]
+    gw_b = next(n["fw_ip"] for _c, n in services._network_index(inventory, [])
+                if n["fw_id"] == "fw-b/root" and n["cidr"] == "10.99.0.0/30")
+    subnets = [{"id": "1", "cidr": "10.99.0.0/30", "name": "xlink", "gateway": gw_b}]
+    m = await _build(inventory, itop_hosts=hosts, links=links, itop_subnets=subnets)
+    net = m["networks"][_svc(m, "iFix")["networks"][-1]]
+    assert net["fw_id"] == "fw-b/root"
+    assert not [w for w in m["warnings"] if "xlink-ci" in w]
