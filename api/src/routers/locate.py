@@ -15,6 +15,17 @@ from vlan import hostports
 router = APIRouter(prefix="/api", tags=["locate"])
 
 
+async def _faz_lookup(state):
+    """IP → FAZ-Endpoint, oder None, wenn kein FortiAnalyzer eingerichtet ist."""
+    cfg = await read_config("faz")
+    if not state.faz.configured(cfg):
+        return None
+
+    async def lookup(ip: str) -> dict | None:
+        return await state.faz.by_ip(cfg, ip)
+    return lookup
+
+
 async def _librenms_cfg() -> dict:
     cfg = await read_config("librenms")
     if not cfg.get("base_url"):
@@ -65,7 +76,7 @@ async def locate(
     ip, names = await resolve_query(request, q)
     return await state.locate.locate(
         ip, state.prefixes, await _librenms_cfg(), await read_config("fmg"), state.cfg,
-        names=names,
+        names=names, faz=await _faz_lookup(state),
     )
 
 
@@ -82,6 +93,7 @@ async def host_ports(
     librenms_cfg = await _librenms_cfg()
     located = await state.locate.locate(
         ip, state.prefixes, librenms_cfg, await read_config("fmg"), state.cfg, names=names,
+        faz=await _faz_lookup(state),
     )
     return await hostports.check(
         ip=ip, names=names, inv=state.inventory, prefixes=state.prefixes,

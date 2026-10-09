@@ -196,6 +196,12 @@ export default function LocateHost() {
               {res.arp
                 ? <>
                     {de.locate.provenance[res.arp.provenance]}
+                    {res.from_faz && (
+                      <span className="text-slate-400">
+                        {res.from_faz.name && <> · {res.from_faz.name}</>}
+                        {' · '}{de.locate.fazSeen} {age(res.from_faz.age_s)}
+                      </span>
+                    )}
                     {res.arp.device && <span className="text-slate-400"> · {res.arp.device}</span>}
                     {res.arp.vdom && <span className="text-slate-500">/{res.arp.vdom}</span>}
                     {res.arp.interface && (

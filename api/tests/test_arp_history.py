@@ -178,7 +178,7 @@ async def test_without_history_the_old_message_stands(inventory, prefixes):
 
     assert res["mac"] is None and res["from_cache"] is None
     assert res["ip_history"] == []
-    assert "aufgezeichneten Historie" in " ".join(res["warnings"])
+    assert "aufgezeichnete Historie" in " ".join(res["warnings"])
 
 
 async def test_broken_store_does_not_break_the_search(inventory, prefixes):
@@ -187,3 +187,49 @@ async def test_broken_store_does_not_break_the_search(inventory, prefixes):
 
     assert res["mac"] is None          # kein Treffer, aber auch keine Exception
     assert res["warnings"]
+
+
+# ── FortiAnalyzer als MAC-Quelle ─────────────────────────────────────────────
+
+def _faz(mac: str | None, age_s: int | None, name: str = "plc-10"):
+    async def lookup(ip):
+        return {"ip": ip, "mac": mac, "name": name, "last_seen": "2026-10-09T10:00:00+00:00",
+                "age_s": age_s, "os": None, "epid": 1} if mac else None
+    return lookup
+
+
+async def _locate_faz(chain, prefixes, ip: str, faz) -> dict:
+    return await chain.locate(ip, prefixes, {"base_url": "", "token": ""},
+                              {"host": ""}, Config(), faz=faz)
+
+
+async def test_faz_mac_is_used_before_the_history(inventory, prefixes):
+    """Der FAZ ist aktueller als die Aufzeichnung — seine MAC gewinnt."""
+    store = FakeStore({"10.1.1.10": [_binding("10.1.1.10", MAC_B, age_days=20)]})
+    res = await _locate_faz(_chain(store), prefixes, "10.1.1.10", _faz(MAC_A, 600))
+
+    assert res["mac"] == MAC_A and res["arp"]["provenance"] == "faz"
+    assert res["from_faz"]["name"] == "plc-10" and res["from_cache"] is None
+    assert res["best"]["if_name"] == "Gi1/0/7" and res["confidence"] == "high"
+    assert "FortiAnalyzer" in " ".join(res["warnings"])
+    assert store.recorded == []                     # FAZ-Zeit ist nicht „jetzt"
+
+
+async def test_old_faz_entry_does_not_claim_high_confidence(inventory, prefixes):
+    res = await _locate_faz(_chain(FakeStore({})), prefixes, "10.1.1.10", _faz(MAC_A, 3 * 86400))
+    assert res["arp"]["provenance"] == "faz" and res["confidence"] == "medium"
+
+
+async def test_without_faz_hit_the_history_still_answers(inventory, prefixes):
+    store = FakeStore({"10.1.1.10": [_binding("10.1.1.10", MAC_A, age_days=3)]})
+    res = await _locate_faz(_chain(store), prefixes, "10.1.1.10", _faz(None, None))
+    assert res["arp"]["provenance"] == "cache" and res["from_faz"] is None
+
+
+async def test_broken_faz_does_not_break_the_search(inventory, prefixes):
+    async def broken(ip):
+        raise RuntimeError("FAZ weg")
+    store = FakeStore({"10.1.1.10": [_binding("10.1.1.10", MAC_A, age_days=3)]})
+    res = await _locate_faz(_chain(store), prefixes, "10.1.1.10", broken)
+    assert res["arp"]["provenance"] == "cache"
+    assert "FortiAnalyzer nicht abrufbar: FAZ weg" in res["warnings"]

@@ -105,3 +105,13 @@ async def test_old_arp_bindings_are_left_out_but_faz_keeps_the_host(inventory):
     hosts = await _hosts(inventory, arp_rows=rows, faz=faz, max_age=30 * 86400)
     assert hosts["10.1.1.90"]["sources"] == ["faz"] and hosts["10.1.1.90"]["age_s"] == 30
     assert (await _hosts(inventory, arp_rows=rows))["10.1.1.90"]["sources"] == ["arp"]  # 0 = alle
+
+
+async def test_by_ip_takes_the_youngest_endpoint_with_a_mac():
+    now = int(datetime.now(timezone.utc).timestamp())
+    faz, _ = _faz({"result": [{"status": {"code": 0}, "data": [
+        {"epid": 1, "epip": "10.1.1.70", "mac": "000c29000001", "lastseen": now - 7200},
+        {"epid": 2, "epip": "10.1.1.70", "mac": "000c29000002", "lastseen": now - 60},
+        {"epid": 3, "epip": "10.1.1.70", "lastseen": now}]}]})
+    assert (await faz.by_ip(CFG, "10.1.1.70"))["epid"] == 2
+    assert await faz.by_ip(CFG, "10.1.1.99") is None

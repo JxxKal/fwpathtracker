@@ -185,6 +185,12 @@ class FazSource:
         self._cache[key] = out
         return out
 
+    async def by_ip(self, cfg: dict, ip: str) -> dict | None:
+        """Jüngster Endpoint mit dieser IP und einer MAC."""
+        hits = [h for h in await self.endpoints(cfg) if h["ip"] == ip and h.get("mac")]
+        return min(hits, key=lambda h: h["age_s"] if h["age_s"] is not None else 1 << 62,
+                   default=None)
+
     async def test(self, cfg: dict) -> dict:
         """Verbindungstest: Anzahl und die Feldnamen, die der FAZ wirklich liefert."""
         recs = await self._raw_endpoints(cfg)

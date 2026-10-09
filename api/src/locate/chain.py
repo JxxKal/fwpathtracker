@@ -40,6 +40,10 @@ def _when(last_seen: str | None, age_s: int | None) -> str:
     return f"{last_seen} ({rel})" if last_seen else rel
 
 
+# Bis hier gilt ein FAZ-Eintrag als Gegenwart; älter senkt die Sicherheit.
+FAZ_FRESH_S = 86400
+
+
 class LocateChain:
     def __init__(self, ttl_s: int = 60, store=None) -> None:
         self.librenms = LibrenmsClient()
@@ -52,12 +56,12 @@ class LocateChain:
 
     async def locate(self, ip: str, prefixes: PrefixTable, librenms_cfg: dict,
                      fmg_cfg: dict, app_cfg: Config,
-                     names: list[str] | None = None) -> dict:
+                     names: list[str] | None = None, faz=None) -> dict:
         key = (ip, tuple(sorted(names or ())))
         cached = self._cache.get(key)
         if cached is not None:
             return cached
-        result = await self._locate(ip, prefixes, librenms_cfg, fmg_cfg, app_cfg, names)
+        result = await self._locate(ip, prefixes, librenms_cfg, fmg_cfg, app_cfg, names, faz)
         self._cache[key] = result
         return result
 
@@ -179,9 +183,29 @@ class LocateChain:
             "uplinks": uplinks,
         }
 
+    async def _from_faz(self, faz, ip: str, warnings: list[str]) -> dict | None:
+        """MAC aus dem Asset Identity Center des FortiAnalyzer. Aktueller als die
+        Historie (der FAZ führt, was die Fabric gerade sieht), aber kein Live-ARP:
+        der Zeitstempel gehört in die Anzeige."""
+        if faz is None:
+            return None
+        try:
+            hit = await faz(ip)
+        except Exception as exc:
+            warnings.append(f"FortiAnalyzer nicht abrufbar: {exc}")
+            return None
+        if not hit or not hit.get("mac"):
+            return None
+        warnings.append(
+            f"Live kennt keine Quelle eine MAC zu {ip} — sie stammt aus dem "
+            f"FortiAnalyzer (Asset Identity Center"
+            + (f", Endpoint „{hit['name']}“" if hit.get("name") else "")
+            + f", zuletzt gesehen {_when(hit.get('last_seen'), hit.get('age_s'))}).")
+        return hit
+
     async def _locate(self, ip: str, prefixes: PrefixTable, librenms_cfg: dict,
                       fmg_cfg: dict, app_cfg: Config,
-                      names: list[str] | None = None) -> dict:
+                      names: list[str] | None = None, faz=None) -> dict:
         warnings: list[str] = []
         self_device = await self._self_device(ip, librenms_cfg, warnings)
 
@@ -205,6 +229,13 @@ class LocateChain:
                              "vdom": arp.get("vdom"), "interface": arp.get("interface"),
                              "source": "librenms"})
         await self._record(seen)
+
+        # Nicht in die Historie: der FAZ-Zeitstempel ist nicht „jetzt", und die
+        # Historie soll nur festhalten, was eine Firewall selbst gesehen hat.
+        from_faz = await self._from_faz(faz, ip, warnings) if arp is None else None
+        if from_faz is not None:
+            arp = {"mac": from_faz["mac"], "provenance": "faz", "device": None,
+                   "vdom": None, "interface": None}
 
         from_cache: dict | None = None
         history: list[dict] = []
@@ -234,8 +265,8 @@ class LocateChain:
         if arp is None:
             warnings.append(
                 f"Für {ip} ließ sich keine MAC-Adresse ermitteln — weder über die "
-                "FortiGate noch über LibreNMS noch aus der aufgezeichneten "
-                "Historie. Ohne MAC ist keine Portsuche möglich."
+                "FortiGate noch über LibreNMS, den FortiAnalyzer oder die "
+                "aufgezeichnete Historie. Ohne MAC ist keine Portsuche möglich."
             )
             return {
                 "ip": ip, "mac": None, "mac_readable": None, "arp": None,
@@ -255,6 +286,10 @@ class LocateChain:
             # Die Portsuche mag eindeutig sein — die MAC stammt trotzdem aus
             # einer Aufzeichnung. 'Hoch' würde eine Gegenwart behaupten, für die
             # es keinen Beleg gibt.
+            conf = "medium"
+        if (from_faz is not None and conf == "high"
+                and (from_faz.get("age_s") is None or from_faz["age_s"] > FAZ_FRESH_S)):
+            # Dasselbe für einen FAZ-Eintrag, der älter als ein Tag ist.
             conf = "medium"
 
         if not ranked:
@@ -317,6 +352,7 @@ class LocateChain:
             # Gesetzt, wenn die MAC aus der Historie kam statt von einer
             # Live-Quelle — die Anzeige muss das kenntlich machen.
             "from_cache": from_cache,
+            "from_faz": from_faz,
             "ip_history": history,
             "warnings": warnings,
         }

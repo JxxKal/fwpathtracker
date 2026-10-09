@@ -413,8 +413,11 @@ export const de = {
     },
     provenance: {
       fortigate: 'FortiGate (live)',
-    librenms: 'LibreNMS (gepollt)',
+      librenms: 'LibreNMS (gepollt)',
+      faz: 'FortiAnalyzer (Asset Identity Center)',
+      cache: 'aufgezeichnete Historie',
     },
+    fazSeen: 'zuletzt gesehen',
   },
   suggestion: {
     title: 'Regelvorschlag',
@@ -610,7 +613,7 @@ export const de = {
     librenmsStaleAfter: 'Treffer veraltet nach … s',
     librenmsRefreshed: 'LibreNMS-Cache geleert',
     faz: 'FortiAnalyzer (Asset Identity Center)',
-    fazHint: 'Liefert die Endpoints, die die Fabric aktuell sieht — im Netzplan die Quelle für „lebt jetzt“, neben iTop, LibreNMS und der ARP-Historie. Nur lesend: JSON-RPC /ueba/adom/<ADOM>/endpoints mit API-Token (FAZ → System Settings → Admin → API-User, Profil mit Lesezugriff auf Fabric View/UEBA).',
+    fazHint: 'Liefert die Endpoints, die die Fabric aktuell sieht — im Netzplan die Quelle für „lebt jetzt“ neben iTop, LibreNMS und der ARP-Historie; in der Switchport-Suche die MAC, wenn Live-ARP sie nicht kennt (vor der aufgezeichneten Historie). Nur lesend: JSON-RPC /ueba/adom/<ADOM>/endpoints mit API-Token (FAZ → System Settings → Admin → API-User, Profil mit Lesezugriff auf Fabric View/UEBA).',
     fazAdom: 'ADOM',
     fazMaxAge: 'Endpoints höchstens … Tage alt',
     fazRefreshed: 'FortiAnalyzer-Cache geleert',

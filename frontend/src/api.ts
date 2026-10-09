@@ -593,7 +593,7 @@ export interface LocateSelfDevice {
 }
 
 export interface LocateArp {
-  provenance: 'fortigate' | 'librenms';
+  provenance: 'fortigate' | 'librenms' | 'faz' | 'cache';
   device: string | null;
   vdom: string | null;
   interface: string | null;
@@ -626,6 +626,10 @@ export interface LocateResult {
   /** Gesetzt, wenn die MAC nicht live, sondern aus der Historie stammt — der
    *  Host antwortet gerade nicht. */
   from_cache?: ArpBinding | null;
+  /** Gesetzt, wenn die MAC aus dem Asset Identity Center des FortiAnalyzer
+   *  stammt — aktueller als die Historie, aber kein Live-ARP. */
+  from_faz?: { name: string | null; mac: string; last_seen: string | null;
+    age_s: number | null; os: string | null } | null;
   /** Alle je gesehenen MACs dieser IP, zuletzt gesehene zuerst. */
   ip_history?: ArpBinding[];
   warnings: string[];

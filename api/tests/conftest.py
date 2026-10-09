@@ -12,12 +12,17 @@ Topologie:
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+# Config() verlangt die Pflicht-Secrets des Containers; die Tests sprechen weder
+# Postgres noch signieren sie Tokens — Platzhalter genügen.
+os.environ.setdefault("POSTGRES_PASSWORD", "test")
+os.environ.setdefault("JWT_SECRET", "test")
 
 from inventory.store import Inventory  # noqa: E402
 
