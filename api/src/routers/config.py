@@ -12,7 +12,7 @@ router = APIRouter(prefix="/api/config", tags=["config"])
 
 KNOWN_KEYS = {"fmg", "itop", "dns", "sites", "tracker", "saml", "checks",
               "site_supernets", "librenms", "drawio", "titleblock", "shapes",
-              "webdrive"}
+              "webdrive", "faz"}
 
 
 class ConfigResponse(BaseModel):

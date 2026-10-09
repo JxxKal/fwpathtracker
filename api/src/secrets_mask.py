@@ -16,6 +16,7 @@ SECRET_FIELDS: dict[str, tuple[str, ...]] = {
     "itop": ("password",),
     "librenms": ("token",),
     "webdrive": ("token", "fac_api_key"),
+    "faz": ("token",),
 }
 
 

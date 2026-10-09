@@ -283,7 +283,13 @@ def _is_netdev(host: dict) -> bool:
 
 async def _collect_hosts(net: dict, inv: Inventory, itop_hosts: list[dict],
                          itop_addresses: dict[str, dict], arp: ArpLookup | None,
-                         librenms_devices: dict[str, dict]) -> list[dict]:
+                         librenms_devices: dict[str, dict],
+                         faz_hosts: list[dict] | None = None,
+                         arp_max_age_s: int = 0) -> list[dict]:
+    """Alle Hosts eines Netzes aus iTop (CIs, Adressobjekte), LibreNMS, der
+    ARP-Historie und dem FortiAnalyzer. Der FortiManager liefert nur Namen nach,
+    keine Hosts. arp_max_age_s > 0: ältere ARP-Bindungen bleiben draußen — die
+    Historie hält auch Geräte, die es längst nicht mehr gibt."""
     cidr = ipaddress.IPv4Network(net["cidr"])
     hosts: dict[str, dict] = {}
 
@@ -332,11 +338,28 @@ async def _collect_hosts(net: dict, inv: Inventory, itop_hosts: list[dict],
     if arp is not None:
         try:
             for b in await arp(net["cidr"]):
+                if arp_max_age_s and (b.get("age_s") or 0) > arp_max_age_s:
+                    continue
                 s = slot(b["ip"])
                 s["mac"], s["last_seen"], s["age_s"] = b["mac"], b["last_seen"], b["age_s"]
                 s["sources"].append("arp")
         except Exception as exc:
             log.warning("ARP-Historie für %s nicht lesbar: %s", net["cidr"], exc)
+    for f in faz_hosts or []:
+        try:
+            if ipaddress.IPv4Address(f["ip"]) not in cidr:
+                continue
+        except ValueError:
+            continue
+        s = slot(f["ip"])
+        s["name"] = s["name"] or f.get("name")
+        s["mac"] = s["mac"] or f.get("mac")
+        # Der jüngere Zeitpunkt gewinnt: lebt das Gerät laut FAZ, ist die
+        # alte ARP-Zeit egal.
+        if f.get("age_s") is not None and (s["age_s"] is None or f["age_s"] < s["age_s"]):
+            s["last_seen"], s["age_s"] = f.get("last_seen"), f["age_s"]
+        s["faz"] = {"os": f.get("os"), "epid": f.get("epid")}
+        s["sources"].append("faz")
     hosts.pop(net["fw_ip"], None)
     # Netz- und Broadcast-Adresse sind nie ein Gerät — tauchen aber auf, wenn
     # im iTop ein Adressobjekt dafür angelegt ist. /31 und /32 haben keine.
@@ -426,6 +449,7 @@ async def build(inv: Inventory, prefixes: PrefixTable, *, scope: str,
                 dns: DnsLookup | None = None,
                 librenms=None, librenms_cfg: dict | None = None,
                 librenms_devices: dict[str, dict] | None = None,
+                faz_hosts: list[dict] | None = None, arp_max_age_s: int = 0,
                 max_hosts: int = MAX_HOSTS) -> dict:
     if hosts not in HOST_MODES:
         raise ValueError(f"hosts muss eines von {HOST_MODES} sein.")
@@ -457,7 +481,7 @@ async def build(inv: Inventory, prefixes: PrefixTable, *, scope: str,
             for net in vd["networks"]:
                 net["hosts"] = await _collect_hosts(
                     net, inv, itop_hosts or [], itop_addresses or {}, arp,
-                    librenms_devices or {})
+                    librenms_devices or {}, faz_hosts, arp_max_age_s)
                 total += len(net["hosts"])
         if mode == "auto":
             mode = "netdev" if total > max_hosts else "all"

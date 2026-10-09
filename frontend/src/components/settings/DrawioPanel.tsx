@@ -53,6 +53,13 @@ export default function DrawioPanel() {
           onChange={(e) => setCfg((c) => ({ ...c, uplink_label: e.target.value }))} />
         <p className="mt-1 text-[11px] text-slate-600">{de.settings.uplinkLabelHint}</p>
       </div>
+      <div>
+        <label className="mb-1 block text-xs text-slate-400">{de.settings.arpMaxAge}</label>
+        <input className="fwpt-input w-32" type="number" min={0}
+          value={(cfg.arp_max_age_days as number) ?? 30}
+          onChange={(e) => setCfg((c) => ({ ...c, arp_max_age_days: Number(e.target.value) }))} />
+        <p className="mt-1 text-[11px] text-slate-600">{de.settings.arpMaxAgeHint}</p>
+      </div>
       {test && (
         <div className={`flex items-start gap-2 text-sm ${test.ok ? 'text-emerald-400' : test.soft ? 'text-amber-400' : 'text-red-400'}`}>
           {test.ok ? <CheckCircle2 size={16} className="mt-0.5 shrink-0" />

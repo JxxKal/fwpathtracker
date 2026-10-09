@@ -12,7 +12,8 @@ liegt die Auskunft der Zeichnung, in zwei Stufen:
 
   * rot (Symbol und Name): im iTop geführt und im VLAN, aber kein CI dieses
     Service — liegt also im Netz des Service, ohne ihm zugeordnet zu sein;
-  * rot umrandet: gar nicht im iTop, nur aus FortiManager, ARP oder DNS bekannt.
+  * rot umrandet: gar nicht im iTop, nur aus FortiAnalyzer, LibreNMS oder der
+    ARP-Historie bekannt (FortiManager und DNS liefern nur Namen nach).
 
 CIs des Service selbst stehen unmarkiert.
 
@@ -90,6 +91,7 @@ async def build(inv: Inventory, *, families: list[dict], services: list[dict],
                 arp: diagram_model.ArpLookup | None = None,
                 dns: diagram_model.DnsLookup | None = None,
                 librenms_devices: dict[str, dict] | None = None,
+                faz_hosts: list[dict] | None = None, arp_max_age_s: int = 0,
                 family: str | None = None) -> dict:
     wanted = _wanted(families, services, family)
     if family and not wanted:
@@ -133,7 +135,8 @@ async def build(inv: Inventory, *, families: list[dict], services: list[dict],
     itop_addresses = await addresses([n["cidr"] for n in nets.values()]) if addresses and nets else {}
     for net in nets.values():
         net["hosts"] = await diagram_model._collect_hosts(
-            net, inv, itop_hosts, itop_addresses, arp, librenms_devices or {})
+            net, inv, itop_hosts, itop_addresses, arp, librenms_devices or {},
+            faz_hosts, arp_max_age_s)
     resolved = await diagram_model._resolve_names(list(nets.values()), dns, [diagram_model.DNS_MAX])
     for net in nets.values():
         net["host_count"] = len(net["hosts"])
@@ -404,7 +407,7 @@ def _draw_family(doc: Doc, fam: dict, mdl: dict, title_block: dict | None,
               "aber nicht diesem Service zugeordnet") if not hide_not_in_service
              else "ausgeblendet: Hosts, die nicht diesem Service zugeordnet sind",
              (f"<span style='color:{RED}'>□ rot umrandet, rote Schrift</span> = nicht im iTop "
-              "geführt (nur FortiManager, ARP oder DNS)") if not hide_not_in_itop
+              "geführt (nur FortiAnalyzer, LibreNMS oder ARP)") if not hide_not_in_itop
              else "ausgeblendet: Hosts, die nicht im iTop geführt sind"]
     legend = ("<br>".join(lines) + "<br>"
               + ("Farbe des VLAN-Kastens = Firewall gleicher Farbe, an der das Netz terminiert"

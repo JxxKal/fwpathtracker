@@ -4,6 +4,7 @@ import ErrorBoundary from '../ErrorBoundary';
 import SideNav, { type NavGroup } from '../SideNav';
 import DnsPanel from './DnsPanel';
 import DrawioPanel from './DrawioPanel';
+import FazPanel from './FazPanel';
 import FmgPanel from './FmgPanel';
 import ItopPanel from './ItopPanel';
 import LibrenmsPanel from './LibrenmsPanel';
@@ -27,6 +28,7 @@ const PANELS: Record<string, () => JSX.Element> = {
   fmg: () => <FmgPanel />,
   itop: () => <ItopPanel />,
   librenms: () => <LibrenmsPanel />,
+  faz: () => <FazPanel />,
   webdrive: () => <WebdrivePanel />,
   dns: () => <DnsPanel />,
   drawio: () => <DrawioPanel />,
@@ -46,6 +48,7 @@ const GROUPS: NavGroup[] = [
       { id: 'fmg', label: de.settingsNav.fmg },
       { id: 'itop', label: de.settingsNav.itop },
       { id: 'librenms', label: de.settingsNav.librenms },
+      { id: 'faz', label: de.settingsNav.faz },
       { id: 'webdrive', label: de.settingsNav.webdrive },
       { id: 'dns', label: de.settingsNav.dns },
     ],

@@ -30,10 +30,11 @@ from resolver.chain import ResolverChain
 from resolver.dns_cache import DnsCache
 from routers import auth as auth_router
 from routers import config as config_router
-from routers import (checks, diagram, dns_admin, fmg_admin, itop_admin, librenms_admin,
+from routers import (checks, diagram, dns_admin, faz_admin, fmg_admin, itop_admin, librenms_admin,
                      locate, saml, search, ssl, switchview, trace, users, vlans, webdrive)
 from routers.auth import hash_password
 from routers.config import read_config
+from faz.client import FazSource
 from webdrive.fac import FacClient
 from webdrive.graylog import GraylogClient
 from webdrive.poller import WebdrivePoller
@@ -195,6 +196,7 @@ async def lifespan(app: FastAPI):
     app.state.webdrive_store = WebdriveStore(pool)
     app.state.webdrive_poller = WebdrivePoller(GraylogClient(), app.state.webdrive_store)
     app.state.webdrive_fac = FacClient()
+    app.state.faz = FazSource()
     app.state.set_inventory = lambda inv: _rebuild_state(app, inv)
     await _rebuild_state(app, await load_inventory(pool))
 
@@ -222,6 +224,7 @@ app.include_router(users.router)
 app.include_router(fmg_admin.router)
 app.include_router(itop_admin.router)
 app.include_router(librenms_admin.router)
+app.include_router(faz_admin.router)  # FortiAnalyzer (Asset Identity Center)
 app.include_router(dns_admin.router)  # Stand des Reverse-DNS-Caches
 app.include_router(search.router)
 app.include_router(locate.router)  # Switchport-Suche + Netzwerkport-Check (LibreNMS-FDB)

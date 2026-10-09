@@ -186,6 +186,8 @@ def _host_tooltip(h: dict) -> str:
             ("Beschreibung", h.get("description")), ("iTop-Status", h.get("itop_status")),
             ("MAC", h.get("mac")), ("Zuletzt gesehen", h.get("last_seen")),
             ("Quellen", ", ".join(h.get("sources") or []))]
+    if (h.get("faz") or {}).get("os"):
+        rows.append(("Betriebssystem (FAZ)", h["faz"]["os"]))
     lnms = h.get("librenms") or {}
     if lnms:
         rows.append(("LibreNMS", " ".join(str(v) for v in (lnms.get("hostname"), lnms.get("hardware")) if v)))

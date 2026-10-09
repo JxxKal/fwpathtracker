@@ -865,6 +865,24 @@ export async function librenmsTest(): Promise<{
   return request('/api/librenms/test', { method: 'POST' });
 }
 
+export interface FazTestResult {
+  ok: boolean; endpoints: number; hosts: number; with_mac: number;
+  with_last_seen: number; fields: string[];
+}
+
+export async function fazTest(): Promise<FazTestResult> {
+  if (isDemoMode()) {
+    return { ok: true, endpoints: 412, hosts: 398, with_mac: 371, with_last_seen: 398,
+      fields: ['epid', 'epip', 'epname', 'lastseen', 'mac', 'os'] };
+  }
+  return request('/api/faz/test', { method: 'POST' });
+}
+
+export async function fazRefresh(): Promise<{ ok: boolean }> {
+  if (isDemoMode()) return { ok: true };
+  return request('/api/faz/refresh', { method: 'POST' });
+}
+
 export async function librenmsRefresh(): Promise<{ ok: boolean }> {
   if (isDemoMode()) return { ok: true };
   return request('/api/librenms/refresh', { method: 'POST' });

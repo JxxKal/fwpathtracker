@@ -362,6 +362,32 @@ async def service_families(request: Request, _user: dict = Depends(get_current_u
             "errors": data["errors"]}
 
 
+DEFAULT_ARP_MAX_AGE_DAYS = 30
+
+
+async def _live_hosts(state, warnings: list[str]) -> tuple[list[dict] | None, int]:
+    """FortiAnalyzer-Endpoints (was jetzt lebt) und das Höchstalter, ab dem
+    ARP-Bindungen nicht mehr gezeichnet werden (drawio.arp_max_age_days)."""
+    days = (await read_config("drawio")).get("arp_max_age_days", DEFAULT_ARP_MAX_AGE_DAYS)
+    faz_cfg = await read_config("faz")
+    faz_hosts = None
+    if state.faz.configured(faz_cfg):
+        try:
+            faz_hosts = await state.faz.endpoints(faz_cfg)
+        except Exception as exc:
+            warnings.append(f"FortiAnalyzer-Assets nicht abrufbar: {exc}")
+    return faz_hosts, int(days or 0) * 86400
+
+
+def _source_note(faz_hosts: list[dict] | None, arp_max_age_s: int) -> str:
+    parts = ["iTop", "FortiManager"]
+    if faz_hosts is not None:
+        parts.append("FortiAnalyzer")
+    parts.append(f"ARP-Historie (≤ {arp_max_age_s // 86400} Tage)" if arp_max_age_s
+                 else "ARP-Historie")
+    return "Erzeugt von A38 aus " + ", ".join(parts) + " und DNS"
+
+
 async def _services(body: DiagramRequest, request: Request, user: dict) -> dict:
     """Service-Sicht: Netze aus den IPs der CIs, die am Service hängen."""
     state = request.app.state
@@ -406,13 +432,14 @@ async def _services(body: DiagramRequest, request: Request, user: dict) -> dict:
         except Exception as exc:
             warnings.append(f"LibreNMS-Geräte nicht abrufbar: {exc}")
     reverse = await build_reverse(state, await read_config("dns"))
+    faz_hosts, arp_max_age_s = await _live_hosts(state, warnings)
 
     try:
         mdl = await service_view.build(
             state.inventory, families=data["families"], services=data["services"],
             links=data["links"], itop_hosts=itop_hosts, itop_subnets=itop_subnets,
             addresses=addresses, arp=arp, dns=reverse, librenms_devices=librenms_devices,
-            family=body.family)
+            faz_hosts=faz_hosts, arp_max_age_s=arp_max_age_s, family=body.family)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     if reverse is not None:
@@ -444,7 +471,7 @@ async def _services(body: DiagramRequest, request: Request, user: dict) -> dict:
                       f" · {st['hosts_not_in_service']}× nicht am Service"
                       f" · {st['hosts_not_in_itop']} nicht im iTop"),
             author=str(user.get("username") or ""), drawing_no=f"{prefix}-{stem.upper()}",
-            note="Erzeugt von A38 aus iTop, FortiManager, ARP-Historie und DNS")
+            note=_source_note(faz_hosts, arp_max_age_s))
     return {"filename": f"A38_Netzplan_{stem}.drawio", "xml": service_view.render(
             mdl, tb, body.show_firewalls, body.hide_not_in_itop, body.hide_not_in_service),
             "stats": st, "hosts_mode": "all", "warnings": warnings}
@@ -508,6 +535,8 @@ async def build(body: DiagramRequest, request: Request,
     # bei denen im Plan sonst nur eine nackte IP steht.
     dns_cfg = await read_config("dns")
     reverse = await build_reverse(state, dns_cfg) if wants_hosts else None
+    faz_hosts, arp_max_age_s = (await _live_hosts(state, warnings) if wants_hosts
+                                else (None, 0))
 
     # Link-Status live holen, solange Netze gezeichnet werden. Der Gesamtplan
     # zeigt keine Netze — dort wäre es nur Last ohne Nutzen.
@@ -527,6 +556,7 @@ async def build(body: DiagramRequest, request: Request,
             itop_hosts=itop_hosts, itop_addresses=itop_addresses, arp=arp, dns=reverse,
             librenms=librenms,
             librenms_cfg=librenms_cfg if librenms else None, librenms_devices=librenms_devices,
+            faz_hosts=faz_hosts, arp_max_age_s=arp_max_age_s,
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
