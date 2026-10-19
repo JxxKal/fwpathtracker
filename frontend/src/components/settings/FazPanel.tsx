@@ -74,6 +74,19 @@ export default function FazPanel() {
             value={(cfg.max_age_days as number) ?? 7}
             onChange={(e) => set('max_age_days', Number(e.target.value))} />
         </div>
+        <div>
+          <label className="mb-1 block text-xs text-slate-400" title={de.settings.fazTimezoneHint}>
+            {de.settings.fazTimezone}
+          </label>
+          <input className="fwpt-input" value={(cfg.timezone as string) ?? 'Europe/Berlin'}
+            placeholder="Europe/Berlin" onChange={(e) => set('timezone', e.target.value)} />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-slate-400">{de.settings.fazSearchTimeout}</label>
+          <input className="fwpt-input" type="number" min={5} max={300}
+            value={(cfg.search_timeout_s as number) ?? 45}
+            onChange={(e) => set('search_timeout_s', Number(e.target.value))} />
+        </div>
       </div>
       <label className="flex items-center gap-2 text-sm text-slate-300">
         <input type="checkbox" checked={(cfg.ssl_verify as boolean) ?? true}

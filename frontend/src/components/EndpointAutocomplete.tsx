@@ -35,6 +35,7 @@ export default function EndpointAutocomplete({ value, onChange, placeholder, onS
   const [open, setOpen] = useState(false);
   const timer = useRef<number>();
   const box = useRef<HTMLDivElement>(null);
+  const input = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     window.clearTimeout(timer.current);
@@ -53,7 +54,9 @@ export default function EndpointAutocomplete({ value, onChange, placeholder, onS
         const res = await searchEndpoints(value.trim());
         setHits(res);
         setSearched(true);
-        setOpen(true);
+        // Nur aufklappen, wenn jemand tippt — ein vorbelegtes Feld (Sprung aus
+        // Verlauf oder Deny-Liste) soll keine Liste über das Ergebnis legen.
+        if (document.activeElement === input.current) setOpen(true);
       } catch {
         setHits([]);
         setSearched(true);
@@ -83,7 +86,7 @@ export default function EndpointAutocomplete({ value, onChange, placeholder, onS
   return (
     <div className="relative" ref={box}>
       <input
-        className="fwpt-input" placeholder={placeholder} value={value}
+        ref={input} className="fwpt-input" placeholder={placeholder} value={value}
         onChange={(e) => onChange(e.target.value)}
         onFocus={() => (hits.length > 0 || loading) && setOpen(true)}
         onKeyDown={(e) => {

@@ -11,6 +11,7 @@ import IpCalc from './IpCalc';
 import LocateHost from './LocateHost';
 import NetDiagram from './NetDiagram';
 import NetOwnership from './NetOwnership';
+import Reconcile from './Reconcile';
 import SwitchView from './SwitchView';
 import VlanList from './VlanList';
 
@@ -20,7 +21,7 @@ import VlanList from './VlanList';
 // Bildschirmbreite, und neben einer 700px-Karte stand 600px Leerraum.
 
 export type ToolId =
-  | 'netz' | 'switchport' | 'ports' | 'switchview' | 'vlans' | 'netzplan' | 'subnetz'
+  | 'netz' | 'switchport' | 'ports' | 'switchview' | 'vlans' | 'netzplan' | 'abgleich' | 'subnetz'
   | 'freieip' | 'ipcalc';
 
 // `label` ist der kurze Name in der Seitenleiste, nicht der Titel der Karte:
@@ -46,6 +47,7 @@ export const TOOL_GROUPS: Group[] = [
       { id: 'switchview', label: de.tools.navSwitchView, hint: de.tools.hintSwitchView, render: () => <SwitchView /> },
       { id: 'vlans', label: de.tools.navVlans, hint: de.tools.hintVlans, render: () => <VlanList /> },
       { id: 'netzplan', label: de.tools.navDiagram, hint: de.tools.hintDiagram, render: () => <NetDiagram /> },
+      { id: 'abgleich', label: de.tools.navReconcile, hint: de.tools.hintReconcile, render: () => <Reconcile /> },
     ],
   },
   {

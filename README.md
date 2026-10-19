@@ -81,6 +81,41 @@ Schreibzugriff** auf den FortiManager (No-Write-Garantie, s.u.).
 - v1-Randfälle werden **gewarnt** statt still falsch gerechnet: VIP/DNAT,
   Internet-Service/ISDB, negierte Adress-/Service-Felder.
 
+### 📜 Ist-Zustand aus dem FortiAnalyzer (Tracker → Seitenleiste)
+
+Der Pfad-Tracker sagt, was die Regeln **jetzt** erlauben. Diese Ansichten
+zeigen, was **tatsächlich** passiert ist — aus den Traffic-Logs des
+FortiAnalyzer (`/logview/adom/<ADOM>/logsearch`, asynchron: Task anlegen,
+pollen, abholen, löschen) und dem Bestand. Rein lesend.
+
+- **Gestern ging es noch** — Quelle, Ziel, Protokoll, optional Port und
+  Zeitraum (6 h … 30 Tage). Befund: *seit … geblockt* (erster Deny nach dem
+  letzten Allow, mit Firewall/VDOM und Regel), *seit … kein Verkehr mehr*
+  (erlaubt, kommt aber nicht mehr an → Routing/Quelle statt Regel),
+  *durchgehend erlaubt*, *wieder erlaubt*. Dazu eine Zeitleiste
+  erlaubt/geblockt und je Firewall/Regel Anzahl, zuerst/zuletzt, Interfaces.
+  Policy-Namen kommen aus dem FMG-Cache. Aus jedem Trace-Ergebnis per
+  Verlauf-Symbol erreichbar.
+- **Was wird geblockt?** — alle Denies eines Hosts (als Quelle, Ziel oder
+  beides) der letzten 15 min … 7 Tage, gruppiert nach Gegenstelle, Port,
+  Firewall und Regel; Gegenstellen mit Namen (iTop, FMG, DNS). Je Zeile ein
+  Sprung in den Pfad-Tracker (Regelvorschlag) und in „Gestern ging es noch".
+- **Bestandsabgleich** (Network Tools → Bestand) — ein Netz (CIDR, oder IP/Name → iTop-Subnetz bzw.
+  connected Netz) gegen iTop-CIs und -IP-Objekte, ARP-Historie,
+  FAZ-Endpoints, LibreNMS und DNS. Befunde: *nicht im iTop*, *im iTop
+  freigegeben, aber aktiv*, *verwaist im iTop* (nur wenn das Netz überhaupt
+  beobachtet wird; Firewall-Interfaces und reservierte Adressen ausgenommen),
+  *IP-Konflikt* (zwei MACs gleichzeitig) vs. *MAC gewechselt* (nacheinander),
+  *Name weicht ab* (iTop vs. DNS/FAZ). Filter je Befund, CSV in die
+  Zwischenablage.
+
+Voraussetzungen: Der API-Benutzer des FAZ braucht Lesezugriff auf **Log View**.
+Sichtbar ist nur geloggter Verkehr — Regeln ohne Logging und der implizite
+Deny ohne „log violation traffic" fehlen. Einstellungen → FortiAnalyzer:
+**Zeitzone** des FAZ (das Zeitfenster wird in seiner Zeit übergeben) und
+**Zeitgrenze** der Logsuche (Standard 45 s; danach werden die jüngsten Zeilen
+ausgewertet). Je Suche höchstens 5 000 Zeilen, Ergebnisse 60 s gecacht.
+
 ### ✅ Checks — Batch-Regression
 
 Benannte Gruppen von Test-Flows (Soll vs. Ist) als Batch prüfen — vor und nach

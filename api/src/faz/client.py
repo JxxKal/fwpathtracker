@@ -14,8 +14,10 @@ gelieferten Felder, damit man nachschärfen kann.
 """
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -36,6 +38,14 @@ MAC_KEYS = ("mac", "epmac", "macaddr", "mac-addr", "mac_addr", "mac-address")
 SEEN_KEYS = ("lastseen", "last-seen", "last_seen", "lastactive", "last-active",
              "lastupdate", "last-update", "updatetime", "update-time")
 OS_KEYS = ("os", "osname", "os-name", "ostype")
+
+
+# Logsuche: je Abruf höchstens LOG_PAGE Zeilen (FAZ-Obergrenze), insgesamt
+# LOG_LIMIT — mehr braucht keine Auswertung, und mehr hält der FAZ nicht gern aus.
+LOG_PAGE = 1000
+LOG_LIMIT = 5000
+SEARCH_TIMEOUT_S = 45
+POLL_S = 1.0
 
 
 class FazNotConfigured(Exception):
@@ -100,6 +110,51 @@ def _records(data: Any) -> list[dict]:
     return []
 
 
+def _tid(res: Any) -> int | None:
+    for src in (res, res.get("data") if isinstance(res, dict) else None):
+        if isinstance(src, dict) and src.get("tid") not in (None, ""):
+            try:
+                return int(src["tid"])
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _percentage(res: Any) -> int:
+    """Fortschritt der Suche — je nach FAZ-Version neben oder in 'data'."""
+    for src in (res, res.get("data") if isinstance(res, dict) else None):
+        if isinstance(src, dict):
+            for k in ("percentage", "percentage-done", "progress"):
+                if src.get(k) is not None:
+                    try:
+                        return int(float(src[k]))
+                    except (TypeError, ValueError):
+                        pass
+    return 0
+
+
+def _total(res: Any) -> int | None:
+    for src in (res, res.get("data") if isinstance(res, dict) else None):
+        if isinstance(src, dict):
+            for k in ("total-count", "total_lines", "total-lines", "total"):
+                if isinstance(src.get(k), int):
+                    return src[k]
+    return None
+
+
+def _log_rows(res: Any) -> list[dict]:
+    if not isinstance(res, dict):
+        return []
+    data = res.get("data")
+    if isinstance(data, list):
+        return [r for r in data if isinstance(r, dict)]
+    if isinstance(data, dict):
+        for k in ("logs", "data"):
+            if isinstance(data.get(k), list):
+                return [r for r in data[k] if isinstance(r, dict)]
+    return []
+
+
 def normalize(rec: dict, now: datetime | None = None) -> list[dict]:
     """Ein Endpoint-Datensatz → ein Host je IPv4-Adresse."""
     now = now or datetime.now(timezone.utc)
@@ -124,23 +179,26 @@ class FazSource:
     def __init__(self, ttl_s: int = 300,
                  transport: httpx.AsyncBaseTransport | None = None) -> None:
         self._cache: TTLCache = TTLCache(maxsize=4, ttl=ttl_s)
+        self._log_cache: TTLCache = TTLCache(maxsize=64, ttl=60)
         self._transport = transport
 
     def invalidate(self) -> None:
         self._cache.clear()
+        self._log_cache.clear()
 
     @staticmethod
     def configured(cfg: dict) -> bool:
         return bool((cfg.get("base_url") or "").strip() and cfg.get("token"))
 
-    async def _rpc(self, cfg: dict, url: str, **params: Any) -> Any:
+    async def _rpc(self, cfg: dict, url: str, method: str = "get", whole: bool = False,
+                   **params: Any) -> Any:
         base = (cfg.get("base_url") or "").strip().rstrip("/")
         if not base:
             raise FazNotConfigured("FortiAnalyzer ist nicht konfiguriert.")
         if not cfg.get("token"):
             raise FazNotConfigured("FortiAnalyzer-API-Token fehlt.")
         guard_egress_url(base, "FortiAnalyzer-URL")
-        payload = {"id": 1, "jsonrpc": "2.0", "method": "get",
+        payload = {"id": 1, "jsonrpc": "2.0", "method": method,
                    "params": [{"url": url, **params}]}
         async with httpx.AsyncClient(
                 verify=cfg.get("ssl_verify", True), timeout=float(cfg.get("timeout_s", 30)),
@@ -163,7 +221,9 @@ class FazSource:
         if isinstance(status, dict) and status.get("code") not in (None, 0):
             raise FazError(f"FortiAnalyzer: {status.get('message') or status.get('code')}"
                            f" ({url})")
-        return result.get("data", result)
+        # Die Logsuche braucht die ganze Antwort: Fortschritt und Zeilenzahl
+        # stehen neben den Daten, nicht in ihnen.
+        return result if whole else result.get("data", result)
 
     async def _raw_endpoints(self, cfg: dict) -> list[dict]:
         adom = (cfg.get("adom") or "root").strip()
@@ -190,6 +250,61 @@ class FazSource:
         hits = [h for h in await self.endpoints(cfg) if h["ip"] == ip and h.get("mac")]
         return min(hits, key=lambda h: h["age_s"] if h["age_s"] is not None else 1 << 62,
                    default=None)
+
+    async def logsearch(self, cfg: dict, *, logtype: str, filter: str,
+                        start: str, end: str, limit: int = LOG_LIMIT) -> dict:
+        """Asynchrone Logsuche: Aufgabe anlegen, auf 100 % warten, seitenweise
+        abholen, Aufgabe wieder löschen. Rückgabe {logs, complete, total}.
+
+        complete=False heißt: Zeitüberschreitung — die Zeilen sind dann nur ein
+        Teil. time-order desc sorgt dafür, dass es wenigstens die jüngsten sind.
+        Ergebnisse werden eine Minute gehalten, weil dieselbe Frage beim
+        Durchklicken gern zweimal kommt.
+        """
+        key = ("log", cfg.get("base_url"), cfg.get("adom"), logtype, filter, start, end, limit)
+        if key in self._log_cache:
+            return self._log_cache[key]
+        adom = (cfg.get("adom") or "root").strip()
+        base_url = f"/logview/adom/{adom}/logsearch"
+        added = await self._rpc(
+            cfg, base_url, method="add", whole=True, apiver=API_VERSION,
+            logtype=logtype, filter=filter, device=[{"devid": "All_FortiGate"}],
+            **{"time-range": {"start": start, "end": end}, "time-order": "desc",
+               "case-sensitive": False})
+        tid = _tid(added)
+        if tid is None:
+            raise FazError(f"Logsuche ohne Task-ID beantwortet: {str(added)[:200]}")
+        url = f"{base_url}/{tid}"
+        deadline = time.monotonic() + float(cfg.get("search_timeout_s", SEARCH_TIMEOUT_S))
+        logs: list[dict] = []
+        complete, total = False, None
+        try:
+            while True:
+                res = await self._rpc(cfg, url, whole=True, apiver=API_VERSION,
+                                      limit=LOG_PAGE, offset=0)
+                pct = _percentage(res)
+                if pct >= 100:
+                    complete = True
+                    break
+                if time.monotonic() >= deadline:
+                    break
+                await asyncio.sleep(POLL_S)
+            total = _total(res)
+            logs = _log_rows(res)
+            while len(logs) < limit and len(_log_rows(res)) == LOG_PAGE:
+                res = await self._rpc(cfg, url, whole=True, apiver=API_VERSION,
+                                      limit=LOG_PAGE, offset=len(logs))
+                logs.extend(_log_rows(res))
+        finally:
+            try:
+                await self._rpc(cfg, url, method="delete", whole=True, apiver=API_VERSION)
+            except Exception as exc:     # aufräumen ist Kür, nicht Pflicht
+                log.debug("Logsuche %s nicht gelöscht: %s", tid, exc)
+        out = {"logs": logs[:limit], "complete": complete,
+               "total": total if total is not None else len(logs)}
+        if complete:
+            self._log_cache[key] = out
+        return out
 
     async def test(self, cfg: dict) -> dict:
         """Verbindungstest: Anzahl und die Feldnamen, die der FAZ wirklich liefert."""

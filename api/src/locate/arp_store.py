@@ -138,6 +138,20 @@ class ArpStore:
                 str(net), limit)
         return [row_to_binding(r) for r in rows]
 
+    async def bindings_in_network(self, cidr: str, limit: int = 20000) -> list[dict]:
+        """ALLE Bindungen eines Netzes, nicht nur die jüngste je IP — der
+        Bestandsabgleich braucht mehrere MACs an einer IP, um Konflikt und
+        Gerätetausch zu unterscheiden."""
+        try:
+            net = ipaddress.IPv4Network(cidr, strict=False)
+        except ValueError:
+            return []
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM arp_history WHERE ip::inet << $1::cidr "
+                "ORDER BY ip, last_seen DESC LIMIT $2", str(net), limit)
+        return [row_to_binding(r) for r in rows]
+
     async def latest_by_macs(self, macs: list[str]) -> dict[str, dict]:
         """MAC → jüngste bekannte Bindung, für viele MACs in EINER Abfrage.
 

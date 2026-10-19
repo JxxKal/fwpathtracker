@@ -1,11 +1,13 @@
-import { Info, LogOut, Route } from 'lucide-react';
+import { History, Info, LogOut, Route } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { portTrace, runTrace, setToken } from './api';
+import { portTrace, runTrace, setToken, type FlowHistoryRequest } from './api';
 import LoginPage from './components/LoginPage';
 import HistoryList from './components/HistoryList';
 import AddToChecks from './components/AddToChecks';
 import ChecksPanel from './components/ChecksPanel';
 import ErrorBoundary from './components/ErrorBoundary';
+import BlockedNow from './components/faz/BlockedNow';
+import FlowHistory from './components/faz/FlowHistory';
 import HopDetailPanel from './components/HopDetailPanel';
 import PathGraph from './components/PathGraph';
 import PortResult from './components/PortResult';
@@ -25,12 +27,20 @@ const TAB_LABEL: Record<Tab, string> = {
   tracker: de.tabs.tracker, tools: de.tabs.tools, webdrive: de.tabs.webdrive,
   einstellungen: de.tabs.settings,
 };
-/** Ansichten innerhalb des Trackers — Prüfung, gespeicherte Checks, Verlauf. */
-type TrackerView = 'pfad' | 'checks' | 'verlauf';
+/** Ansichten innerhalb des Trackers — Prüfung, Ist-Zustand aus dem
+ *  FortiAnalyzer, gespeicherte Checks, Verlauf. */
+type TrackerView = 'pfad' | 'gestern' | 'geblockt' | 'checks' | 'verlauf';
+const TRACKER_VIEWS: TrackerView[] = ['pfad', 'gestern', 'geblockt', 'checks', 'verlauf'];
 
 const TRACKER_NAV: NavGroup[] = [
   { id: 'pruefen', label: de.tracker.groupCheck,
     items: [{ id: 'pfad', label: de.tracker.navPath, hint: de.trace.hint }] },
+  // Das Ist neben der Theorie: was die Logs und der Bestand sagen.
+  { id: 'ist', label: de.tracker.groupFaz,
+    items: [
+      { id: 'gestern', label: de.tracker.navYesterday, hint: de.tracker.hintYesterday },
+      { id: 'geblockt', label: de.tracker.navBlocked, hint: de.tracker.hintBlocked },
+    ] },
   { id: 'gespeichert', label: de.tracker.groupSaved,
     items: [
       { id: 'checks', label: de.tabs.checks, hint: de.tracker.hintChecks },
@@ -52,6 +62,7 @@ function readTab(hasCheckLink: boolean, hasToolLink: boolean): [Tab, TrackerView
   if (t === 'tools' || t === 'werkzeuge' || hasToolLink) return ['tools', 'pfad'];
   if (t === 'checks' || view === 'checks' || hasCheckLink) return ['tracker', 'checks'];
   if (t === 'verlauf' || view === 'verlauf') return ['tracker', 'verlauf'];
+  if (TRACKER_VIEWS.includes(view as TrackerView)) return ['tracker', view as TrackerView];
   if (t === 'webdrive') return ['webdrive', 'pfad'];
   if (t === 'einstellungen') return ['einstellungen', 'pfad'];
   return ['tracker', 'pfad'];
@@ -85,6 +96,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [selectedHop, setSelectedHop] = useState<Hop | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Sprung in „Gestern ging es noch" mit fertigem Flow (aus Tracker oder Deny-Liste).
+  const [flowInit, setFlowInit] = useState<FlowHistoryRequest | null>(null);
 
   useEffect(() => {
     const onLogout = () => logout();
@@ -147,6 +160,18 @@ export default function App() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function openHistory(req: FlowHistoryRequest) {
+    setFlowInit(req);
+    setTab('tracker');
+    setView('gestern');
+  }
+
+  function traceFrom(req: TraceRequest) {
+    setMode('service');
+    setView('pfad');
+    execute(req);
   }
 
   if (!session) return <LoginPage onLogin={onLogin} />;
@@ -224,6 +249,13 @@ export default function App() {
                     {result.dst_port ? `/${result.dst_port}` : ''} · {result.duration_ms} ms
                   </span>
                   <div className="ml-auto flex items-center gap-3 text-slate-400">
+                    <button
+                      type="button" className="hover:text-slate-200" title={de.tracker.navYesterday}
+                      onClick={() => openHistory({ src: result.src.ip, dst: result.dst.ip,
+                        protocol: result.protocol, dst_port: result.dst_port ?? null, hours: 48 })}
+                    >
+                      <History size={16} />
+                    </button>
                     {session.role === 'admin' && pendingReq && (
                       <AddToChecks src={result.src.ip} dst={result.dst.ip}
                         protocol={result.protocol} dstPort={result.dst_port ?? null}
@@ -258,6 +290,15 @@ export default function App() {
             )}
           </>
         )}
+        {/* Bleiben eingehängt: wer aus der Deny-Liste in den Tracker springt
+            und zurückkommt, will seine Liste wiederfinden. */}
+        <div hidden={view !== 'gestern'}>
+          <FlowHistory key={flowInit ? JSON.stringify(flowInit) : 'blank'}
+            initial={flowInit} onTrace={traceFrom} />
+        </div>
+        <div hidden={view !== 'geblockt'}>
+          <BlockedNow onTrace={traceFrom} onHistory={openHistory} />
+        </div>
         {view === 'checks' && (
           <ChecksPanel isAdmin={session.role === 'admin'} deepLink={checkLink} />
         )}

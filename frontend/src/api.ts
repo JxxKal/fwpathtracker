@@ -1063,3 +1063,140 @@ export async function webdriveFacTest(): Promise<{ ok: boolean; ldapusers: numbe
   if (isDemoMode()) return { ok: true, ldapusers: 34 };
   return request('/api/webdrive/fac-test', { method: 'POST' });
 }
+
+// ── FortiAnalyzer-Analysen im Tracker ─────────────────────────────────────────
+
+export type FlowVerdict =
+  | 'blocked_since' | 'always_blocked' | 'silent_since' | 'allowed_again'
+  | 'always_allowed' | 'none';
+
+export interface FlowHop {
+  device: string | null; vdom: string | null; policyid: number | null; policy: string;
+  outcome: 'allow' | 'deny' | 'other'; count: number; bytes: number;
+  first: string | null; last: string | null; srcintf: string | null; dstintf: string | null;
+  actions: Record<string, number>; services: string[];
+}
+
+export interface FlowHistory {
+  src: string; dst: string; src_names: string[]; dst_names: string[];
+  protocol: string | null; dst_port: number | null; hours: number; filter: string;
+  verdict: FlowVerdict; since: string | null; last_allow: string | null; last_deny: string | null;
+  first_seen: string | null; last_seen: string | null; blocker: FlowHop | null;
+  counts: { allow: number; deny: number; other: number; lines: number };
+  hops: FlowHop[]; timeline: { start: string; allow: number; deny: number }[];
+  bucket_s: number; complete: boolean; limit_hit: boolean; total: number;
+}
+
+export interface FlowHistoryRequest {
+  src: string; dst: string; protocol: string | null; dst_port: number | null; hours: number;
+}
+
+export async function fazFlowHistory(req: FlowHistoryRequest): Promise<FlowHistory> {
+  if (isDemoMode()) return demoFlowHistory(req);
+  return request('/api/faz/flow-history', { method: 'POST', body: JSON.stringify(req) });
+}
+
+export interface BlockedRow {
+  direction: 'src' | 'dst'; peer: string | null; peer_name: string | null;
+  src: string | null; dst: string | null; protocol: string | null; dst_port: number | null;
+  service: string | null; device: string | null; vdom: string | null; policyid: number | null;
+  policy: string; srcintf: string | null; dstintf: string | null; count: number;
+  first: string | null; last: string | null;
+}
+
+export interface BlockedResult {
+  ip: string; names: string[]; hours: number; direction: 'src' | 'dst' | 'both';
+  rows: BlockedRow[]; lines: number; implicit: number; complete: boolean; limit_hit: boolean;
+}
+
+export async function fazBlocked(q: string, hours: number,
+  direction: 'src' | 'dst' | 'both'): Promise<BlockedResult> {
+  if (isDemoMode()) return demoBlocked(q, hours, direction);
+  const p = new URLSearchParams({ q, hours: String(hours), direction });
+  return request(`/api/faz/blocked?${p}`);
+}
+
+export type ReconcileCode =
+  | 'ip_conflict' | 'not_in_itop' | 'itop_released' | 'stale_in_itop' | 'mac_changed'
+  | 'name_mismatch';
+
+export interface ReconcileRow {
+  ip: string; display_name: string | null; names: Record<string, string>;
+  kind: string | null; itop_id: string | null; itop_status: string | null;
+  macs: { mac: string; source: string; first_seen: string | null; last_seen: string | null;
+    device: string | null; vdom: string | null; interface: string | null }[];
+  last_seen: string | null; age_s: number | null; os: string | null; sources: string[];
+  findings: { code: ReconcileCode; severity: 'error' | 'warn' | 'info'; text: string }[];
+}
+
+export interface ReconcileResult {
+  network: string; origin: string; rows: ReconcileRow[];
+  counts: Partial<Record<ReconcileCode, number>>;
+  stats: { hosts: number; in_itop: number; active: number; with_findings: number };
+  observed: boolean; faz: boolean; dns: boolean; active_days: number; stale_days: number;
+  warnings: string[];
+}
+
+export async function reconcileNetwork(q: string, activeDays: number,
+  staleDays: number): Promise<ReconcileResult> {
+  if (isDemoMode()) return demoReconcile(q, activeDays, staleDays);
+  const p = new URLSearchParams({ q, active_days: String(activeDays), stale_days: String(staleDays) });
+  return request(`/api/reconcile?${p}`);
+}
+
+function demoFlowHistory(req: FlowHistoryRequest): FlowHistory {
+  const now = Date.now();
+  const iso = (h: number) => new Date(now - h * 3600_000).toISOString();
+  const allow: FlowHop = { device: 'fw-a', vdom: 'root', policyid: 12, policy: '12 · lan-to-b',
+    outcome: 'allow', count: 412, bytes: 8_400_000, first: iso(47), last: iso(19),
+    srcintf: 'lan1', dstintf: 'vpn-to-b', actions: { close: 398, timeout: 14 }, services: ['HTTPS'] };
+  const deny: FlowHop = { device: 'fw-b', vdom: 'prot', policyid: 0, policy: 'Implicit Deny',
+    outcome: 'deny', count: 37, bytes: 0, first: iso(18.5), last: iso(0.2),
+    srcintf: 'vlb1', dstintf: 'lan-prot', actions: { deny: 37 }, services: ['HTTPS'] };
+  const timeline = Array.from({ length: Math.ceil(req.hours) + 1 }, (_, i) => {
+    const h = req.hours - i;
+    return { start: iso(h), allow: h > 19 ? 8 + (i % 5) : 0, deny: h <= 18.5 ? 2 : 0 };
+  });
+  return { ...req, src_names: [], dst_names: [], filter: 'srcip==… and dstip==…',
+    verdict: 'blocked_since', since: iso(18.5), last_allow: iso(19), last_deny: iso(0.2),
+    first_seen: iso(47), last_seen: iso(0.2), blocker: deny,
+    counts: { allow: 412, deny: 37, other: 0, lines: 449 }, hops: [deny, allow], timeline,
+    bucket_s: 3600, complete: true, limit_hit: false, total: 449 };
+}
+
+function demoBlocked(q: string, hours: number, direction: 'src' | 'dst' | 'both'): BlockedResult {
+  const last = new Date(Date.now() - 120_000).toISOString();
+  const row = (peer: string, name: string | null, port: number, count: number, policy: string,
+    policyid: number): BlockedRow => ({
+    direction: 'src', peer, peer_name: name, src: q, dst: peer, protocol: 'tcp', dst_port: port,
+    service: null, device: 'fw-a', vdom: 'root', policyid, policy, srcintf: 'lan1',
+    dstintf: 'vpn-to-b', count, first: last, last });
+  return { ip: q, names: [], hours, direction, lines: 61, implicit: 52, complete: true,
+    limit_hit: false, rows: [
+      row('10.2.1.20', 'erp-db.corp', 1433, 44, 'Implicit Deny', 0),
+      row('10.2.1.21', 'erp-app.corp', 8443, 8, 'Implicit Deny', 0),
+      row('10.9.0.5', null, 445, 9, '40 · block-legacy', 40),
+    ] };
+}
+
+function demoReconcile(q: string, activeDays: number, staleDays: number): ReconcileResult {
+  const ago = (d: number) => new Date(Date.now() - d * 86400_000).toISOString();
+  const base = { names: {}, kind: null, itop_id: null, itop_status: null, macs: [], os: null };
+  const rows: ReconcileRow[] = [
+    { ...base, ip: '10.1.1.10', display_name: 'srv-erp', names: { itop: 'srv-erp', dns: 'srv-erp.corp' },
+      kind: 'Server', last_seen: ago(0), age_s: 60, sources: ['itop-ci', 'arp', 'faz'], findings: [] },
+    { ...base, ip: '10.1.1.23', display_name: 'kamera-7.corp', names: { dns: 'kamera-7.corp' },
+      last_seen: ago(0.1), age_s: 9000, sources: ['arp', 'faz'], os: 'Linux',
+      findings: [{ code: 'not_in_itop', severity: 'warn', text: 'Aktiv, aber weder als CI noch als IP-Adresse im iTop.' }] },
+    { ...base, ip: '10.1.1.40', display_name: 'sps-40', names: { itop: 'sps-40' }, kind: 'Server',
+      last_seen: ago(0), age_s: 30, sources: ['itop-ci', 'arp'],
+      findings: [{ code: 'ip_conflict', severity: 'error', text: '2 MACs gleichzeitig an dieser IP: 000c29aa0001, 000c29aa0002' }] },
+    { ...base, ip: '10.1.1.77', display_name: 'alt-srv', names: { itop: 'alt-srv' }, kind: 'Server',
+      last_seen: ago(64), age_s: 64 * 86400, sources: ['itop-ci', 'arp'],
+      findings: [{ code: 'stale_in_itop', severity: 'info', text: 'Im iTop geführt, im Netz zuletzt vor 64 Tagen gesehen.' }] },
+  ];
+  return { network: q.includes('/') ? q : '10.1.1.0/24', origin: 'iTop-Subnetz', rows,
+    counts: { not_in_itop: 1, ip_conflict: 1, stale_in_itop: 1 },
+    stats: { hosts: 4, in_itop: 3, active: 3, with_findings: 3 }, observed: true, faz: true,
+    dns: true, active_days: activeDays, stale_days: staleDays, warnings: [] };
+}

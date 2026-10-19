@@ -30,8 +30,8 @@ from resolver.chain import ResolverChain
 from resolver.dns_cache import DnsCache
 from routers import auth as auth_router
 from routers import config as config_router
-from routers import (checks, diagram, dns_admin, faz_admin, fmg_admin, itop_admin, librenms_admin,
-                     locate, saml, search, ssl, switchview, trace, users, vlans, webdrive)
+from routers import (checks, diagram, dns_admin, faz_admin, faz_insight, fmg_admin, itop_admin,
+                     librenms_admin, locate, saml, search, ssl, switchview, trace, users, vlans, webdrive)
 from routers.auth import hash_password
 from routers.config import read_config
 from faz.client import FazSource
@@ -225,6 +225,7 @@ app.include_router(fmg_admin.router)
 app.include_router(itop_admin.router)
 app.include_router(librenms_admin.router)
 app.include_router(faz_admin.router)  # FortiAnalyzer (Asset Identity Center)
+app.include_router(faz_insight.router)  # Flow-Historie, Denies, Bestandsabgleich
 app.include_router(dns_admin.router)  # Stand des Reverse-DNS-Caches
 app.include_router(search.router)
 app.include_router(locate.router)  # Switchport-Suche + Netzwerkport-Check (LibreNMS-FDB)
