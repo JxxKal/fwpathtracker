@@ -217,9 +217,13 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   über alle VLANs gezählt (wie in der Switchport-Suche) und höchstens zwei
   VLANs (Daten und Voice). Hängt am Port ein LLDP-Nachbar, der kein Switch
   ist (Hypervisor, AP, Telefon), gilt er ebenfalls als Zuhause und die Zeile
-  nennt den Nachbarn. An Trunks und Uplinks steht nie ein Host, sie sind nur
-  die Verbindungen zwischen den Switches. Wer nur dort auftaucht, kommt mit
-  Grund in die Liste neben dem Plan. Kandidaten sind die Switches des Standorts, die das VLAN in
+  nennt den Nachbarn. An Uplinks und **LAGs** (Bridge-Aggregation,
+  Port-Channel …, die hier immer zu einem Switch oder einer Firewall führen)
+  steht nie ein Host. Sie sind nur Verbindungen. Taucht ein Host nur an
+  Trunks ohne LLDP auf, ist er vermutlich eine **VM hinter einem
+  Hypervisor**. Er steht dann am Trunk mit den wenigsten MACs, markiert als
+  „VM · Trunk". Wer nur an Uplinks und LAGs auftaucht, kommt mit Grund in die
+  Liste neben dem Plan. Kandidaten sind die Switches des Standorts, die das VLAN in
   LibreNMS führen: per LLDP von der Firewall aus erreichbar (die Firewall
   wird am Namen oder an einer Interface-IP erkannt) oder per Management-IP in
   einem Netz dieser Firewall. Dazu kommen die LLDP-Verbindungen mit den Ports

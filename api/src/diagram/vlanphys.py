@@ -54,6 +54,13 @@ HOST_ROWS_MAX = 30
 # Voice am Telefon-Port. Mehr ist ein Trunk.
 ACCESS_MAX_MACS = 8
 ACCESS_MAX_VLANS = 2
+KIND_RANK = {"access": 0, "edge": 1, "trunk": 2}
+# Link-Aggregation führt hier immer zu einem Switch oder einer Firewall — nie
+# zu einem Host. Dazu logische Ports (VLAN-Interface, Loopback), an denen
+# höchstens die eigene SVI-MAC steht.
+LAG_PORT = re.compile(
+    r"(?i)^(bridge-?agg|route-?agg|.*aggregat|port-?channel|po\d|ae\d|lag\s*\d|trk\d|bond|"
+    r"vlan-?interface|vlan\d|vlanif|loopback|in-?loop-?back|null\d|tunnel\d)")
 
 
 def _port_name(p: dict) -> str:
@@ -164,41 +171,46 @@ async def build(seg: dict, inv: Inventory, *, lldp: dict | None, fdb: Fetch, por
     def kind(key: tuple[str, str]) -> str:
         if key in port_nb:
             return port_nb[key]
+        if LAG_PORT.match(port_names.get(key[0], {}).get(key[1], "")):
+            return "uplink"
         if len(all_macs[key]) <= access_max and len(port_vlans[key]) <= ACCESS_MAX_VLANS:
             return "access"
         return "trunk"
 
     kinds = {key: kind(key) for key in in_vlan}
     # Ein Host steht NUR an seinem Zuhause: Access-Port, sonst ein Edge-Port
-    # (hinter einem Hypervisor/AP mit LLDP). Trunks und Uplinks tragen ihn
-    # bloß durch. Mehrere Kandidaten: Access vor Edge, dann wenige MACs.
+    # (hinter einem Gerät mit LLDP). Gibt es beides nicht, ist er eine VM
+    # hinter einem Hypervisor-Trunk ohne LLDP — dann der Trunk mit den
+    # wenigsten MACs, das ist der nächste am Hypervisor. Uplinks und LAGs
+    # (immer Switch oder Firewall) tragen ihn nur durch.
     best: dict[str, tuple[int, int, str, str]] = {}
-    seen_transit: set[str] = set()
+    seen_uplink: set[str] = set()
     for key, macs in in_vlan.items():
         hits = macs & host_by_mac.keys()
-        if kinds[key] in ("trunk", "uplink"):
-            seen_transit |= hits
+        if kinds[key] == "uplink":
+            seen_uplink |= hits
             continue
         for mac in hits:
-            rank = (0 if kinds[key] == "access" else 1, len(all_macs[key]), *key)
+            rank = (KIND_RANK[kinds[key]], len(all_macs[key]), *key)
             if mac not in best or rank < best[mac]:
                 best[mac] = rank
     attached: dict[str, list[dict]] = {}
-    for mac, (_k, n, did, pid) in best.items():
+    for mac, (k, n, did, pid) in best.items():
         host, peer = host_by_mac[mac], port_peer.get((did, pid))
         if peer and _short(peer) in (_short(host.get("name")), host["ip"]):
             peer = None                                   # der Nachbar IST der Host
         attached.setdefault(did, []).append(
             {"host": host, "port": port_names.get(did, {}).get(pid, pid),
-             "via": peer, "shared": n > 1})
+             "via": peer, "shared": n > 1, "trunk": k == KIND_RANK["trunk"],
+             "trunk_macs": n, "trunk_vlans": len(port_vlans[(did, pid)])})
     placed = {id(r["host"]) for rows in attached.values() for r in rows}
 
     def reason(h: dict) -> str:
         mac = normalize_mac(h.get("mac"))
         if not mac:
             return "keine MAC bekannt"
-        if mac in seen_transit:
-            return "nur an Trunk-/Uplink-Ports gesehen"
+        if mac in seen_uplink:
+            return "nur an Uplinks/LAGs zwischen Switches gesehen"
         return "in keiner FDB"
     out["unplaced"] = [{"host": h, "reason": reason(h)} for h in hosts if id(h) not in placed]
 
@@ -245,7 +257,8 @@ async def build(seg: dict, inv: Inventory, *, lldp: dict | None, fdb: Fetch, por
             "id": did, "name": d.get("sysName") or d.get("hostname") or did, "ip": d.get("ip"),
             "hardware": d.get("hardware"), "role": role,
             "level": depth.get(did), "parent": parent.get(did),
-            "hosts": sorted(attached.get(did, []), key=lambda r: _port_key(r["port"])),
+            "hosts": sorted(attached.get(did, []),
+                            key=lambda r: (r["trunk"], _port_key(r["port"]))),
             "unknown": unknown.get(did, 0)})
 
     def pname(did: str, pid) -> str:
@@ -287,12 +300,15 @@ async def build(seg: dict, inv: Inventory, *, lldp: dict | None, fdb: Fetch, por
         warnings.append(f"{len(cands)} Switches führen das VLAN, aber in keiner FDB steht eine "
                         "MAC eines gezeichneten Hosts an einem Access-Port.")
     if out["unplaced"]:
-        trunk_only = sum(1 for u in out["unplaced"] if u["reason"].startswith("nur an Trunk"))
-        warnings.append(f"{len(out['unplaced'])} Hosts ohne Access-Port — sie stehen mit Grund "
-                        "in einer Liste neben dem Plan"
-                        + (f"; {trunk_only} davon nur an Trunk-/Uplink-Ports gesehen (der "
-                           "Access-Switch ist vermutlich nicht in LibreNMS)" if trunk_only
-                           else "") + ".")
+        up_only = sum(1 for u in out["unplaced"] if u["reason"].startswith("nur an Uplinks"))
+        warnings.append(f"{len(out['unplaced'])} Hosts ohne Platz im Plan — sie stehen mit Grund "
+                        "in einer Liste daneben"
+                        + (f"; {up_only} davon nur an Uplinks/LAGs gesehen (ihr Switch ist "
+                           "vermutlich nicht in LibreNMS)" if up_only else "") + ".")
+    vms = sum(1 for rows in attached.values() for r in rows if r["trunk"])
+    if vms:
+        warnings.append(f"{vms} Hosts nur an Trunks ohne LLDP gesehen — als VM hinter einem "
+                        "Hypervisor-Trunk gezeichnet.")
     if any(fl["lldp"] is False for fl in out["fw_links"]):
         warnings.append("Für einige Switches ist der Weg zur Firewall per LLDP nicht belegt — "
                         "gestrichelt angebunden.")
@@ -372,6 +388,8 @@ def _row_label(r: dict, ips: set[str]) -> str:
     peer = r.get("via") or ""
     peer = peer if len(peer) <= 22 else peer[:21] + "…"
     via = f"<i>via {esc(peer)}</i> · " if peer else ""
+    if r.get("trunk"):
+        via = "<i>VM · Trunk</i> · "
     text = f"<b>{esc(r['port'])}</b> · {via}" + (f"{name} " if name else "") + esc(h["ip"])
     return f"<span style='{color}'>{text}</span>" if color else text
 
@@ -467,6 +485,9 @@ def render(model: dict, title_block: dict | None = None) -> str:
                            ROW, parent=bid,
                            tooltip=service_view._host_tooltip(r["host"], ips)
                            + (f"\nhinter LLDP-Nachbar {r['via']}" if r.get("via") else "")
+                           + (f"\nvermutlich VM hinter einem Hypervisor-Trunk (Port ohne LLDP, "
+                              f"{r['trunk_macs']} MACs in {r['trunk_vlans']} VLANs)"
+                              if r.get("trunk") else "")
                            + ("\nPort trägt mehrere MACs" if r["shared"] else ""))
                 ry += ROW
             if len(sw["hosts"]) > HOST_ROWS_MAX:
@@ -515,7 +536,8 @@ def render(model: dict, title_block: dict | None = None) -> str:
         "<span style='color:#6c8ebf;font-weight:bold'>━ blau</span> = Switch ↔ Switch (LLDP), "
         "Ports an beiden Enden",
         f"Zeilen: Access-Port · Host — laut FDB in {esc(vlan)}; „via …“ = hinter einem "
-        "LLDP-Nachbarn ohne Switch-Rolle (Hypervisor, AP, Telefon)",
+        "LLDP-Nachbarn ohne Switch-Rolle; „VM · Trunk“ = nur an einem Trunk ohne LLDP "
+        "gesehen, vermutlich VM hinter einem Hypervisor",
         "gestrichelter Kasten = Transit-Switch ohne eigene Hosts",
         f"<span style='color:{segments.RED}'>rot</span> = nicht im iTop bzw. nicht am Service",
     ])
