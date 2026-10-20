@@ -152,7 +152,49 @@ async def test_trunk_only_hosts_are_vms_behind_the_hypervisor_trunk(inventory, p
     assert all(r["host"]["ip"] != "10.4.5.99" for r in core["hosts"])
     assert any("VM" in w for w in m["warnings"])
     xml = vlanphys.render(m)
-    assert "VM · Trunk" in xml
+    assert "VM? · Trunk" in xml
+
+
+VIRT = {"vms": {"3": {"name": "bk-d", "host_id": "h1", "host_name": "esx-07"},
+                "4": {"name": "fremd-d", "host_id": "f1", "host_name": "Cluster-A"}},
+        "hypervisors": {"h1": {"name": "esx-07", "server_id": "s7", "server_name": "srv-esx-07",
+                               "farm_id": "", "farm_name": ""},
+                        "h2": {"name": "esx-08", "server_id": "s8", "server_name": "srv-esx-08",
+                               "farm_id": "f1", "farm_name": "Cluster-A"},
+                        "h3": {"name": "esx-09", "server_id": "s9", "server_name": "srv-esx-09",
+                               "farm_id": "f1", "farm_name": "Cluster-A"}}}
+SERVERS = [{"id": "s7", "name": "srv-esx-07", "ip": "10.9.0.7"},
+           {"id": "s8", "name": "srv-esx-08", "ip": "10.9.0.8"}]
+
+
+async def mac_of(ip):
+    return {"10.9.0.7": "00:00:00:00:09:07", "10.9.0.8": "00:00:00:00:09:08"}.get(ip)
+
+
+async def test_vms_are_named_after_their_hypervisor_from_itop(inventory, prefixes):
+    m = await _model(inventory, prefixes, virt=VIRT, itop_hosts=ITOP_HOSTS + SERVERS,
+                     mac_of=mac_of)
+    rows = {r["host"]["ip"]: r for s in m["switches"] for r in s["hosts"]}
+    assert rows["10.4.5.10"]["hypervisor"] == "esx-07" and rows["10.4.5.10"]["basis"] == "fdb"
+    assert rows["10.4.5.20"]["hypervisor"] == "Farm Cluster-A"
+    assert "VM auf esx-07" in vlanphys.render(m)
+
+
+async def test_vm_without_fdb_entry_sits_at_its_servers_port(inventory, prefixes):
+    fdb_acc = FDB["2"]
+    FDB["2"] = [r for r in fdb_acc if r["mac_address"] not in ("000000000010", "000000000020")] + [
+        {"port_id": 211, "vlan_id": 6002, "mac_address": "000000000907"},     # srv-esx-07
+        {"port_id": 212, "vlan_id": 6002, "mac_address": "000000000908"}]     # srv-esx-08
+    try:
+        m = await _model(inventory, prefixes, virt=VIRT, itop_hosts=ITOP_HOSTS + SERVERS,
+                         mac_of=mac_of)
+    finally:
+        FDB["2"] = fdb_acc
+    rows = {r["host"]["ip"]: r for s in m["switches"] for r in s["hosts"]}
+    assert rows["10.4.5.10"]["port"] == "Gi1/0/11" and rows["10.4.5.10"]["basis"] == "itop"
+    # Farm mit zwei Hypervisoren: nicht eindeutig — nicht raten.
+    reasons = {u["host"]["ip"]: u["reason"] for u in m["unplaced"]}
+    assert reasons["10.4.5.20"].startswith("Farm Cluster-A — Hypervisor nicht eindeutig")
 
 
 async def test_render_has_firewall_switches_and_labelled_links(inventory, prefixes):

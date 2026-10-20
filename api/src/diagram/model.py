@@ -307,6 +307,7 @@ async def _collect_hosts(net: dict, inv: Inventory, itop_hosts: list[dict],
         s = slot(h["ip"])
         s["name"] = s["name"] or h["name"]
         s["kind"] = h.get("kind") or s["kind"]
+        s["itop_id"] = s.get("itop_id") or h.get("id")
         s["description"] = h.get("description") or s["description"]
         s["sources"].append("itop-ci")
     for ip, rec in itop_addresses.items():

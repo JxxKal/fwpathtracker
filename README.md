@@ -220,10 +220,15 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   nennt den Nachbarn. An Uplinks und **LAGs** (Bridge-Aggregation,
   Port-Channel …, die hier immer zu einem Switch oder einer Firewall führen)
   steht nie ein Host. Sie sind nur Verbindungen. Taucht ein Host nur an
-  Trunks ohne LLDP auf, ist er vermutlich eine **VM hinter einem
-  Hypervisor**. Er steht dann am Trunk mit den wenigsten MACs, markiert als
-  „VM · Trunk". Wer nur an Uplinks und LAGs auftaucht, kommt mit Grund in die
-  Liste neben dem Plan. Kandidaten sind die Switches des Standorts, die das VLAN in
+  Trunks ohne LLDP auf, ist er vermutlich eine VM hinter einem Hypervisor.
+  Er steht dann am Trunk mit den wenigsten MACs, markiert als „VM? · Trunk".
+  **VMs laut iTop** (VirtualMachine → Hypervisor oder Farm → Server) heißen
+  „VM auf esx-07". Der Switchport des Servers ergibt sich aus seiner
+  Management-IP über die ARP-Historie und die FDB. Steht die VM-MAC dort,
+  ist das ihr Zuhause. Steht sie in keiner FDB, kommt die VM an den Port
+  ihres Servers. Das gilt nur bei eindeutigem Hypervisor; bei einer Farm wird
+  nicht geraten. Wer nur an Uplinks und LAGs auftaucht, kommt mit Grund in
+  die Liste neben dem Plan. Kandidaten sind die Switches des Standorts, die das VLAN in
   LibreNMS führen: per LLDP von der Firewall aus erreichbar (die Firewall
   wird am Namen oder an einer Interface-IP erkannt) oder per Management-IP in
   einem Netz dieser Firewall. Dazu kommen die LLDP-Verbindungen mit den Ports

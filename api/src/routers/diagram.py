@@ -589,7 +589,8 @@ async def _segments(body: DiagramRequest, request: Request, user: dict) -> dict:
     warnings += mdl["warnings"]
     if phys:
         return await _switch_physics(body, request, user, mdl, lldp, warnings,
-                                     _source_note(faz_hosts, arp_max_age_s))
+                                     _source_note(faz_hosts, arp_max_age_s), itop_cfg,
+                                     itop_hosts)
     st = mdl["stats"]
     if st["hosts_not_in_service"] and not body.hide_not_in_service:
         warnings.append(f"{st['hosts_not_in_service']} Hosts in den Segmenten stehen im iTop, "
@@ -613,10 +614,23 @@ async def _segments(body: DiagramRequest, request: Request, user: dict) -> dict:
 
 
 async def _switch_physics(body: DiagramRequest, request: Request, user: dict, seg: dict,
-                          lldp: dict | None, warnings: list[str], note: str) -> dict:
+                          lldp: dict | None, warnings: list[str], note: str, itop_cfg: dict,
+                          itop_hosts: list[dict]) -> dict:
     state = request.app.state
     cfg = await read_config("librenms")
     client = state.locate.librenms
+    # VM → Hypervisor → Server aus dem iTop; die MAC des Servers aus der
+    # ARP-Historie zeigt seinen Switchport.
+    try:
+        virt = await state.resolver.itop.virtualization(itop_cfg)
+        warnings += [f"iTop {e}" for e in virt.get("errors") or []]
+    except Exception as exc:
+        warnings.append(f"iTop-Virtualisierung nicht abrufbar: {exc}")
+        virt = None
+
+    async def mac_of(ip: str) -> str | None:
+        rows = await state.arp_store.by_ip(ip, limit=1)
+        return rows[0]["mac"] if rows else None
 
     async def fdb(did: str) -> list[dict]:
         return await client.device_fdb(cfg, did)
@@ -628,7 +642,8 @@ async def _switch_physics(body: DiagramRequest, request: Request, user: dict, se
                                hide_not_in_itop=body.hide_not_in_itop,
                                hide_not_in_service=body.hide_not_in_service,
                                access_max=int(cfg.get("access_max_macs",
-                                                      vlanphys.ACCESS_MAX_MACS)))
+                                                      vlanphys.ACCESS_MAX_MACS)),
+                               virt=virt, itop_hosts=itop_hosts, mac_of=mac_of)
     warnings += mdl["warnings"]
     st = mdl["stats"]
     net = mdl["net"]

@@ -63,6 +63,7 @@ class ItopSource:
         self._ttl_s = 900
         self._ipam: dict | None = None  # {subnets, ranges, loaded_at} — Bereichsbaum
         self._ipam_ttl_s = 300
+        self._virt: dict | None = None  # VM → Hypervisor → Server (virtualization)
 
     @staticmethod
     def _client(cfg: dict) -> httpx.AsyncClient:
@@ -105,11 +106,58 @@ class ItopSource:
         """
         self._loaded_at = 0.0
         self._ipam = None
+        self._virt = None
         return len(await self._index(cfg))
 
     async def hosts(self, cfg: dict) -> list[dict]:
         """Host-Index (Server/NetworkDevice mit Management-IP) — TTL-gecacht."""
         return await self._index(cfg)
+
+    async def virtualization(self, cfg: dict) -> dict:
+        """VM → Hypervisor/Farm → physischer Server (iTop-Standardmodell) —
+        TTL-gecacht wie der Host-Index.
+
+        vms:         {vm_id: {name, host_id, host_name}}   (host = Hypervisor ODER Farm)
+        hypervisors: {hv_id: {name, server_id, server_name, farm_id, farm_name}}
+        Fehlt eine Klasse oder ein Feld, bleibt der Teil leer — der Rest geht.
+        """
+        cached = self._virt
+        if cached and time.monotonic() - cached["loaded_at"] < self._ttl_s:
+            return cached
+        out: dict = {"vms": {}, "hypervisors": {}, "errors": [], "loaded_at": time.monotonic()}
+        if not cfg.get("base_url") or not cfg.get("enabled", True):
+            return out
+        guard_egress_url(cfg["base_url"], "iTop-URL")
+        org = (cfg.get("org_filter") or "").strip()
+        args = (cfg["base_url"], cfg["user"], cfg["password"])
+        async with self._client(cfg) as client:
+            for cls, fields, key in (
+                    ("VirtualMachine", "name,virtualhost_id,virtualhost_name", "vms"),
+                    ("Hypervisor", "name,server_id,server_name,farm_id,farm_name", "hypervisors")):
+                oql = f"SELECT {cls} WHERE org_name = '{_oql_str(org)}'" if org else None
+                try:
+                    rows = await _core_get(client, *args, cls, fields, oql)
+                except Exception as exc:
+                    log.warning("iTop %s: %s – übersprungen.", cls, exc)
+                    out["errors"].append(f"{cls}: {exc}")
+                    continue
+                for r in rows:
+                    rid = str(r.get("_key") or "")
+                    if not rid:
+                        continue
+                    if key == "vms":
+                        out["vms"][rid] = {"name": str(r.get("name") or "").strip(),
+                                           "host_id": str(r.get("virtualhost_id") or ""),
+                                           "host_name": str(r.get("virtualhost_name") or "").strip()}
+                    else:
+                        out["hypervisors"][rid] = {
+                            "name": str(r.get("name") or "").strip(),
+                            "server_id": str(r.get("server_id") or ""),
+                            "server_name": str(r.get("server_name") or "").strip(),
+                            "farm_id": str(r.get("farm_id") or ""),
+                            "farm_name": str(r.get("farm_name") or "").strip()}
+        self._virt = out
+        return out
 
     async def subnets(self, cfg: dict) -> list[dict]:
         """IPv4-Subnetze aus iTop (IPAM/TeemIP) — für den Free-Subnet-Finder.

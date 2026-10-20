@@ -49,6 +49,7 @@ Fetch = Callable[[str], Awaitable[list[dict]]]
 MAX_SWITCHES = 60          # Kandidaten, deren FDB abgefragt wird
 CONCURRENCY = 6
 HOST_ROWS_MAX = 30
+MAX_SERVERS = 100          # ARP-Abfragen für Hypervisor-Server je Zeichnung
 # Access-Port: höchstens so viele MACs (über alle VLANs; wie die Switchport-
 # Suche, einstellbar unter LibreNMS) und höchstens zwei VLANs — Daten plus
 # Voice am Telefon-Port. Mehr ist ein Trunk.
@@ -79,7 +80,9 @@ def _short(name) -> str:
 
 async def build(seg: dict, inv: Inventory, *, lldp: dict | None, fdb: Fetch, ports: Fetch,
                 hide_not_in_itop: bool = False, hide_not_in_service: bool = False,
-                access_max: int = ACCESS_MAX_MACS) -> dict:
+                access_max: int = ACCESS_MAX_MACS, virt: dict | None = None,
+                itop_hosts: list[dict] | None = None,
+                mac_of: Callable[[str], Awaitable[str | None]] | None = None) -> dict:
     """seg: Ergebnis von segments.build für genau EIN Netz (Hosts, Firewall-Kette)."""
     site = seg["sites"][0]
     net, fw = site["segments"][0], site["firewalls"][0]
@@ -183,6 +186,18 @@ async def build(seg: dict, inv: Inventory, *, lldp: dict | None, fdb: Fetch, por
     # hinter einem Hypervisor-Trunk ohne LLDP — dann der Trunk mit den
     # wenigsten MACs, das ist der nächste am Hypervisor. Uplinks und LAGs
     # (immer Switch oder Firewall) tragen ihn nur durch.
+    # VMs laut iTop: Hypervisor bzw. Farm und deren physische Server. Die MAC
+    # des Servers (ARP-Historie) zeigt seinen Switchport — dort hängen auch
+    # seine VMs, selbst wenn ihre MAC in keiner FDB steht.
+    hyp = await _hypervisors(hosts, virt, itop_hosts or [], mac_of)
+    server_keys: dict[str, set[tuple[str, str]]] = {}
+    for info in hyp.values():
+        for hv in info["hvs"]:
+            if hv["name"] in server_keys:
+                continue
+            server_keys[hv["name"]] = {key for key, macs in all_macs.items()
+                                       if hv.get("mac") in macs and kind(key) != "uplink"}
+
     best: dict[str, tuple[int, int, str, str]] = {}
     seen_uplink: set[str] = set()
     for key, macs in in_vlan.items():
@@ -191,22 +206,49 @@ async def build(seg: dict, inv: Inventory, *, lldp: dict | None, fdb: Fetch, por
             seen_uplink |= hits
             continue
         for mac in hits:
-            rank = (KIND_RANK[kinds[key]], len(all_macs[key]), *key)
+            info = hyp.get(id(host_by_mac[mac]))
+            on_server = info and any(key in server_keys.get(hv["name"], ())
+                                     for hv in info["hvs"])
+            rank = (-1 if on_server else KIND_RANK[kinds[key]], len(all_macs[key]), *key)
             if mac not in best or rank < best[mac]:
                 best[mac] = rank
     attached: dict[str, list[dict]] = {}
-    for mac, (k, n, did, pid) in best.items():
-        host, peer = host_by_mac[mac], port_peer.get((did, pid))
+
+    def attach(host: dict, did: str, pid: str, k: int, n: int, basis: str) -> None:
+        peer = port_peer.get((did, pid))
         if peer and _short(peer) in (_short(host.get("name")), host["ip"]):
             peer = None                                   # der Nachbar IST der Host
+        info = hyp.get(id(host))
         attached.setdefault(did, []).append(
             {"host": host, "port": port_names.get(did, {}).get(pid, pid),
              "via": peer, "shared": n > 1, "trunk": k == KIND_RANK["trunk"],
-             "trunk_macs": n, "trunk_vlans": len(port_vlans[(did, pid)])})
+             "trunk_macs": n, "trunk_vlans": len(port_vlans.get((did, pid), ())),
+             "hypervisor": info["label"] if info else None, "basis": basis})
+
+    for mac, (k, n, did, pid) in best.items():
+        attach(host_by_mac[mac], did, pid, k, n, "fdb")
     placed = {id(r["host"]) for rows in attached.values() for r in rows}
+    # VM ohne eigenen FDB-Eintrag: an den Port ihres Servers — nur wenn der
+    # Hypervisor eindeutig ist (eine Farm lässt offen, auf welchem sie läuft).
+    for h in hosts:
+        info = hyp.get(id(h))
+        if id(h) in placed or not info or len(info["hvs"]) != 1:
+            continue
+        keys = sorted(server_keys.get(info["hvs"][0]["name"], ()),
+                      key=lambda k: (KIND_RANK.get(kinds.get(k) or kind(k), 3),
+                                     len(all_macs[k]), k))
+        if keys:
+            did, pid = keys[0]
+            attach(h, did, pid, KIND_RANK.get(kind(keys[0]), 0), len(all_macs[keys[0]]), "itop")
+            placed.add(id(h))
 
     def reason(h: dict) -> str:
+        info = hyp.get(id(h))
         mac = normalize_mac(h.get("mac"))
+        if info and len(info["hvs"]) > 1:
+            return f"{info['label']} — Hypervisor nicht eindeutig, VM-MAC in keiner FDB"
+        if info and info["hvs"]:
+            return f"{info['label']} — Switchport des Servers unbekannt"
         if not mac:
             return "keine MAC bekannt"
         if mac in seen_uplink:
@@ -305,14 +347,56 @@ async def build(seg: dict, inv: Inventory, *, lldp: dict | None, fdb: Fetch, por
                         "in einer Liste daneben"
                         + (f"; {up_only} davon nur an Uplinks/LAGs gesehen (ihr Switch ist "
                            "vermutlich nicht in LibreNMS)" if up_only else "") + ".")
-    vms = sum(1 for rows in attached.values() for r in rows if r["trunk"])
-    if vms:
-        warnings.append(f"{vms} Hosts nur an Trunks ohne LLDP gesehen — als VM hinter einem "
-                        "Hypervisor-Trunk gezeichnet.")
+    guessed = sum(1 for rows in attached.values() for r in rows
+                  if r["trunk"] and not r["hypervisor"])
+    if guessed:
+        warnings.append(f"{guessed} Hosts nur an Trunks ohne LLDP gesehen und im iTop keiner "
+                        "VM zugeordnet — als „VM? · Trunk“ gezeichnet.")
+    by_itop = sum(1 for rows in attached.values() for r in rows if r["basis"] == "itop")
+    if by_itop:
+        warnings.append(f"{by_itop} VMs ohne eigenen FDB-Eintrag stehen am Switchport ihres "
+                        "Hypervisor-Servers (laut iTop).")
     if any(fl["lldp"] is False for fl in out["fw_links"]):
         warnings.append("Für einige Switches ist der Weg zur Firewall per LLDP nicht belegt — "
                         "gestrichelt angebunden.")
     out["stats"] = _stats(out, hosts)
+    return out
+
+
+async def _hypervisors(hosts: list[dict], virt: dict | None, itop_hosts: list[dict],
+                       mac_of) -> dict[int, dict]:
+    """id(Host) → {label, hvs: [{name, server, ip, mac}]} für jede VM laut iTop.
+    Der Virtual Host einer VM ist ein Hypervisor ODER eine Farm; bei einer
+    Farm kommen alle ihre Hypervisoren in Frage."""
+    if not virt or not virt.get("vms"):
+        return {}
+    hvs_all = virt.get("hypervisors") or {}
+    by_id = {h.get("id"): h for h in itop_hosts if h.get("id")}
+    out: dict[int, dict] = {}
+    for h in hosts:
+        vm = virt["vms"].get(h.get("itop_id") or "")
+        if not vm or not vm["host_id"]:
+            continue
+        if vm["host_id"] in hvs_all:
+            chosen = [hvs_all[vm["host_id"]]]
+            label = chosen[0]["name"] or vm["host_name"]
+        else:
+            chosen = [hv for hv in hvs_all.values() if hv["farm_id"] == vm["host_id"]]
+            label = f"Farm {vm['host_name']}"
+        hvs = []
+        for hv in chosen:
+            server = by_id.get(hv["server_id"])
+            hvs.append({"name": hv["name"] or hv["server_name"],
+                        "server": hv["server_name"], "ip": (server or {}).get("ip")})
+        out[id(h)] = {"label": label, "hvs": hvs}
+    if mac_of is not None:
+        ips = sorted({hv["ip"] for info in out.values() for hv in info["hvs"] if hv["ip"]})
+        macs = dict(zip(ips, await asyncio.gather(*(mac_of(ip) for ip in ips[:MAX_SERVERS]),
+                                                  return_exceptions=True)))
+        for info in out.values():
+            for hv in info["hvs"]:
+                m = macs.get(hv["ip"])
+                hv["mac"] = normalize_mac(m) if isinstance(m, str) else None
     return out
 
 
@@ -388,8 +472,11 @@ def _row_label(r: dict, ips: set[str]) -> str:
     peer = r.get("via") or ""
     peer = peer if len(peer) <= 22 else peer[:21] + "…"
     via = f"<i>via {esc(peer)}</i> · " if peer else ""
-    if r.get("trunk"):
-        via = "<i>VM · Trunk</i> · "
+    if r.get("hypervisor"):
+        hv = r["hypervisor"] if len(r["hypervisor"]) <= 22 else r["hypervisor"][:21] + "…"
+        via = f"<i>VM auf {esc(hv)}</i> · "
+    elif r.get("trunk"):
+        via = "<i>VM? · Trunk</i> · "
     text = f"<b>{esc(r['port'])}</b> · {via}" + (f"{name} " if name else "") + esc(h["ip"])
     return f"<span style='{color}'>{text}</span>" if color else text
 
@@ -485,9 +572,13 @@ def render(model: dict, title_block: dict | None = None) -> str:
                            ROW, parent=bid,
                            tooltip=service_view._host_tooltip(r["host"], ips)
                            + (f"\nhinter LLDP-Nachbar {r['via']}" if r.get("via") else "")
+                           + (f"\nVM auf {r['hypervisor']} (laut iTop)"
+                              + (" — Port des Servers, die VM-MAC selbst steht in keiner FDB"
+                                 if r.get("basis") == "itop" else "")
+                              if r.get("hypervisor") else "")
                            + (f"\nvermutlich VM hinter einem Hypervisor-Trunk (Port ohne LLDP, "
                               f"{r['trunk_macs']} MACs in {r['trunk_vlans']} VLANs)"
-                              if r.get("trunk") else "")
+                              if r.get("trunk") and not r.get("hypervisor") else "")
                            + ("\nPort trägt mehrere MACs" if r["shared"] else ""))
                 ry += ROW
             if len(sw["hosts"]) > HOST_ROWS_MAX:
@@ -536,8 +627,8 @@ def render(model: dict, title_block: dict | None = None) -> str:
         "<span style='color:#6c8ebf;font-weight:bold'>━ blau</span> = Switch ↔ Switch (LLDP), "
         "Ports an beiden Enden",
         f"Zeilen: Access-Port · Host — laut FDB in {esc(vlan)}; „via …“ = hinter einem "
-        "LLDP-Nachbarn ohne Switch-Rolle; „VM · Trunk“ = nur an einem Trunk ohne LLDP "
-        "gesehen, vermutlich VM hinter einem Hypervisor",
+        "LLDP-Nachbarn ohne Switch-Rolle; „VM auf …“ = VM am Port ihres Hypervisors "
+        "(laut iTop); „VM? · Trunk“ = nur an einem Trunk ohne LLDP gesehen",
         "gestrichelter Kasten = Transit-Switch ohne eigene Hosts",
         f"<span style='color:{segments.RED}'>rot</span> = nicht im iTop bzw. nicht am Service",
     ])
