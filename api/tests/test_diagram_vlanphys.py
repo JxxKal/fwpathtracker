@@ -7,7 +7,7 @@ from diagram import segments, services, vlanphys
 from test_diagram_segments import FAMILIES, ITOP_HOSTS, LINKS, SERVICES
 
 MAC = {"10.4.5.10": "00:00:00:00:00:10", "10.4.5.20": "00:00:00:00:00:20",
-       "10.4.5.99": "00:00:00:00:00:99"}
+       "10.4.5.99": "00:00:00:00:00:99", "10.4.5.77": "00:00:00:00:00:77"}
 
 
 class Arp:
@@ -37,8 +37,14 @@ LLDP = {
               {"vlan_id": 5003, "device_id": 3, "vlan_vlan": 50},
               {"vlan_id": 6002, "device_id": 2, "vlan_vlan": 60}],
 }
+# sw-core Port 104: kein LLDP, im VLAN 50 nur EINE MAC — aber viele MACs in
+# vielen VLANs. Ein Trunk zu einem Switch, den LibreNMS nicht kennt.
+TRUNK = [{"port_id": 104, "vlan_id": 7000 + i, "mac_address": f"0000000002{i:02d}"}
+         for i in range(12)]
 FDB = {
-    "1": [{"port_id": 102, "vlan_id": 5001, "mac_address": "000000000010"}],   # Uplink: zählt nicht
+    "1": [{"port_id": 102, "vlan_id": 5001, "mac_address": "000000000010"},   # Uplink: zählt nicht
+          {"port_id": 104, "vlan_id": 5001, "mac_address": "000000000099"},   # Trunk: zählt nicht
+          {"port_id": 104, "vlan_id": 5001, "mac_address": "000000000077"}] + TRUNK,
     "2": [{"port_id": 205, "vlan_id": 5002, "mac_address": "000000000010"},
           {"port_id": 206, "vlan_id": 5002, "mac_address": "000000000099"},
           {"port_id": 207, "vlan_id": 5002, "mac_address": "0000000000aa"},   # unbekannt
@@ -83,10 +89,14 @@ async def test_switches_with_hosts_and_the_transit_path_to_the_firewall(inventor
     assert sws["sw-acc"]["role"] == "hosts" and sws["sw-acc"]["level"] == 2
     rows = {r["host"]["ip"]: r["port"] for r in sws["sw-acc"]["hosts"]}
     assert rows == {"10.4.5.10": "Gi1/0/5", "10.4.5.99": "Gi1/0/6", "10.4.5.20": "Gi1/0/8"}
-    assert sws["sw-acc"]["unknown"] == 1                     # 0000000000aa allein am Port
+    # aa (Port 207), bb und cc (Port 209) hängen an Access-Ports, ohne bekannten Host.
+    assert sws["sw-acc"]["unknown"] == 3
     assert m["links"] == [{"a": "1", "b": "2", "a_port": "Te1/1/2", "b_port": "Gi1/0/49"}]
     assert m["fw_links"] == [{"sw": "1", "sw_port": "Te1/1/1", "fw_port": "port5", "lldp": True}]
-    assert m["unplaced"] == []
+    # .77 steht nur am Trunk — kein Access-Port bekannt, also nicht gezeichnet.
+    assert [(u["host"]["ip"], u["reason"]) for u in m["unplaced"]] == [
+        ("10.4.5.77", "nur an Trunk-/Uplink-Ports gesehen")]
+    assert sws["sw-core"]["hosts"] == []
 
 
 async def test_filters_apply_before_switches_are_chosen(inventory, prefixes):
@@ -97,8 +107,18 @@ async def test_filters_apply_before_switches_are_chosen(inventory, prefixes):
 
 async def test_without_librenms_every_host_is_unplaced(inventory, prefixes):
     m = await _model(inventory, prefixes, lldp=None)
-    assert m["switches"] == [] and len(m["unplaced"]) == 3
+    assert m["switches"] == [] and len(m["unplaced"]) == 4
     assert "LibreNMS" in m["warnings"][0]
+
+
+async def test_edge_port_behind_a_hypervisor_is_home_and_named(inventory, prefixes):
+    import copy
+    lldp = copy.deepcopy(LLDP)
+    lldp["links"].append({"local_device_id": 2, "local_port_id": 206, "remote_hostname": "esx-07",
+                          "remote_port": "vmnic0", "remote_device_id": 0})
+    m = await _model(inventory, prefixes, lldp=lldp)
+    row = next(r for s in m["switches"] for r in s["hosts"] if r["host"]["ip"] == "10.4.5.99")
+    assert row["port"] == "Gi1/0/6" and row["via"] == "esx-07"
 
 
 async def test_render_has_firewall_switches_and_labelled_links(inventory, prefixes):

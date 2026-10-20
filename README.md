@@ -211,16 +211,21 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   Kasten, die Firewalls stehen zur Wolke hin. „Backup" ergibt so das
   Backup-VLAN aller Standorte auf einem Blatt. Switches zeigt der Segmentplan
   bewusst nicht. Dafür gibt es die **Switch-Physik eines VLANs**: Man wählt
-  genau ein VLAN, und gezeichnet wird jeder Switch, an dem laut FDB ein Host
-  dieses VLANs direkt hängt (an einem Port ohne LLDP-Nachbarn), mit Port und
-  Host je Zeile. Sieht man eine MAC an mehreren Ports, gilt der Port mit den
-  wenigsten MACs. Kandidaten sind die Switches des Standorts, die das VLAN in
+  genau ein VLAN, und gezeichnet wird jeder Switch, an dem ein Host dieses
+  VLANs physisch zu Hause ist, mit Port und Host je Zeile. Zuhause ist nur
+  ein **Access-Port**: kein LLDP-Nachbar, höchstens `access_max_macs` MACs
+  über alle VLANs gezählt (wie in der Switchport-Suche) und höchstens zwei
+  VLANs (Daten und Voice). Hängt am Port ein LLDP-Nachbar, der kein Switch
+  ist (Hypervisor, AP, Telefon), gilt er ebenfalls als Zuhause und die Zeile
+  nennt den Nachbarn. An Trunks und Uplinks steht nie ein Host, sie sind nur
+  die Verbindungen zwischen den Switches. Wer nur dort auftaucht, kommt mit
+  Grund in die Liste neben dem Plan. Kandidaten sind die Switches des Standorts, die das VLAN in
   LibreNMS führen: per LLDP von der Firewall aus erreichbar (die Firewall
   wird am Namen oder an einer Interface-IP erkannt) oder per Management-IP in
   einem Netz dieser Firewall. Dazu kommen die LLDP-Verbindungen mit den Ports
   an beiden Enden, die Switches auf dem Weg zur Firewall als *Transit* und
   der Uplink zur Firewall. Oben stehen Segment- und Router-VDOM, darüber das
-  SD-WAN. Hosts ohne Switchport stehen in einer Liste daneben.
+  SD-WAN.
   **Physisch** zeichnet, wie die Netzwerkkomponenten untereinander hängen:
   Knoten und Kanten aus den **LLDP**-Nachbarschaften in LibreNMS, mit den Ports
   an beiden Enden, Ebenen per Breitensuche vom bestvernetzten Gerät (Core oben,

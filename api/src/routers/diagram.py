@@ -626,7 +626,9 @@ async def _switch_physics(body: DiagramRequest, request: Request, user: dict, se
 
     mdl = await vlanphys.build(seg, state.inventory, lldp=lldp, fdb=fdb, ports=ports,
                                hide_not_in_itop=body.hide_not_in_itop,
-                               hide_not_in_service=body.hide_not_in_service)
+                               hide_not_in_service=body.hide_not_in_service,
+                               access_max=int(cfg.get("access_max_macs",
+                                                      vlanphys.ACCESS_MAX_MACS)))
     warnings += mdl["warnings"]
     st = mdl["stats"]
     net = mdl["net"]
