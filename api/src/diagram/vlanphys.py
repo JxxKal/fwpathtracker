@@ -78,6 +78,17 @@ def _short(name) -> str:
     return str(name or "").strip().lower().split(".")[0]
 
 
+def split(seg: dict) -> list[dict]:
+    """Segmentmodell mit mehreren Netzen → je Netz ein Modell mit genau einem
+    Netz und seiner Firewall — Eingabe für build()."""
+    out = []
+    for site in seg["sites"]:
+        for net in site["segments"]:
+            fw = next(f for f in site["firewalls"] if f["device"] == net["device"])
+            out.append(dict(seg, sites=[dict(site, segments=[net], firewalls=[fw])]))
+    return out
+
+
 async def build(seg: dict, inv: Inventory, *, lldp: dict | None, fdb: Fetch, ports: Fetch,
                 hide_not_in_itop: bool = False, hide_not_in_service: bool = False,
                 access_max: int = ACCESS_MAX_MACS, virt: dict | None = None,
@@ -90,7 +101,8 @@ async def build(seg: dict, inv: Inventory, *, lldp: dict | None, fdb: Fetch, por
     ips = set(svc["ips"])
     warnings: list[str] = []
     out = {"title": f"Switch-Physik {svc['name']} · "
-                    + (f"VLAN {net['vlan']}" if net.get("vlan") is not None else net["cidr"]),
+                    + (f"VLAN {net['vlan']}" if net.get("vlan") is not None else net["cidr"])
+                    + f" · {site['name']}",
            "service": svc, "family": seg["family"], "site": site["name"], "net": net, "fw": fw,
            "switches": [], "links": [], "fw_links": [], "unplaced": [], "warnings": warnings}
     hosts = segments._visible_hosts(net, ips, hide_not_in_itop, hide_not_in_service)
@@ -127,10 +139,11 @@ async def build(seg: dict, inv: Inventory, *, lldp: dict | None, fdb: Fetch, por
                 port_nb[key] = "uplink"
             elif rname or ln.get("remote_platform"):
                 # Nachbar ohne Switch-Rolle. Nur ein Hostname taugt als „via" —
-                # meldet sich bloß eine Plattform (Server-NIC mit eigenem
-                # LLDP-Agenten), ist der Nachbar der Host selbst.
+                # meldet sich bloß eine Plattform oder eine Beschreibung mit
+                # Leerzeichen (Server-NIC mit eigenem LLDP-Agenten: „Broadcom
+                # P210p NetXtreme-E …"), ist der Nachbar der Host selbst.
                 port_nb.setdefault(key, "edge")
-                if rname:
+                if rname and not re.search(r"\s", rname):
                     port_peer[key] = rname
         if a in by_id and b in by_id:
             adj.setdefault(a, set()).add(b)
@@ -351,7 +364,7 @@ async def build(seg: dict, inv: Inventory, *, lldp: dict | None, fdb: Fetch, por
                   if r["trunk"] and not r["hypervisor"])
     if guessed:
         warnings.append(f"{guessed} Hosts nur an Trunks ohne LLDP gesehen und im iTop keiner "
-                        "VM zugeordnet — als „VM? · Trunk“ gezeichnet.")
+                        "VM zugeordnet — als „Hypervisor? (Trunk)“ gezeichnet.")
     by_itop = sum(1 for rows in attached.values() for r in rows if r["basis"] == "itop")
     if by_itop:
         warnings.append(f"{by_itop} VMs ohne eigenen FDB-Eintrag stehen am Switchport ihres "
@@ -416,7 +429,7 @@ def _stats(out: dict, hosts: list[dict]) -> dict:
 
 # ── Zeichnung ─────────────────────────────────────────────────────────────────
 
-BLOCK_W = 290
+BLOCK_W = 300
 ICON_COL = 96
 NAME_LINE = 13
 SW_W, SW_H = 44, 32
@@ -438,6 +451,8 @@ STYLE = {
            "overflow=hidden;"
            "spacingLeft=2;",
     "row-icon": "shape={stencil};html=1;aspect=fixed;{paint}",
+    "vm": "text;html=1;align=left;verticalAlign=middle;fontSize=8;whiteSpace=nowrap;"
+          "overflow=hidden;spacingLeft=1;",
     "lldp": "edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=none;strokeWidth=2;"
             "strokeColor=#6c8ebf;fontSize=9;labelBackgroundColor=#ffffff;",
     "uplink": "edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=none;strokeWidth=2;"
@@ -450,35 +465,138 @@ STYLE = {
 }
 
 
+PORT_ABBR = (("hundredgigabitethernet", "Hu"), ("hundredgige", "Hu"),
+             ("fortygigabitethernet", "Fo"), ("fortygige", "Fo"),
+             ("twentyfivegige", "Twe"), ("ten-gigabitethernet", "Te"),
+             ("tengigabitethernet", "Te"), ("gigabitethernet", "Gi"),
+             ("fastethernet", "Fa"), ("bridge-aggregation", "BAGG"), ("port-channel", "Po"))
+VM_ROW = 14
+VM_MAX = 20
+GROUP_HEAD = 19
+
+
+def short_port(name: str) -> str:
+    """`Ten-GigabitEthernet1/0/44` → `Te1/0/44` — der volle Name steht im Tooltip."""
+    low = (name or "").lower()
+    for long, short in PORT_ABBR:
+        if low.startswith(long):
+            return short + name[len(long):]
+    return name or "?"
+
+
 def _name_lines(sw: dict) -> int:
     return 1 + len(sw["name"]) // 14 + (1 if sw.get("ip") else 0) + (sw["role"] == "transit")
 
 
+def _items(sw: dict) -> tuple[list[dict], list[dict]]:
+    """Zeilen für direkt angeschlossene Hosts, Gruppen je Hypervisor-Port für VMs."""
+    rows, groups = [], {}
+    for r in sw["hosts"]:
+        if r.get("hypervisor") or r.get("trunk"):
+            g = groups.setdefault((r["port"], r.get("hypervisor") or ""),
+                                  {"port": r["port"], "hv": r.get("hypervisor"), "vms": []})
+            g["vms"].append(r)
+        else:
+            rows.append(r)
+    for g in groups.values():
+        g["vms"].sort(key=lambda r: (r["host"].get("name") or "~", r["host"]["ip"]))
+    return rows, sorted(groups.values(), key=lambda g: _port_key(g["port"]))
+
+
+def _group_h(g: dict) -> float:
+    n = min(len(g["vms"]), VM_MAX) + (1 if len(g["vms"]) > VM_MAX else 0)
+    return GROUP_HEAD + n * VM_ROW + 6
+
+
 def _block_h(sw: dict) -> float:
-    rows = min(len(sw["hosts"]), HOST_ROWS_MAX) + (1 if len(sw["hosts"]) > HOST_ROWS_MAX else 0)
-    rows += 1 if sw["unknown"] else 0
-    return max(HEAD + 8, 10 + max(rows, 1) * ROW + 10,
-               8 + SW_H + 6 + _name_lines(sw) * NAME_LINE + 8)
+    rows, groups = _items(sw)
+    n = min(len(rows), HOST_ROWS_MAX) + (1 if len(rows) > HOST_ROWS_MAX else 0)
+    content = 10 + n * ROW + sum(_group_h(g) for g in groups) + (ROW if sw["unknown"] else 0) + 10
+    return max(HEAD + 8, content, 8 + SW_H + 6 + _name_lines(sw) * NAME_LINE + 8)
+
+
+def _color(h: dict, ips: set[str]) -> str:
+    if not h.get("in_itop"):
+        return f"color:{segments.RED};"
+    if service_view._foreign(h, ips):
+        return f"color:{segments.RED};font-weight:bold;"
+    return ""
+
+
+def _cut(text: str, n: int) -> str:
+    return text if len(text) <= n else text[:n - 1] + "…"
 
 
 def _row_label(r: dict, ips: set[str]) -> str:
     h = r["host"]
     name = esc(h.get("name") or "")
-    color = ""
-    if not h.get("in_itop"):
-        color = f"color:{segments.RED};"
-    elif service_view._foreign(h, ips):
-        color = f"color:{segments.RED};font-weight:bold;"
-    peer = r.get("via") or ""
-    peer = peer if len(peer) <= 22 else peer[:21] + "…"
-    via = f"<i>via {esc(peer)}</i> · " if peer else ""
-    if r.get("hypervisor"):
-        hv = r["hypervisor"] if len(r["hypervisor"]) <= 22 else r["hypervisor"][:21] + "…"
-        via = f"<i>VM auf {esc(hv)}</i> · "
-    elif r.get("trunk"):
-        via = "<i>VM? · Trunk</i> · "
-    text = f"<b>{esc(r['port'])}</b> · {via}" + (f"{name} " if name else "") + esc(h["ip"])
+    via = f"<i>via {esc(_cut(r['via'], 18))}</i> · " if r.get("via") else ""
+    text = f"<b>{esc(short_port(r['port']))}</b> · {via}" + (f"{name} " if name else "") \
+        + esc(h["ip"])
+    color = _color(h, ips)
     return f"<span style='{color}'>{text}</span>" if color else text
+
+
+def _row_tip(r: dict, ips: set[str]) -> str:
+    return (f"Port {r['port']}\n" + service_view._host_tooltip(r["host"], ips)
+            + (f"\nhinter LLDP-Nachbar {r['via']}" if r.get("via") else "")
+            + (f"\nVM auf {r['hypervisor']} (laut iTop)"
+               + (" — Port des Servers, die VM-MAC selbst steht in keiner FDB"
+                  if r.get("basis") == "itop" else "")
+               if r.get("hypervisor") else "")
+            + (f"\nvermutlich VM hinter einem Hypervisor-Trunk (Port ohne LLDP, "
+               f"{r['trunk_macs']} MACs in {r['trunk_vlans']} VLANs)"
+               if r.get("trunk") and not r.get("hypervisor") else "")
+            + ("\nPort trägt mehrere MACs" if r["shared"] else ""))
+
+
+def _draw_hosts(doc: Doc, bid: str, sw: dict, ips: set[str]) -> None:
+    """Rechts im Switch-Kasten: Access-Hosts als Zeilen, VMs als Hypervisor-
+    Symbol mit Port und den VM-Namen eingerückt darunter."""
+    x0, w = ICON_COL + 12, BLOCK_W - ICON_COL - 14
+    rows, groups = _items(sw)
+    ry = 10
+    for r in rows[:HOST_ROWS_MAX]:
+        hshape, hpaint = drawio.SHAPES[drawio.host_shape(r["host"])]
+        doc.vertex("", STYLE["row-icon"].format(stencil=hshape, paint=hpaint),
+                   x0, ry + 2, 13, 13, parent=bid)
+        doc.vertex(_row_label(r, ips), STYLE["row"], x0 + 16, ry, w - 16, ROW, parent=bid,
+                   tooltip=_row_tip(r, ips))
+        ry += ROW
+    if len(rows) > HOST_ROWS_MAX:
+        doc.vertex(esc(f"… +{len(rows) - HOST_ROWS_MAX} weitere"), STYLE["row"], x0 + 16, ry,
+                   w - 16, ROW, parent=bid)
+        ry += ROW
+    sshape, spaint = drawio.SHAPES["server"]
+    for g in groups:
+        hv = g["hv"] or "Hypervisor?"
+        tip = (f"{hv} an Port {g['port']}\n"
+               + ("laut iTop" if g["hv"] else "nicht im iTop — nur an einem Trunk ohne LLDP gesehen")
+               + f"\n{len(g['vms'])} VMs in diesem VLAN")
+        doc.vertex("", STYLE["row-icon"].format(stencil=sshape, paint=spaint),
+                   x0, ry + 1, 16, 16, parent=bid, tooltip=tip)
+        doc.vertex(f"<b>{esc(_cut(hv, 22))}</b> · {esc(short_port(g['port']))}"
+                   + ("" if g["hv"] else " <i>(Trunk)</i>"),
+                   STYLE["row"], x0 + 19, ry, w - 19, GROUP_HEAD, parent=bid, tooltip=tip)
+        vy = ry + GROUP_HEAD
+        for r in g["vms"][:VM_MAX]:
+            h = r["host"]
+            vshape, vpaint = drawio.SHAPES[drawio.host_shape(h)]
+            doc.vertex("", STYLE["row-icon"].format(stencil=vshape, paint=vpaint),
+                       x0 + 20, vy + 2, 10, 10, parent=bid)
+            label = esc(h.get("name") or h["ip"])
+            color = _color(h, ips)
+            doc.vertex(f"<span style='{color}'>{label}</span>" if color else label,
+                       STYLE["vm"], x0 + 33, vy, w - 33, VM_ROW, parent=bid,
+                       tooltip=_row_tip(r, ips))
+            vy += VM_ROW
+        if len(g["vms"]) > VM_MAX:
+            doc.vertex(esc(f"… +{len(g['vms']) - VM_MAX} weitere VMs"), STYLE["vm"], x0 + 33, vy,
+                       w - 33, VM_ROW, parent=bid)
+        ry += _group_h(g)
+    if sw["unknown"]:
+        doc.vertex(f"<i>+ {sw['unknown']} MACs ohne bekannten Host</i>", STYLE["row"],
+                   x0, ry, w, ROW, parent=bid)
 
 
 def _levels(model: dict) -> list[list[dict]]:
@@ -497,7 +615,26 @@ def _levels(model: dict) -> list[list[dict]]:
 
 
 def render(model: dict, title_block: dict | None = None) -> str:
-    doc = Doc(model["title"])
+    return render_pages([model], [title_block])
+
+
+def render_pages(models: list[dict], title_blocks: list[dict | None]) -> str:
+    """Eine Seite je VLAN in derselben Datei."""
+    doc = Doc(_page_name(models[0]))
+    for i, (m, tb) in enumerate(zip(models, title_blocks)):
+        if i:
+            doc.page(_page_name(m))
+        _draw_page(doc, m, tb)
+    return doc.to_xml()
+
+
+def _page_name(model: dict) -> str:
+    net = model["net"]
+    vlan = f"VLAN {net['vlan']}" if net.get("vlan") is not None else net["cidr"]
+    return f"{model['site']} · {vlan}"
+
+
+def _draw_page(doc: Doc, model: dict, title_block: dict | None) -> None:
     ips = set(model["service"]["ips"])
     net, fw = model["net"], model["fw"]
     levels = _levels(model)
@@ -563,31 +700,7 @@ def render(model: dict, title_block: dict | None = None) -> str:
                           else "") + ("<br><i>Transit</i>" if transit else ""),
                        STYLE["name"], 4, SW_H + 12, ICON_COL - 4, _name_lines(sw) * NAME_LINE + 4,
                        parent=bid)
-            ry = 10
-            for r in sw["hosts"][:HOST_ROWS_MAX]:
-                hshape, hpaint = drawio.SHAPES[drawio.host_shape(r["host"])]
-                doc.vertex("", STYLE["row-icon"].format(stencil=hshape, paint=hpaint),
-                           ICON_COL + 12, ry + 2, 13, 13, parent=bid)
-                doc.vertex(_row_label(r, ips), STYLE["row"], ICON_COL + 28, ry, BLOCK_W - ICON_COL - 30,
-                           ROW, parent=bid,
-                           tooltip=service_view._host_tooltip(r["host"], ips)
-                           + (f"\nhinter LLDP-Nachbar {r['via']}" if r.get("via") else "")
-                           + (f"\nVM auf {r['hypervisor']} (laut iTop)"
-                              + (" — Port des Servers, die VM-MAC selbst steht in keiner FDB"
-                                 if r.get("basis") == "itop" else "")
-                              if r.get("hypervisor") else "")
-                           + (f"\nvermutlich VM hinter einem Hypervisor-Trunk (Port ohne LLDP, "
-                              f"{r['trunk_macs']} MACs in {r['trunk_vlans']} VLANs)"
-                              if r.get("trunk") and not r.get("hypervisor") else "")
-                           + ("\nPort trägt mehrere MACs" if r["shared"] else ""))
-                ry += ROW
-            if len(sw["hosts"]) > HOST_ROWS_MAX:
-                doc.vertex(esc(f"… +{len(sw['hosts']) - HOST_ROWS_MAX} weitere"), STYLE["row"],
-                           ICON_COL + 28, ry, BLOCK_W - ICON_COL - 30, ROW, parent=bid)
-                ry += ROW
-            if sw["unknown"]:
-                doc.vertex(f"<i>+ {sw['unknown']} MACs ohne bekannten Host</i>", STYLE["row"],
-                           ICON_COL + 12, ry, BLOCK_W - ICON_COL - 14, ROW, parent=bid)
+            _draw_hosts(doc, bid, sw, ips)
             x += BLOCK_W + COL_GAP
         y += row_h + LEVEL_GAP
 
@@ -597,11 +710,12 @@ def render(model: dict, title_block: dict | None = None) -> str:
         same = (a["level"] or 1) == (b["level"] or 1)
         top, low = (a, b) if (a["level"] or 1) <= (b["level"] or 1) else (b, a)
         tp, lp = (ln["a_port"], ln["b_port"]) if top is a else (ln["b_port"], ln["a_port"])
-        doc.edge(cells[top["id"]], cells[low["id"]], esc(f"{tp} ↔ {lp}"), STYLE["lldp"]
+        doc.edge(cells[top["id"]], cells[low["id"]],
+                 esc(f"{short_port(tp)} ↔ {short_port(lp)}"), STYLE["lldp"]
                  + (f"exitX={ex};exitY=0;entryX={ex};entryY=0;" if same
                     else f"exitX={ex};exitY=1;entryX={ex};entryY=0;"))
     for fl in model["fw_links"]:
-        label = (f"{fl['fw_port']} ↔ {fl['sw_port']}" if fl["lldp"]
+        label = (f"{fl['fw_port']} ↔ {short_port(fl['sw_port'])}" if fl["lldp"]
                  else "Uplink per LLDP nicht belegt")
         doc.edge(fid, cells[fl["sw"]], esc(label),
                  STYLE["uplink" if fl["lldp"] else "uplink-guess"]
@@ -616,7 +730,7 @@ def render(model: dict, title_block: dict | None = None) -> str:
                   for u in model["unplaced"][:40]]
         if len(model["unplaced"]) > 40:
             lines.append(f"… +{len(model['unplaced']) - 40} weitere")
-        doc.vertex("<br>".join(lines), STYLE["unplaced"], lx, Y0 + 150, 340,
+        doc.vertex("<br>".join(lines), STYLE["unplaced"], lx, Y0 + 180, 360,
                    30 + len(lines) * 12)
     vlan = f"VLAN {net['vlan']}" if net.get("vlan") is not None else net["interface"]
     legend = "<br>".join([
@@ -627,17 +741,17 @@ def render(model: dict, title_block: dict | None = None) -> str:
         "<span style='color:#6c8ebf;font-weight:bold'>━ blau</span> = Switch ↔ Switch (LLDP), "
         "Ports an beiden Enden",
         f"Zeilen: Access-Port · Host — laut FDB in {esc(vlan)}; „via …“ = hinter einem "
-        "LLDP-Nachbarn ohne Switch-Rolle; „VM auf …“ = VM am Port ihres Hypervisors "
-        "(laut iTop); „VM? · Trunk“ = nur an einem Trunk ohne LLDP gesehen",
+        "LLDP-Nachbarn ohne Switch-Rolle",
+        "Server-Symbol = Hypervisor (laut iTop) an seinem Port, darunter seine VMs; "
+        "„Hypervisor? (Trunk)“ = Trunk ohne LLDP, im iTop keine VM",
         "gestrichelter Kasten = Transit-Switch ohne eigene Hosts",
         f"<span style='color:{segments.RED}'>rot</span> = nicht im iTop bzw. nicht am Service",
     ])
-    doc.vertex(legend, segments.STYLE["legend"], lx, Y0, 340, 120)
+    doc.vertex(legend, segments.STYLE["legend"], lx, Y0, 360, 150)
     if title_block:
-        tb_y = Y0 + 150 + (30 + (min(len(model["unplaced"]), 40) + 3) * 12 + 20
+        tb_y = Y0 + 180 + (30 + (min(len(model["unplaced"]), 40) + 3) * 12 + 20
                            if model["unplaced"] else 0)
         titleblock.draw(doc, lx, tb_y, title_block)
-    return doc.to_xml()
 
 
 def model_switch(model: dict, sid: str) -> dict:

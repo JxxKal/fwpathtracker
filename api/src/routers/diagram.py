@@ -544,8 +544,6 @@ async def _segments(body: DiagramRequest, request: Request, user: dict) -> dict:
     'switches' stattdessen die Switch-Physik EINES VLANs."""
     state = request.app.state
     phys = body.service_view == "switches"
-    if phys and len(body.networks) != 1:
-        raise HTTPException(422, "Die Switch-Physik zeichnet genau ein VLAN — bitte eines wählen.")
     itop_cfg, data, itop_hosts, itop_subnets = await _itop_service_data(state)
     itop = state.resolver.itop
     try:
@@ -638,30 +636,44 @@ async def _switch_physics(body: DiagramRequest, request: Request, user: dict, se
     async def ports(did: str) -> list[dict]:
         return await client.device_ports(cfg, did)
 
-    mdl = await vlanphys.build(seg, state.inventory, lldp=lldp, fdb=fdb, ports=ports,
-                               hide_not_in_itop=body.hide_not_in_itop,
-                               hide_not_in_service=body.hide_not_in_service,
-                               access_max=int(cfg.get("access_max_macs",
-                                                      vlanphys.ACCESS_MAX_MACS)),
-                               virt=virt, itop_hosts=itop_hosts, mac_of=mac_of)
-    warnings += mdl["warnings"]
-    st = mdl["stats"]
-    net = mdl["net"]
-    raw = f"{mdl['service']['name']}_" + (f"VLAN{net['vlan']}" if net.get("vlan") is not None
-                                           else net["cidr"])
+    models = []
+    for one in vlanphys.split(seg):
+        m = await vlanphys.build(one, state.inventory, lldp=lldp, fdb=fdb, ports=ports,
+                                 hide_not_in_itop=body.hide_not_in_itop,
+                                 hide_not_in_service=body.hide_not_in_service,
+                                 access_max=int(cfg.get("access_max_macs",
+                                                        vlanphys.ACCESS_MAX_MACS)),
+                                 virt=virt, itop_hosts=itop_hosts, mac_of=mac_of)
+        many = len(seg["sites"]) > 1 or len(seg["sites"][0]["segments"]) > 1
+        warnings += [(f"{vlanphys._page_name(m)}: {w}" if many else w) for w in m["warnings"]]
+        models.append(m)
+    keys = ("switches", "switches_transit", "hosts", "hosts_placed", "hosts_not_in_itop",
+            "hosts_not_in_service")
+    st = {k: sum(m["stats"][k] for m in models) for k in keys}
+    st.update(sites=len({m["site"] for m in models}), segments=len(models),
+              firewalls=len({m["fw"]["device"] for m in models}))
+    svc_name = models[0]["service"]["name"]
+    vlans = [f"VLAN{m['net']['vlan']}" if m["net"].get("vlan") is not None else m["net"]["cidr"]
+             for m in models]
+    raw = f"{svc_name}_" + ("_".join(vlans) if len(vlans) <= 3 else f"{len(vlans)}VLANs")
     stem = "switches_" + (re.sub(r"[^A-Za-z0-9_.-]+", "_", raw).strip("_") or "vlan")
     cfg_tb = await read_config("titleblock")
-    tb = None
-    if cfg_tb.get("enabled") is not False:
+    tbs: list[dict | None] = []
+    for m in models:
+        if cfg_tb.get("enabled") is False:
+            tbs.append(None)
+            continue
         prefix = (cfg_tb.get("drawing_no_prefix") or "A38").strip()
-        tb = titleblock.info_from(
-            cfg_tb, title=mdl["title"],
-            subtitle=(f"{mdl['site']} · {net['cidr']} · {st['switches']} Switches "
-                      f"({st['switches_transit']} Transit) · {st['hosts_placed']}/{st['hosts']} "
+        ms = m["stats"]
+        tbs.append(titleblock.info_from(
+            cfg_tb, title=m["title"],
+            subtitle=(f"{m['site']} · {m['net']['cidr']} · {ms['switches']} Switches "
+                      f"({ms['switches_transit']} Transit) · {ms['hosts_placed']}/{ms['hosts']} "
                       "Hosts am Switchport"),
             author=str(user.get("username") or ""), drawing_no=f"{prefix}-{stem.upper()}",
-            note=note.replace(" und DNS", ", LibreNMS (LLDP, FDB) und DNS"))
-    return {"filename": f"A38_Netzplan_{stem}.drawio", "xml": vlanphys.render(mdl, tb),
+            note=note.replace(" und DNS", ", LibreNMS (LLDP, FDB) und DNS")))
+    return {"filename": f"A38_Netzplan_{stem}.drawio",
+            "xml": vlanphys.render_pages(models, tbs),
             "stats": st, "hosts_mode": "all", "warnings": warnings}
 
 

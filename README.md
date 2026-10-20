@@ -210,8 +210,8 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   und weiter in die **SD-WAN-Wolke** in der Mitte. Jeder Standort ist ein
   Kasten, die Firewalls stehen zur Wolke hin. „Backup" ergibt so das
   Backup-VLAN aller Standorte auf einem Blatt. Switches zeigt der Segmentplan
-  bewusst nicht. Dafür gibt es die **Switch-Physik eines VLANs**: Man wählt
-  genau ein VLAN, und gezeichnet wird jeder Switch, an dem ein Host dieses
+  bewusst nicht. Dafür gibt es die **Switch-Physik**: Man wählt ein oder
+  mehrere VLANs (je VLAN eine Seite derselben Datei), und gezeichnet wird jeder Switch, an dem ein Host dieses
   VLANs physisch zu Hause ist, mit Port und Host je Zeile. Zuhause ist nur
   ein **Access-Port**: kein LLDP-Nachbar, höchstens `access_max_macs` MACs
   über alle VLANs gezählt (wie in der Switchport-Suche) und höchstens zwei
@@ -221,9 +221,9 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   Port-Channel …, die hier immer zu einem Switch oder einer Firewall führen)
   steht nie ein Host. Sie sind nur Verbindungen. Taucht ein Host nur an
   Trunks ohne LLDP auf, ist er vermutlich eine VM hinter einem Hypervisor.
-  Er steht dann am Trunk mit den wenigsten MACs, markiert als „VM? · Trunk".
-  **VMs laut iTop** (VirtualMachine → Hypervisor oder Farm → Server) heißen
-  „VM auf esx-07". Der Switchport des Servers ergibt sich aus seiner
+  Er steht dann am Trunk mit den wenigsten MACs, als „Hypervisor? (Trunk)" mit den VMs darunter.
+  **VMs laut iTop** (VirtualMachine → Hypervisor oder Farm → Server) stehen
+  als Hypervisor-Symbol mit Name und Port, ihre Namen eingerückt darunter. Der Switchport des Servers ergibt sich aus seiner
   Management-IP über die ARP-Historie und die FDB. Steht die VM-MAC dort,
   ist das ihr Zuhause. Steht sie in keiner FDB, kommt die VM an den Port
   ihres Servers. Das gilt nur bei eindeutigem Hypervisor; bei einer Farm wird

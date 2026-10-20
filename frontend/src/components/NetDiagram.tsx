@@ -55,7 +55,7 @@ export default function NetDiagram() {
   const [netsBusy, setNetsBusy] = useState(false);
   // Segmentplan (logisch, mehrere VLANs) oder Switch-Physik EINES VLANs.
   const [svcMode, setSvcMode] = useState<ServiceView>('segments');
-  const single = svcMode === 'switches';
+  const phys = svcMode === 'switches';
   const segView = svcView && !!service;
   const [res, setRes] = useState<DiagramResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -95,8 +95,7 @@ export default function NetDiagram() {
     diagramServiceNetworks(service).then((r) => {
       if (gone) return;
       setSvcNets(r);
-      setPicked(new Set(svcMode === 'switches' ? r.networks.slice(0, 1).map((n) => n.id)
-        : r.networks.map((n) => n.id)));
+      setPicked(new Set(r.networks.map((n) => n.id)));
       // Der Segmentplan zeigt die Hosts DES Service — fremde nur auf Wunsch.
       setHideNoSvc(true);
     }).catch((e) => { if (!gone) setErr(e instanceof Error ? e.message : String(e)); })
@@ -115,20 +114,11 @@ export default function NetDiagram() {
   }, [svcNets]);
 
   function toggle(id: string) {
-    if (single) { setPicked(new Set([id])); return; }
     setPicked((p) => { const next = new Set(p); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   }
 
-  function switchMode(mode: ServiceView) {
-    setSvcMode(mode); setRes(null);
-    if (mode === 'switches') {
-      // Genau ein VLAN: das erste der bisherigen Auswahl behalten.
-      const first = svcNets?.networks.find((n) => picked.has(n.id)) ?? svcNets?.networks[0];
-      setPicked(new Set(first ? [first.id] : []));
-    } else {
-      setPicked(new Set(svcNets?.networks.map((n) => n.id) ?? []));
-    }
-  }
+  // Die Auswahl bleibt beim Umschalten stehen — beide Sichten zeichnen dieselben VLANs.
+  function switchMode(mode: ServiceView) { setSvcMode(mode); setRes(null); }
 
   const vdoms = useMemo(() => scopes?.devices.find((d) => d.device === device)?.vdoms ?? [], [scopes, device]);
   useEffect(() => { if (vdoms.length > 0 && !vdoms.includes(vdom)) setVdom(vdoms[0]); }, [vdoms, vdom]);
@@ -289,7 +279,7 @@ export default function NetDiagram() {
           {de.diagram.expand}
         </label>
         <button type="button" className="fwpt-btn" onClick={build}
-          disabled={busy || (segView ? (single ? picked.size !== 1 : picked.size === 0) : noScope ? false
+          disabled={busy || (segView ? picked.size === 0 : noScope ? false
             : scope === 'site' ? !site : scope !== 'global' && !device)}>
           <Play size={14} /> {busy ? de.diagram.building : de.diagram.build}
         </button>
@@ -307,8 +297,8 @@ export default function NetDiagram() {
             ))}
           </div>
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <span className="text-xs font-medium text-slate-200">{single ? de.diagram.switchesPick : de.diagram.segments}</span>
-            {!single && svcNets && svcNets.networks.length > 0 && (
+            <span className="text-xs font-medium text-slate-200">{phys ? de.diagram.switchesPick : de.diagram.segments}</span>
+            {svcNets && svcNets.networks.length > 0 && (
               <>
                 <span className="text-[11px] text-slate-500">{de.diagram.picked(picked.size, svcNets.networks.length)}</span>
                 <button type="button" className="text-[11px] text-cyan-400 hover:underline"
@@ -318,7 +308,7 @@ export default function NetDiagram() {
               </>
             )}
           </div>
-          <p className="text-[11px] text-slate-500">{single ? de.diagram.switchesHint : de.diagram.segmentsHint}</p>
+          <p className="text-[11px] text-slate-500">{phys ? de.diagram.switchesHint : de.diagram.segmentsHint}</p>
           {netsBusy && <p className="text-xs text-slate-400">{de.diagram.loadingNets}</p>}
           {svcNets && svcNets.networks.length === 0 && (
             <p className="text-sm text-amber-400">{de.diagram.noServiceNets}</p>
@@ -338,7 +328,7 @@ export default function NetDiagram() {
                   {nets.map((n) => (
                     <li key={n.id}>
                       <label className="flex cursor-pointer items-start gap-2 text-xs text-slate-300">
-                        <input type={single ? 'radio' : 'checkbox'} name="svc-net" className="mt-0.5"
+                        <input type="checkbox" className="mt-0.5"
                           checked={picked.has(n.id)} onChange={() => toggle(n.id)} />
                         <span>
                           <span className="font-medium text-slate-100">

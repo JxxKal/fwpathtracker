@@ -143,6 +143,24 @@ async def test_a_server_nic_speaking_lldp_is_the_host_not_a_via(inventory, prefi
     assert m["fw_links"][0]["fw_port"] == "port5"
 
 
+async def test_nic_description_as_lldp_hostname_is_not_a_via(inventory, prefixes):
+    import copy
+    lldp = copy.deepcopy(LLDP)
+    lldp["links"].append({"local_device_id": 2, "local_port_id": 206,
+                          "remote_hostname": "Broadcom P210p NetXtreme-E Dual-port 10Gb",
+                          "remote_device_id": 0})
+    m = await _model(inventory, prefixes, lldp=lldp)
+    row = next(r for s in m["switches"] for r in s["hosts"] if r["host"]["ip"] == "10.4.5.99")
+    assert row["via"] is None
+
+
+def test_port_names_are_shortened():
+    assert vlanphys.short_port("Ten-GigabitEthernet1/0/44") == "Te1/0/44"
+    assert vlanphys.short_port("GigabitEthernet1/0/5") == "Gi1/0/5"
+    assert vlanphys.short_port("Bridge-Aggregation11") == "BAGG11"
+    assert vlanphys.short_port("port5") == "port5"
+
+
 async def test_trunk_only_hosts_are_vms_behind_the_hypervisor_trunk(inventory, prefixes):
     m = await _model(inventory, prefixes)
     core = next(s for s in m["switches"] if s["name"] == "sw-core")
@@ -152,7 +170,7 @@ async def test_trunk_only_hosts_are_vms_behind_the_hypervisor_trunk(inventory, p
     assert all(r["host"]["ip"] != "10.4.5.99" for r in core["hosts"])
     assert any("VM" in w for w in m["warnings"])
     xml = vlanphys.render(m)
-    assert "VM? · Trunk" in xml
+    assert "Hypervisor?" in xml and "Gi1/0/12" in xml
 
 
 VIRT = {"vms": {"3": {"name": "bk-d", "host_id": "h1", "host_name": "esx-07"},
@@ -207,3 +225,16 @@ async def test_render_has_firewall_switches_and_labelled_links(inventory, prefix
     assert "sw-acc" in labels and "Gi1/0/5" in labels
     ids = {o.get("id") for o in root.iter("object")} | {c.get("id") for c in root.iter("mxCell")}
     assert all(c.get("source") in ids and c.get("target") in ids for c in edges)
+
+
+async def test_several_vlans_become_one_page_each(inventory, prefixes):
+    fams = segments.find_service(FAMILIES, SERVICES, "Backup")
+    nets, _ = services.place(inventory, fams, LINKS, ITOP_HOSTS, [])
+    seg = await segments.build(inventory, prefixes, family=fams[0], nets=nets, selected=[],
+                               itop_hosts=ITOP_HOSTS, arp=Arp())
+    parts = vlanphys.split(seg)
+    assert len(parts) == 3 and all(len(p["sites"][0]["segments"]) == 1 for p in parts)
+    models = [await vlanphys.build(p, inventory, lldp=LLDP, fdb=fdb, ports=ports) for p in parts]
+    root = ET.fromstring(vlanphys.render_pages(models, [None] * 3))
+    assert len(root.findall("diagram")) == 3
+    assert {m["fw"]["device"] for m in models} == {"fw-a", "fw-c", "fw-d"}
