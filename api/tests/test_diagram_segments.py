@@ -85,6 +85,21 @@ def test_switches_follow_lldp_from_the_firewall_and_must_carry_the_vlan():
     assert segments.vlan_switches("fw-d", 50, None, fw) == []
 
 
+def test_firewall_found_by_interface_ip_and_switches_by_management_ip():
+    lldp = {"index": {"fw": {"device_id": 9, "sysName": "FGT60F-SERIAL", "ip": "10.4.5.1",
+                             "os": "fortigate"},
+                      "a": {"device_id": 1, "sysName": "sw-a"},
+                      "m": {"device_id": 2, "sysName": "sw-mgmt", "ip": "10.4.5.30"},
+                      "x": {"device_id": 3, "sysName": "sw-anderer-standort", "ip": "10.9.9.9"}},
+            "links": [{"local_device_id": 1, "remote_hostname": "FGT60F-SERIAL",
+                       "remote_device_id": 9}],
+            "vlans": [{"device_id": d, "vlan_vlan": 50} for d in (1, 2, 3)]}
+    import ipaddress
+    out = segments.vlan_switches("fw-d", 50, lldp, {"fw-d"}, {"10.4.5.1"},
+                                 [ipaddress.IPv4Network("10.4.5.0/24")])
+    assert [(s["name"], s["how"]) for s in out] == [("sw-a", "lldp"), ("sw-mgmt", "mgmt")]
+
+
 async def test_sites_firewalls_and_the_vdom_chain_to_the_wan(inventory, prefixes):
     m = await _build(inventory, prefixes)
     fws = {fw["device"]: fw for s in m["sites"] for fw in s["firewalls"]}
@@ -124,7 +139,8 @@ async def test_render_draws_segments_switches_hosts_and_one_cloud(inventory, pre
     assert sum(1 for c in root.iter("mxCell") if "shape=cloud" in (c.get("style") or "")) == 1
     assert sum(1 for c in root.iter("mxCell")
                if (c.get("style") or "").startswith("rounded=1;arcSize=50")) == 3   # Leisten
-    assert any("sw-d1" in lb for lb in labels)
+    assert any("sw-d1<br>sw-other" in lb for lb in labels)          # ein Symbol, Namen darunter
+    assert any(lb == "×2" for lb in labels)
     assert any("bk-d" in lb for lb in labels)
     edges = [c for c in root.iter("mxCell") if c.get("edge") == "1"]
     assert any((c.get("value") or "") == "Default via wan-d" for c in edges)

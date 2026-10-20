@@ -4,7 +4,7 @@ Die Service-Übersicht (services.py) beantwortet „in welchen VLANs liegt der
 Service?". Der Segmentplan zeichnet für eine Auswahl dieser VLANs, wie sie
 im Netz hängen — im Stil der klassischen Standortpläne:
 
-    Hosts ── Netzsegment (Busleiste) ── Switches
+    Netzsegment (Busleiste) ── Switch-Symbol ×N mit Namen, Hosts
                   │ Interface
             Firewall · Segment-VDOM ── Inter-VDOM ── Router-VDOM
                                                         │ Uplink
@@ -18,9 +18,10 @@ Wolke in der Mitte. Gezeichnet wird nur, was die Quellen belegen:
     die CIs des Service per IP liegen — dieselbe Zuordnung wie die Übersicht);
   * Hosts aus iTop, ARP-Historie, FortiAnalyzer und LibreNMS, markiert wie in
     der Übersicht (rot = nicht am Service, rot umrandet = nicht im iTop);
-  * Switches aus LibreNMS: per LLDP von der Firewall aus erreichbar UND mit
-    diesem VLAN konfiguriert. Dieselbe VLAN-Nummer gibt es an jedem Standort,
-    erst die LLDP-Nachbarschaft macht daraus „die Switches DIESES Segments";
+  * Switches aus LibreNMS: mit diesem VLAN konfiguriert UND am Standort —
+    per LLDP von der Firewall aus erreichbar oder per Management-IP in einem
+    Netz dieser Firewall. Dieselbe VLAN-Nummer gibt es an jedem Standort,
+    erst die Standortbindung macht daraus „die Switches DIESES Segments";
   * Router-VDOM wie in der Pfad-Engine: Name, sonst Default-Route, sonst Overlay.
 """
 from __future__ import annotations
@@ -101,56 +102,97 @@ def _is_firewall(dev: dict, fw_names: set[str]) -> bool:
     return any(o in os_ for o in FIREWALL_OS) or bool(names & fw_names)
 
 
-def vlan_switches(device: str, vlan: int | None, lldp: dict | None,
-                  fw_names: set[str]) -> list[dict]:
-    """Switches des Segments: von der Firewall per LLDP erreichbar und mit
-    dem VLAN konfiguriert. Ohne VLAN-Nummer (geroutetes Interface ohne Tag)
-    zählen nur die direkt an der Firewall hängenden Switches."""
+def vlan_switches(device: str, vlan: int | None, lldp: dict | None, fw_names: set[str],
+                  fw_ips: set[str] | None = None,
+                  site_nets: list[ipaddress.IPv4Network] | None = None) -> list[dict]:
+    """Switches des Segments — alle, die das VLAN führen und zu DIESEM
+    Standort gehören. Zwei Wege, weil jeder allein Lücken hat:
+
+      * LLDP: von der Firewall aus erreichbar (bis MAX_LLDP_HOPS, nicht über
+        andere Firewalls). Die Firewall wird am Namen ODER an einer ihrer
+        Interface-IPs erkannt — in LibreNMS heißt sie oft anders als im FMG
+        (HA-Mitglied, FQDN, Seriennummer).
+      * Management-IP: der Switch wird über ein Netz genau dieser Firewall
+        verwaltet. Greift auch, wenn LLDP auf den Firewall-Ports aus ist.
+
+    Dieselbe VLAN-Nummer gibt es an jedem Standort; erst die Standortbindung
+    macht daraus die Switches dieses Segments. Ohne VLAN-Nummer (geroutetes
+    Interface ohne Tag) zählen nur die direkt an der Firewall hängenden."""
     if not lldp:
         return []
     links, index, vlan_rows = lldp["links"], lldp["index"], lldp["vlans"]
     by_id = {str(d.get("device_id")): d for d in index.values() if d.get("device_id")}
     me = device.lower()
+    fw_ips = fw_ips or set()
 
-    def is_me(name) -> bool:
+    def is_me_name(name) -> bool:
         n = str(name or "").strip().lower()
-        return bool(n) and (n == me or n.split(".")[0] == me)
+        return bool(n) and (n == me or n.split(".")[0] == me or n.startswith(me + "-")
+                            or n.startswith(me + "_"))
+
+    me_ids = {did for did, d in by_id.items()
+              if str(d.get("ip") or "") in fw_ips
+              or any(is_me_name(d.get(k)) for k in ("sysName", "hostname"))}
 
     start: set[str] = set()
     adj: dict[str, set[str]] = {}
     for ln in links:
         a, b = str(ln.get("local_device_id") or ""), str(ln.get("remote_device_id") or "")
         a_dev = by_id.get(a)
-        if is_me(ln.get("remote_hostname")) and a_dev and not _is_firewall(a_dev, fw_names):
+        if a_dev and not _is_firewall(a_dev, fw_names) and (
+                is_me_name(ln.get("remote_hostname")) or b in me_ids):
             start.add(a)
-        if a_dev and is_me(a_dev.get("sysName") or a_dev.get("hostname")) and b in by_id \
-                and not _is_firewall(by_id[b], fw_names):
+        if a in me_ids and b in by_id and not _is_firewall(by_id[b], fw_names):
             start.add(b)
         if a in by_id and b in by_id and b != "0":
             adj.setdefault(a, set()).add(b)
             adj.setdefault(b, set()).add(a)
-    if vlan is None:
-        reached = start
-    else:
-        reached, queue = set(start), deque((s, 0) for s in start)
+    how: dict[str, str] = {d: "lldp" for d in start}
+    if vlan is not None:
+        queue = deque((d, 0) for d in start)
         while queue:
             cur, depth = queue.popleft()
             if depth >= MAX_LLDP_HOPS:
                 continue
             for nxt in adj.get(cur, ()):
-                if nxt in reached or _is_firewall(by_id[nxt], fw_names):
+                if nxt in how or _is_firewall(by_id[nxt], fw_names):
                     continue
-                reached.add(nxt)
+                how[nxt] = "lldp"
                 queue.append((nxt, depth + 1))
+        for did, d in by_id.items():
+            if did in how or _is_firewall(d, fw_names):
+                continue
+            try:
+                ip = ipaddress.IPv4Address(str(d.get("ip") or ""))
+            except ValueError:
+                continue
+            if any(ip in n for n in site_nets or ()):
+                how[did] = "mgmt"
         carrying = {str(r.get("device_id")) for r in vlan_rows if _vlan_num(r) == vlan}
-        reached = {d for d in reached if d in carrying}
+        how = {d: h for d, h in how.items() if d in carrying}
     out = []
-    for did in sorted(reached, key=lambda d: str(by_id[d].get("sysName") or by_id[d].get("hostname"))):
+    for did in sorted(how, key=lambda d: str(by_id[d].get("sysName") or by_id[d].get("hostname"))):
         d = by_id[did]
         out.append({"id": did, "name": d.get("sysName") or d.get("hostname") or did,
                     "ip": d.get("ip"), "hardware": d.get("hardware"),
-                    "uplink": did in start})
+                    "uplink": did in start, "how": how[did]})
     return out
+
+
+def _device_nets(inv: Inventory, device: str) -> tuple[set[str], list[ipaddress.IPv4Network]]:
+    """Interface-IPs und Netze einer Firewall über alle VDOMs. Transfer- und
+    Inter-VDOM-Netze (/30 und kleiner, 172.16 wird je Gerät wiederverwendet)
+    bleiben draußen — darüber verwaltet niemand Switches."""
+    ips: set[str] = set()
+    nets: list[ipaddress.IPv4Network] = []
+    for intf in (inv.interfaces.get(device) or {}).values():
+        for a in ([intf["ip"]] if intf.get("ip") is not None else []) + list(
+                intf.get("secondary_ips") or []):
+            ips.add(str(a.ip))
+            if a.network.prefixlen <= 29 and not a.network.subnet_of(
+                    ipaddress.IPv4Network("172.16.0.0/12")):
+                nets.append(a.network)
+    return ips, nets
 
 
 def find_service(families: list[dict], services: list[dict], service: str) -> list[dict]:
@@ -213,7 +255,9 @@ async def build(inv: Inventory, prefixes: PrefixTable, *, family: dict, nets: di
     for net in chosen:
         for h in net["hosts"]:
             h["in_itop"] = bool(service_view.ITOP_SOURCES & set(h.get("sources") or []))
-        net["switches"] = vlan_switches(net["device"], net["vlan"], lldp, fw_names)
+        fw_ips, site_nets = _device_nets(inv, net["device"])
+        net["switches"] = vlan_switches(net["device"], net["vlan"], lldp, fw_names, fw_ips,
+                                        site_nets)
         net["vlan_sort"] = (net["vlan"] is None, net["vlan"] or 0, net["cidr"])
 
     # Standort → Firewalls → VDOM-Kette.
@@ -280,10 +324,13 @@ HOSTS_PER_ROW = 6
 SLOT_W, HOST_ICON, ROW_H = 120, 30, 84
 STUB = 16                         # Leitung Busleiste → Host
 BAR_H = 26
-BAR_W = HOSTS_PER_ROW * SLOT_W
-SW_W, SW_H, SW_SLOT = 40, 28, 170
-SW_AREA = 58
-SW_MAX = 4
+# Links unter der Leiste die Switch-Spalte: EIN Symbol mit „×N", darunter die
+# Namen aller Switches, die das VLAN führen — wie in den Standortplänen.
+SW_COL = 150
+BAR_W = SW_COL + HOSTS_PER_ROW * SLOT_W
+SW_W, SW_H = 44, 30
+SW_LINE = 11
+SW_NAMES_MAX = 16
 HOST_MAX = 48
 SEG_GAP = 22
 SITE_HEAD, PAD = 32, 20
@@ -311,6 +358,12 @@ STYLE = {
     "switch": "shape={stencil};html=1;aspect=fixed;{paint}labelPosition=right;"
               "verticalLabelPosition=middle;align=left;verticalAlign=middle;spacingLeft=4;"
               "fontSize=9;whiteSpace=nowrap;",
+    "sw-count": "ellipse;html=1;fillColor=#333333;strokeColor=none;"
+                "fontColor=#ffffff;fontSize=9;fontStyle=1;",
+    "sw-names": "text;html=1;align=center;verticalAlign=top;fontSize=9;fontStyle=1;"
+                "spacing=0;whiteSpace=wrap;",
+    "sw-none": "text;html=1;align=center;verticalAlign=top;fontSize=9;fontStyle=2;"
+               "fontColor=#999999;whiteSpace=wrap;",
     "outline": f"rounded=1;arcSize=10;html=1;fillColor=none;strokeColor={RED};strokeWidth=2;"
                "dashed=1;",
     "more": "text;html=1;fontSize=10;fontStyle=2;align=left;verticalAlign=middle;",
@@ -350,10 +403,15 @@ def _visible_hosts(net: dict, ips: set[str], hide_not_in_itop: bool,
             and not (hide_not_in_service and service_view._foreign(h, ips))]
 
 
-def _seg_height(n_hosts: int, has_switches: bool) -> float:
+def _sw_lines(n: int) -> int:
+    return min(n, SW_NAMES_MAX) + (1 if n > SW_NAMES_MAX else 0)
+
+
+def _seg_height(n_hosts: int, n_switches: int) -> float:
     shown = min(n_hosts, HOST_MAX) + (1 if n_hosts > HOST_MAX else 0)
     rows = math.ceil(shown / HOSTS_PER_ROW)
-    return (SW_AREA if has_switches else 10) + BAR_H + (STUB + rows * ROW_H if rows else 12)
+    sw_h = SW_H + 8 + max(1, _sw_lines(n_switches)) * SW_LINE + 8
+    return 10 + BAR_H + STUB + max(rows * ROW_H, sw_h)
 
 
 def _fw_size(fw: dict) -> tuple[float, float]:
@@ -375,6 +433,36 @@ def _bar_label(net: dict, n_hosts: int) -> str:
             f"{esc(net['cidr'])} · GW {esc(net['fw_ip'])} · {n_hosts} Hosts")
 
 
+def _draw_switches(doc: Doc, box: str, bar: str, net: dict, x: float, y: float) -> None:
+    """Switch-Spalte unter dem Anfang der Leiste: ein Symbol, „×N", die Namen."""
+    sws = net["switches"]
+    if not sws:
+        doc.vertex("kein Switch ermittelt", STYLE["sw-none"], x + 4, y, SW_COL - 8, 30,
+                   parent=box, tooltip="Weder per LLDP an der Firewall noch per Management-IP "
+                   "in einem Netz der Firewall fand sich ein Switch, der dieses VLAN führt.")
+        return
+    stencil, paint = drawio.SHAPES["switch"]
+    tip = "\n".join([f"{len(sws)} Switches führen "
+                     + (f"VLAN {net['vlan']}" if net.get("vlan") is not None else "das Segment")]
+                    + [f"{sw['name']}" + (f" {sw['ip']}" if sw.get("ip") else "")
+                       + (f" · {sw['hardware']}" if sw.get("hardware") else "")
+                       + (" · per LLDP" if sw.get("how") == "lldp" else " · per Management-IP")
+                       for sw in sws])
+    sx = x + (SW_COL - SW_W) / 2
+    sid = doc.vertex("", STYLE["switch"].format(stencil=stencil, paint=paint), sx, y, SW_W, SW_H,
+                     parent=box, tooltip=tip)
+    doc.edge(bar, sid, "", STYLE["stub"] + f"exitX={(SW_COL / 2) / BAR_W:.3f};exitY=1;"
+             "entryX=0.5;entryY=0;", parent=box)
+    if len(sws) > 1:
+        doc.vertex(f"×{len(sws)}", STYLE["sw-count"], sx + SW_W - 6, y - 6, 26, 16, parent=box,
+                   tooltip=tip)
+    names = [esc(sw["name"]) for sw in sws[:SW_NAMES_MAX]]
+    if len(sws) > SW_NAMES_MAX:
+        names.append(f"<i>+{len(sws) - SW_NAMES_MAX} weitere</i>")
+    doc.vertex("<br>".join(names), STYLE["sw-names"], x + 4, y + SW_H + 6, SW_COL - 8,
+               _sw_lines(len(sws)) * SW_LINE + 4, parent=box, tooltip=tip)
+
+
 class _Site:
     """Ein Standort-Kasten: Maße zuerst, gezeichnet wird danach."""
 
@@ -382,8 +470,11 @@ class _Site:
                  facing_down: bool) -> None:
         self.site = site
         self.down = facing_down          # Firewalls unten (obere Reihe) oder oben
-        self.hosts = [_visible_hosts(n, ips, hide_itop, hide_svc) for n in site["segments"]]
-        self.seg_h = [_seg_height(len(h), bool(n["switches"]))
+        # Switches stehen in ihrer eigenen Spalte, nicht noch einmal als Host.
+        self.hosts = [[h for h in _visible_hosts(n, ips, hide_itop, hide_svc)
+                       if h["ip"] not in {sw.get("ip") for sw in n["switches"]}]
+                      for n in site["segments"]]
+        self.seg_h = [_seg_height(len(h), len(n["switches"]))
                       for h, n in zip(self.hosts, site["segments"])]
         n = len(site["segments"])
         self.lane_w = 24 + 10 * n
@@ -454,47 +545,34 @@ def _draw_site(doc: Doc, s: _Site, x: float, y: float, ips: set[str]) -> list[tu
     # Segmente: Switches über der Leiste, Hosts darunter, Leitung links zur Firewall.
     sy = seg_y0
     for i, (net, hosts, h) in enumerate(zip(site["segments"], s.hosts, s.seg_h)):
-        bar_y = sy + (SW_AREA if net["switches"] else 10)
+        bar_y = sy + 10
         bar = doc.vertex(_bar_label(net, len(hosts)),
                          STYLE["bar" if net.get("enabled", True) else "bar-off"],
                          s.lane_w, bar_y, BAR_W, BAR_H, parent=box,
                          tooltip=drawio._net_tooltip(dict(net, host_count=len(hosts)))
                          + f"\nFirewall: {net['fw_id']}")
-        for j, sw in enumerate(net["switches"][:SW_MAX]):
-            label = esc(sw["name"]) + (f"<br><span style='color:#777'>{esc(sw['ip'])}</span>"
-                                       if sw.get("ip") else "")
-            if j == SW_MAX - 1 and len(net["switches"]) > SW_MAX:
-                label += f"<br><i>+{len(net['switches']) - SW_MAX} weitere</i>"
-            stencil, paint = drawio.SHAPES["switch"]
-            sid = doc.vertex(label, STYLE["switch"].format(stencil=stencil, paint=paint),
-                             s.lane_w + 16 + j * SW_SLOT, bar_y - SW_AREA + 10, SW_W, SW_H,
-                             parent=box, tooltip="\n".join(p for p in (
-                                 f"Switch {sw['name']}", sw.get("hardware"),
-                                 "hängt per LLDP direkt an der Firewall" if sw.get("uplink")
-                                 else "per LLDP hinter der Firewall", f"führt VLAN {net['vlan']}"
-                                 if net.get("vlan") else None) if p))
-            cx = (16 + j * SW_SLOT + SW_W / 2) / BAR_W
-            doc.edge(sid, bar, "", STYLE["stub"] + f"exitX=0.5;exitY=1;entryX={cx:.3f};entryY=0;",
-                     parent=box)
+        _draw_switches(doc, box, bar, net, s.lane_w, bar_y + BAR_H + STUB)
         for k, host in enumerate(hosts[:HOST_MAX]):
             r, c = divmod(k, HOSTS_PER_ROW)
-            hx = s.lane_w + c * SLOT_W + (SLOT_W - HOST_ICON) / 2
+            hx = s.lane_w + SW_COL + c * SLOT_W + (SLOT_W - HOST_ICON) / 2
             hy = bar_y + BAR_H + STUB + r * ROW_H
             tip = service_view._host_tooltip(host, ips)
             if not host.get("in_itop"):
-                doc.vertex("", STYLE["outline"], s.lane_w + c * SLOT_W + 4, hy - 4, SLOT_W - 8,
+                doc.vertex("", STYLE["outline"], s.lane_w + SW_COL + c * SLOT_W + 4, hy - 4,
+                           SLOT_W - 8,
                            ROW_H - 8, parent=box, tooltip=tip)
             label, style = _host_cell(host, ips)
             hid = doc.vertex(label, style, hx, hy, HOST_ICON, HOST_ICON, parent=box, tooltip=tip)
             if r == 0:
                 doc.edge(bar, hid, "", STYLE["stub"]
-                         + f"exitX={(c * SLOT_W + SLOT_W / 2) / BAR_W:.3f};exitY=1;"
+                         + f"exitX={(SW_COL + c * SLOT_W + SLOT_W / 2) / BAR_W:.3f};exitY=1;"
                          "entryX=0.5;entryY=0;", parent=box)
         if len(hosts) > HOST_MAX:
             k = HOST_MAX
             r, c = divmod(k, HOSTS_PER_ROW)
             doc.vertex(esc(f"… +{len(hosts) - HOST_MAX} weitere"), STYLE["more"],
-                       s.lane_w + c * SLOT_W + 8, bar_y + BAR_H + STUB + r * ROW_H, SLOT_W * 2, 30,
+                       s.lane_w + SW_COL + c * SLOT_W + 8, bar_y + BAR_H + STUB + r * ROW_H,
+                       SLOT_W * 2, 30,
                        parent=box)
         # Leitung links an der Leiste vorbei zur Firewall. Jede Leitung hat
         # ihre eigene Spur, damit sie sich nicht decken.
@@ -549,7 +627,8 @@ def render(mdl: dict, title_block: dict | None = None, hide_not_in_itop: bool = 
     lines = [f"<b>{esc(mdl['title'])}</b>",
              f"Servicefamilie {esc(mdl['family'])} · {len(mdl['sites'])} Standorte",
              f"<span style='color:{GREEN};font-weight:bold'>▬ grün</span> = Netzsegment (VLAN) "
-             "mit Switches darüber und Hosts darunter",
+             "· darunter links das Switch-Symbol (×N) mit den Namen aller Switches im VLAN, "
+             "daneben die Hosts",
              "Leitung Segment → Firewall: Interface · VLAN; orange = Kopplung zum SD-WAN",
              (f"<span style='color:{RED};font-weight:bold'>■ rot</span> = im iTop, aber nicht "
               f"am Service {esc(svc['name'])}") if not hide_not_in_service

@@ -255,7 +255,7 @@ export const de = {
     serviceAll: '— Übersicht aller Services —',
     serviceNeedsFamily: 'Für den Segmentplan zuerst eine Servicefamilie wählen.',
     segments: 'VLANs für den Segmentplan',
-    segmentsHint: 'Jedes gewählte VLAN wird ein Netzsegment: Switches darüber (per LLDP an der Firewall und mit dem VLAN in LibreNMS), Hosts darunter, die Leitung zum Firewall-Interface, über den Router-VDOM ins SD-WAN in der Mitte. Ein Kasten je Standort.',
+    segmentsHint: 'Jedes gewählte VLAN wird ein Netzsegment: darunter ein Switch-Symbol mit den Namen aller Switches, die das VLAN in LibreNMS führen (per LLDP an der Firewall oder per Management-IP in einem Netz der Firewall), daneben die Hosts, die Leitung zum Firewall-Interface, über den Router-VDOM ins SD-WAN in der Mitte. Ein Kasten je Standort.',
     loadingNets: 'Lade VLANs des Service …',
     pickAll: 'alle', pickNone: 'keine',
     picked: (n: number, total: number) => `${n} von ${total} gewählt`,
