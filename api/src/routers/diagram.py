@@ -13,7 +13,7 @@ import httpx
 
 from deps import get_current_user, require_admin
 from diagram import (drawio, linkstatus, logical, model as diagram_model,
-                     physical, services as service_view, titleblock)
+                     physical, segments, services as service_view, titleblock)
 from netguard import guard_egress_url
 from resolver import dns_source
 from resolver.dns_cache import build_reverse
@@ -73,6 +73,10 @@ class DiagramRequest(BaseModel):
     show_firewalls: bool = True
     hide_not_in_itop: bool = False
     hide_not_in_service: bool = False
+    # Segmentplan: ID oder Name EINES Service und die gewählten Netze (IDs aus
+    # /service-networks). Leer = Übersicht der Familie(n).
+    service: str | None = Field(default=None, max_length=200)
+    networks: list[str] = Field(default_factory=list, max_length=200)
     # Nur für die physische Sicht: Einschränkung auf einen LibreNMS-Standort
     # (bei uns teils raumscharf) oder eine Gerätegruppe.
     location: str | None = Field(default=None, max_length=200)
@@ -357,9 +361,47 @@ async def service_families(request: Request, _user: dict = Depends(get_current_u
         return {"families": [], "errors": ["iTop ist nicht konfiguriert."]}
     data = await request.app.state.resolver.itop.services(cfg)
     fams = service_view._wanted(data["families"], data["services"], None)
-    return {"families": [{"id": f["id"], "name": f["name"], "services": len(f["services"])}
+    return {"families": [{"id": f["id"], "name": f["name"], "services": len(f["services"]),
+                          "service_list": [{"id": s["id"], "name": s["name"]}
+                                           for s in sorted(f["services"],
+                                                           key=lambda s: s["name"].lower())]}
                          for f in fams if f["services"]],
             "errors": data["errors"]}
+
+
+async def _itop_service_data(state) -> tuple[dict, dict, list[dict], list[dict]]:
+    itop_cfg = await read_config("itop")
+    if not itop_cfg.get("base_url"):
+        raise HTTPException(400, "iTop ist nicht konfiguriert — Servicefamilien und "
+                                 "Services kommen vollständig von dort.")
+    itop = state.resolver.itop
+    try:
+        data = await itop.services(itop_cfg)
+        itop_hosts = await itop.hosts(itop_cfg)
+        itop_subnets = (await itop.ipam(itop_cfg))["subnets"]
+    except Exception as exc:
+        raise HTTPException(502, f"iTop nicht abrufbar: {exc}") from exc
+    return itop_cfg, data, itop_hosts, itop_subnets
+
+
+@router.get("/service-networks")
+async def service_networks(request: Request, service: str,
+                           _user: dict = Depends(get_current_user)) -> dict:
+    """Die VLANs EINES Service — Auswahl für den Segmentplan."""
+    state = request.app.state
+    _cfg, data, itop_hosts, itop_subnets = await _itop_service_data(state)
+    try:
+        fams = segments.find_service(data["families"], data["services"], service)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    nets, warnings = service_view.place(state.inventory, fams, data["links"], itop_hosts,
+                                        itop_subnets)
+    svc = fams[0]["services"][0]
+    return {"service": {"id": svc["id"], "name": svc["name"], "family": fams[0]["name"],
+                        "cis": svc["ci_count"], "unplaced": svc["unplaced"]},
+            "networks": segments.network_choices(state.inventory, state.prefixes, nets, svc,
+                                                 await _sites()),
+            "warnings": warnings}
 
 
 DEFAULT_ARP_MAX_AGE_DAYS = 30
@@ -477,11 +519,95 @@ async def _services(body: DiagramRequest, request: Request, user: dict) -> dict:
             "stats": st, "hosts_mode": "all", "warnings": warnings}
 
 
+async def _lldp(state, warnings: list[str]) -> dict | None:
+    """LLDP-Links, Geräte und VLANs aus LibreNMS — woraus die Switches eines
+    Segments folgen. None, wenn LibreNMS fehlt oder nicht antwortet."""
+    cfg = await read_config("librenms")
+    if not cfg.get("base_url"):
+        return None
+    client = state.locate.librenms
+    try:
+        return {"links": await client.links(cfg), "index": await client.device_index(cfg),
+                "vlans": await client.vlans(cfg)}
+    except Exception as exc:
+        warnings.append(f"LibreNMS (LLDP/VLANs) nicht abrufbar: {exc}")
+        return None
+
+
+async def _segments(body: DiagramRequest, request: Request, user: dict) -> dict:
+    """Segmentplan: die gewählten VLANs eines Service mit Switches, Hosts und
+    der Kopplung über Firewall und Router-VDOM ins SD-WAN."""
+    state = request.app.state
+    itop_cfg, data, itop_hosts, itop_subnets = await _itop_service_data(state)
+    itop = state.resolver.itop
+    try:
+        fams = segments.find_service(data["families"], data["services"], body.service or "")
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    nets, warnings = service_view.place(state.inventory, fams, data["links"], itop_hosts,
+                                        itop_subnets)
+
+    async def addresses(cidrs: list[str]) -> dict[str, dict]:
+        wanted = [ipaddress.IPv4Network(c) for c in cidrs]
+        ids = [s["id"] for s in itop_subnets
+               if any(ipaddress.IPv4Network(s["cidr"]).overlaps(n) for n in wanted)]
+        try:
+            return await itop.addresses(itop_cfg, ids)
+        except Exception as exc:
+            warnings.append(f"iTop-Adressobjekte nicht abrufbar: {exc}")
+            return {}
+
+    async def arp(cidr: str) -> list[dict]:
+        return await state.arp_store.in_network(cidr)
+
+    lldp = await _lldp(state, warnings)
+    librenms_devices = (lldp or {}).get("index") or {}
+    reverse = await build_reverse(state, await read_config("dns"))
+    faz_hosts, arp_max_age_s = await _live_hosts(state, warnings)
+    tracker_cfg = await read_config("tracker")
+    try:
+        mdl = await segments.build(
+            state.inventory, state.prefixes, family=fams[0], nets=nets,
+            selected=body.networks, itop_hosts=itop_hosts, addresses=addresses, arp=arp,
+            dns=reverse, librenms_devices=librenms_devices, faz_hosts=faz_hosts,
+            arp_max_age_s=arp_max_age_s, sites=await _sites(), lldp=lldp,
+            router_vdom_pattern=tracker_cfg.get("router_vdom_pattern",
+                                                segments.DEFAULT_ROUTER_RE),
+            overlay_pattern=tracker_cfg.get("overlay_pattern", segments.DEFAULT_OVERLAY_RE))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if reverse is not None:
+        await reverse.flush()
+    warnings += mdl["warnings"]
+    st = mdl["stats"]
+    if st["hosts_not_in_service"] and not body.hide_not_in_service:
+        warnings.append(f"{st['hosts_not_in_service']} Hosts in den Segmenten stehen im iTop, "
+                        "hängen aber nicht am Service — rot markiert.")
+    stem = "segmente_" + (re.sub(r"[^A-Za-z0-9_.-]+", "_", mdl["service"]["name"]).strip("_")
+                          or "service")
+    cfg_tb = await read_config("titleblock")
+    tb = None
+    if cfg_tb.get("enabled") is not False:
+        prefix = (cfg_tb.get("drawing_no_prefix") or "A38").strip()
+        tb = titleblock.info_from(
+            cfg_tb, title=mdl["title"],
+            subtitle=(f"{st['sites']} Standorte · {st['segments']} Segmente · "
+                      f"{st['firewalls']} Firewalls · {st['switches']} Switches · "
+                      f"{st['hosts']} Hosts"),
+            author=str(user.get("username") or ""), drawing_no=f"{prefix}-{stem.upper()}",
+            note=_source_note(faz_hosts, arp_max_age_s).replace(" und DNS", ", LibreNMS (LLDP) und DNS"))
+    return {"filename": f"A38_Netzplan_{stem}.drawio",
+            "xml": segments.render(mdl, tb, body.hide_not_in_itop, body.hide_not_in_service),
+            "stats": st, "hosts_mode": "all", "warnings": warnings}
+
+
 @router.post("")
 async def build(body: DiagramRequest, request: Request,
                 user: dict = Depends(get_current_user)) -> dict:
     if body.view.startswith("physisch"):
         return await _physical(body, request, user)
+    if body.view == "services" and body.service:
+        return await _segments(body, request, user)
     if body.view == "services":
         return await _services(body, request, user)
     state = request.app.state

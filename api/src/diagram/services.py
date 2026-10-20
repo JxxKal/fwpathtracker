@@ -103,17 +103,12 @@ def _wanted(families: list[dict], services: list[dict], family: str | None) -> l
     return out
 
 
-async def build(inv: Inventory, *, families: list[dict], services: list[dict],
-                links: list[dict], itop_hosts: list[dict], itop_subnets: list[dict],
-                addresses: AddrLookup | None = None,
-                arp: diagram_model.ArpLookup | None = None,
-                dns: diagram_model.DnsLookup | None = None,
-                librenms_devices: dict[str, dict] | None = None,
-                faz_hosts: list[dict] | None = None, arp_max_age_s: int = 0,
-                family: str | None = None) -> dict:
-    wanted = _wanted(families, services, family)
-    if family and not wanted:
-        raise ValueError(f"Servicefamilie '{family}' gibt es im iTop nicht.")
+def place(inv: Inventory, wanted: list[dict], links: list[dict], itop_hosts: list[dict],
+          itop_subnets: list[dict]) -> tuple[dict[str, dict], list[str]]:
+    """CIs der Services auf Firewall-Netze legen. Füllt je Service `networks`,
+    `ips`, `unplaced`, `ci_count` und je Familie `firewalls`; gibt die
+    beteiligten Netze (id → Netz, noch ohne Hosts) und die Warnungen zurück.
+    Gemeinsam für die Übersicht und den Segmentplan eines Service."""
     index = _network_index(inv, itop_subnets)
     ci_ip = {h["id"]: h for h in itop_hosts if h.get("id")}
     ci_by_name = {h["name"].lower(): h for h in itop_hosts}
@@ -152,6 +147,21 @@ async def build(inv: Inventory, *, families: list[dict], services: list[dict],
                     svc["networks"].append(net["id"])
                 if net["fw_id"] not in fam["firewalls"]:
                     fam["firewalls"].append(net["fw_id"])
+    return nets, warnings
+
+
+async def build(inv: Inventory, *, families: list[dict], services: list[dict],
+                links: list[dict], itop_hosts: list[dict], itop_subnets: list[dict],
+                addresses: AddrLookup | None = None,
+                arp: diagram_model.ArpLookup | None = None,
+                dns: diagram_model.DnsLookup | None = None,
+                librenms_devices: dict[str, dict] | None = None,
+                faz_hosts: list[dict] | None = None, arp_max_age_s: int = 0,
+                family: str | None = None) -> dict:
+    wanted = _wanted(families, services, family)
+    if family and not wanted:
+        raise ValueError(f"Servicefamilie '{family}' gibt es im iTop nicht.")
+    nets, warnings = place(inv, wanted, links, itop_hosts, itop_subnets)
 
     # Hosts je Netz einmal einsammeln, auch wenn mehrere Services es teilen.
     itop_addresses = await addresses([n["cidr"] for n in nets.values()]) if addresses and nets else {}

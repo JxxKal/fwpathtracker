@@ -1,6 +1,6 @@
 import { Download, ExternalLink, Map, Play } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { buildDiagram, diagramFilters, diagramScopes, diagramServiceFamilies, type ServiceFamilies, type PhysicalFilters, type DiagramHosts, type DiagramResult, type DiagramScope, type DiagramScopes, type DiagramView } from '../api';
+import { buildDiagram, diagramFilters, diagramScopes, diagramServiceFamilies, diagramServiceNetworks, type ServiceFamilies, type ServiceNetworks, type PhysicalFilters, type DiagramHosts, type DiagramResult, type DiagramScope, type DiagramScopes, type DiagramView } from '../api';
 import { de } from '../i18n/de';
 
 // Netzplan als draw.io: Scope wählen, Datei bauen lassen, herunterladen.
@@ -48,6 +48,12 @@ export default function NetDiagram() {
   const [showFw, setShowFw] = useState(true);
   const [hideNoItop, setHideNoItop] = useState(false);
   const [hideNoSvc, setHideNoSvc] = useState(false);
+  // Segmentplan: EIN Service, daraus die VLANs zum Ankreuzen. Leer = Übersicht.
+  const [service, setService] = useState('');
+  const [svcNets, setSvcNets] = useState<ServiceNetworks | null>(null);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [netsBusy, setNetsBusy] = useState(false);
+  const segView = svcView && !!service;
   const [res, setRes] = useState<DiagramResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -74,6 +80,40 @@ export default function NetDiagram() {
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   }, [svcView, families]);
 
+  const services = useMemo(
+    () => families?.families.find((f) => f.id === family)?.service_list ?? [], [families, family]);
+  useEffect(() => { setService(''); }, [family]);
+
+  useEffect(() => {
+    setSvcNets(null); setPicked(new Set()); setRes(null);
+    if (!service) return;
+    let gone = false;
+    setNetsBusy(true);
+    diagramServiceNetworks(service).then((r) => {
+      if (gone) return;
+      setSvcNets(r);
+      setPicked(new Set(r.networks.map((n) => n.id)));
+      // Der Segmentplan zeigt die Hosts DES Service — fremde nur auf Wunsch.
+      setHideNoSvc(true);
+    }).catch((e) => { if (!gone) setErr(e instanceof Error ? e.message : String(e)); })
+      .finally(() => { if (!gone) setNetsBusy(false); });
+    return () => { gone = true; };
+  }, [service]);
+
+  const bySite = useMemo(() => {
+    const out: [string, ServiceNetworks['networks']][] = [];
+    for (const n of svcNets?.networks ?? []) {
+      const key = n.site ?? de.diagram.noSite;
+      const slot = out.find(([k]) => k === key);
+      if (slot) slot[1].push(n); else out.push([key, [n]]);
+    }
+    return out;
+  }, [svcNets]);
+
+  function toggle(id: string) {
+    setPicked((p) => { const next = new Set(p); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  }
+
   const vdoms = useMemo(() => scopes?.devices.find((d) => d.device === device)?.vdoms ?? [], [scopes, device]);
   useEffect(() => { if (vdoms.length > 0 && !vdoms.includes(vdom)) setVdom(vdoms[0]); }, [vdoms, vdom]);
 
@@ -84,7 +124,8 @@ export default function NetDiagram() {
         scope, scope === 'vdom' || scope === 'firewall' ? device : null,
         scope === 'vdom' ? vdom : null, scope === 'site' ? site : null, hosts, expand, view,
         physical ? location || null : null, physical ? group || null : null,
-        svcView ? family || null : null, showFw, hideNoItop, hideNoSvc));
+        svcView ? family || null : null, showFw, hideNoItop, hideNoSvc,
+        segView ? service : null, segView ? [...picked] : []));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally { setBusy(false); }
@@ -124,6 +165,16 @@ export default function NetDiagram() {
           </label>
         )}
         {svcView && (
+          <label className="flex flex-col gap-1" title={family ? undefined : de.diagram.serviceNeedsFamily}>
+            <span className="text-[11px] text-slate-500">{de.diagram.service}</span>
+            <select className="fwpt-input w-64 disabled:opacity-40" value={service} disabled={!family}
+              onChange={(e) => setService(e.target.value)}>
+              <option value="">{de.diagram.serviceAll}</option>
+              {services.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </label>
+        )}
+        {svcView && !segView && (
           <label className="flex items-center gap-1.5 pb-2 text-xs text-slate-300" title={de.diagram.showFirewallsHint}>
             <input type="checkbox" checked={showFw} onChange={(e) => setShowFw(e.target.checked)} />
             {de.diagram.showFirewalls}
@@ -222,13 +273,68 @@ export default function NetDiagram() {
           {de.diagram.expand}
         </label>
         <button type="button" className="fwpt-btn" onClick={build}
-          disabled={busy || (noScope ? false
+          disabled={busy || (segView ? picked.size === 0 : noScope ? false
             : scope === 'site' ? !site : scope !== 'global' && !device)}>
           <Play size={14} /> {busy ? de.diagram.building : de.diagram.build}
         </button>
       </div>
+      {segView && (
+        <div className="space-y-2 rounded-md border border-slate-800 bg-slate-950/40 p-3">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <span className="text-xs font-medium text-slate-200">{de.diagram.segments}</span>
+            {svcNets && svcNets.networks.length > 0 && (
+              <>
+                <span className="text-[11px] text-slate-500">{de.diagram.picked(picked.size, svcNets.networks.length)}</span>
+                <button type="button" className="text-[11px] text-cyan-400 hover:underline"
+                  onClick={() => setPicked(new Set(svcNets.networks.map((n) => n.id)))}>{de.diagram.pickAll}</button>
+                <button type="button" className="text-[11px] text-cyan-400 hover:underline"
+                  onClick={() => setPicked(new Set())}>{de.diagram.pickNone}</button>
+              </>
+            )}
+          </div>
+          <p className="text-[11px] text-slate-500">{de.diagram.segmentsHint}</p>
+          {netsBusy && <p className="text-xs text-slate-400">{de.diagram.loadingNets}</p>}
+          {svcNets && svcNets.networks.length === 0 && (
+            <p className="text-sm text-amber-400">{de.diagram.noServiceNets}</p>
+          )}
+          {svcNets && svcNets.service.unplaced.length > 0 && (
+            <p className="text-xs text-amber-400/90"
+              title={svcNets.service.unplaced.map((u) => `${u.name}${u.ip ? ` ${u.ip}` : ''} – ${u.reason}`).join('\n')}>
+              {de.diagram.unplaced(svcNets.service.unplaced.length)}
+            </p>
+          )}
+          {(svcNets?.warnings ?? []).map((w) => <p key={w} className="text-xs text-amber-400">{w}</p>)}
+          <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 xl:grid-cols-3">
+            {bySite.map(([site, nets]) => (
+              <div key={site}>
+                <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500">{site}</p>
+                <ul className="space-y-1">
+                  {nets.map((n) => (
+                    <li key={n.id}>
+                      <label className="flex cursor-pointer items-start gap-2 text-xs text-slate-300">
+                        <input type="checkbox" className="mt-0.5" checked={picked.has(n.id)} onChange={() => toggle(n.id)} />
+                        <span>
+                          <span className="font-medium text-slate-100">
+                            {n.vlan !== null ? `VLAN ${n.vlan}` : n.interface}{n.name ? ` · ${n.name}` : ''}
+                          </span>
+                          <span className="ml-1.5 font-mono text-slate-400">{n.cidr}</span>
+                          <span className="block text-[11px] text-slate-500">
+                            <span className="font-mono">{n.fw_id}</span> · {n.interface} · {de.diagram.cis(n.cis)}
+                            {!n.enabled && <span className="text-amber-400"> · {de.diagram.off}</span>}
+                          </span>
+                        </span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <p className="text-[11px] text-slate-600">
-        {svcView ? de.diagram.viewServicesHint
+        {segView ? '' : svcView ? de.diagram.viewServicesHint
           : physical ? `${de.diagram.viewPhysL1Hint} ${de.diagram.filterHint}`
           : view === 'logisch' ? de.diagram.viewLogischHint
           : scope === 'global' ? de.diagram.globalHint
@@ -276,7 +382,15 @@ export default function NetDiagram() {
               ? <p className="text-slate-600">{de.diagram.openDrawioHint}</p>
               : <p className="text-amber-500">{de.diagram.tooBigForLink}</p>
           )}
-          {res.stats.services !== undefined ? (
+          {res.stats.segments !== undefined ? (
+          <p className="text-slate-500">
+            {res.stats.sites} {de.diagram.statSites} · {res.stats.segments} {de.diagram.statSegments}
+            {' · '}{res.stats.firewalls} {de.diagram.statDevices} · {res.stats.switches} {de.diagram.statSwitches}
+            {' · '}{res.stats.hosts} {de.diagram.statHosts}
+            {' · '}<span className={res.stats.hosts_not_in_service ? 'text-red-400' : ''}>{res.stats.hosts_not_in_service}{de.diagram.statNotInService}</span>
+            {' · '}<span className={res.stats.hosts_not_in_itop ? 'text-red-400' : ''}>{res.stats.hosts_not_in_itop} {de.diagram.statNotInItop}</span>
+          </p>
+          ) : res.stats.services !== undefined ? (
           <p className="text-slate-500">
             {res.stats.families} {de.diagram.statFamilies} · {res.stats.services} {de.diagram.statServices}
             {' · '}{res.stats.networks} {de.diagram.statNets} · {res.stats.firewalls} {de.diagram.statDevices}

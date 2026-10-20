@@ -337,17 +337,52 @@ export interface DiagramResult {
     hosts_reduced: boolean;
     // nur Service-Sicht
     families?: number; services?: number; firewalls?: number; hosts?: number;
-    hosts_not_in_itop?: number; hosts_not_in_service?: number; cis_unplaced?: number };
+    hosts_not_in_itop?: number; hosts_not_in_service?: number; cis_unplaced?: number;
+    // nur Segmentplan eines Service
+    segments?: number };
 }
 export interface ServiceFamilies {
-  families: { id: string; name: string; services: number }[];
+  families: { id: string; name: string; services: number;
+    service_list: { id: string; name: string }[] }[];
   errors: string[];
+}
+export interface ServiceNetwork {
+  id: string; cidr: string; vlan: number | null; name: string | null; interface: string;
+  fw_id: string; site: string | null; enabled: boolean; cis: number;
+}
+export interface ServiceNetworks {
+  service: { id: string; name: string; family: string; cis: number;
+    unplaced: { name: string; ip?: string; reason: string }[] };
+  networks: ServiceNetwork[];
+  warnings: string[];
+}
+export async function diagramServiceNetworks(service: string): Promise<ServiceNetworks> {
+  if (isDemoMode()) {
+    const net = (site: string, fw: string, vlan: number, cidr: string, cis: number): ServiceNetwork => ({
+      id: `net:${fw}/${cidr}`, cidr, vlan, name: 'Backup', interface: `port5.${vlan}`,
+      fw_id: fw, site, enabled: true, cis });
+    return {
+      service: { id: service, name: 'Backup', family: 'Global Tier-0 BU Germany', cis: 9,
+        unplaced: [{ name: 'bk-alt', reason: 'ohne Management-IP' }] },
+      networks: [
+        net('Hamburg', 'fw-b/prot', 140, '10.2.40.0/24', 3),
+        net('Holstein', 'fw-a/L3', 140, '10.180.40.0/24', 4),
+        net('Holstein', 'fw-a/L3', 141, '10.180.41.0/24', 1),
+        net('Kiel', 'fw-c/L3', 140, '10.3.40.0/24', 1),
+      ],
+      warnings: [],
+    };
+  }
+  return request(`/api/diagram/service-networks?service=${encodeURIComponent(service)}`);
 }
 export async function diagramServiceFamilies(): Promise<ServiceFamilies> {
   if (isDemoMode()) {
     return { errors: [], families: [
-      { id: '1', name: 'Global Tier-0 BU Germany', services: 3 },
-      { id: '2', name: 'PLS iFix', services: 2 },
+      { id: '1', name: 'Global Tier-0 BU Germany', services: 3, service_list: [
+        { id: '11', name: 'Backup' }, { id: '10', name: 'Tier-0 Core Infrastructure' },
+        { id: '12', name: 'Monitoring' }] },
+      { id: '2', name: 'PLS iFix', services: 2, service_list: [
+        { id: '20', name: 'iFix SCADA' }, { id: '21', name: 'iFix Historian' }] },
     ] };
   }
   return request('/api/diagram/service-families');
@@ -480,7 +515,19 @@ export async function buildDiagram(scope: DiagramScope, device: string | null, v
   view: DiagramView = 'struktur',
   location: string | null = null, group: string | null = null,
   family: string | null = null, showFirewalls = true,
-  hideNotInItop = false, hideNotInService = false): Promise<DiagramResult> {
+  hideNotInItop = false, hideNotInService = false,
+  service: string | null = null, networks: string[] = []): Promise<DiagramResult> {
+  if (isDemoMode() && view === 'services' && service) {
+    const xml = '<?xml version="1.0" encoding="UTF-8"?>\n<mxfile host="A38"><diagram name="Demo" id="demo"><mxGraphModel><root>'
+      + '<mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>';
+    return {
+      filename: 'A38_Netzplan_segmente_Backup.drawio', xml, hosts_mode: 'all',
+      warnings: ['1 von 4 Segmenten ohne Switch: kein per LLDP an der Firewall hängender Switch führt das VLAN in LibreNMS (VLAN 141).'],
+      stats: { devices: 0, vdoms: 0, networks: networks.length, hosts_found: 17, hosts_shown: 17,
+        neighbors: 0, switches: 5, sites: 3, hosts_reduced: false, segments: networks.length,
+        firewalls: 3, hosts: 17, hosts_not_in_itop: 2, hosts_not_in_service: 1 },
+    };
+  }
   if (isDemoMode() && view === 'services') {
     const xml = '<?xml version="1.0" encoding="UTF-8"?>\n<mxfile host="A38"><diagram name="Demo" id="demo"><mxGraphModel><root>'
       + '<mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>';
@@ -516,7 +563,8 @@ export async function buildDiagram(scope: DiagramScope, device: string | null, v
     method: 'POST',
     body: JSON.stringify({ scope, device, vdom, site, hosts, expand_hosts: expandHosts,
       view, location, group, family, show_firewalls: showFirewalls,
-      hide_not_in_itop: hideNotInItop, hide_not_in_service: hideNotInService }),
+      hide_not_in_itop: hideNotInItop, hide_not_in_service: hideNotInService,
+      service, networks }),
   });
 }
 

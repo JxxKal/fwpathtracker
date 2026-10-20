@@ -199,6 +199,20 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   Switche werden im Schriftfeld gezählt. Wird eine Geräteliste zu lang, steht
   je Geräteklasse ein Symbol mit Anzahl und Verweis auf eine **Tabellenseite**
   in derselben Datei. Druckformat DIN A3 quer.
+  **Services** zeichnet die iTop-Servicefamilien: je Service die VLANs, in
+  denen seine CIs per IP liegen. Wird darin **ein Service** gewählt, listet
+  A38 dessen VLANs nach Standort zum Ankreuzen, und es entsteht ein
+  **Segmentplan**: jedes gewählte VLAN als grüne Busleiste. Darüber stehen
+  die Switches; das sind die, die per LLDP von der Firewall aus erreichbar
+  sind und in LibreNMS das VLAN führen. Dieselbe VLAN-Nummer gibt es an jedem
+  Standort, erst die LLDP-Nachbarschaft macht daraus die Switches *dieses*
+  Segments. Darunter hängen die Hosts des Service. Fremde Hosts sind
+  standardmäßig ausgeblendet und lassen sich rot markiert einblenden. Die
+  Leitung jedes Segments führt zum Firewall-Interface. Von dort geht es über
+  den VDOM-Link zum Router-VDOM, der wie im Tracker erkannt wird (Name, sonst
+  Default-Route, sonst Overlay), und weiter in die **SD-WAN-Wolke** in der
+  Mitte. Jeder Standort ist ein Kasten, die Firewalls stehen zur Wolke hin.
+  „Backup" ergibt so das Backup-VLAN aller Standorte auf einem Blatt.
   **Physisch** zeichnet, wie die Netzwerkkomponenten untereinander hängen:
   Knoten und Kanten aus den **LLDP**-Nachbarschaften in LibreNMS, mit den Ports
   an beiden Enden, Ebenen per Breitensuche vom bestvernetzten Gerät (Core oben,
