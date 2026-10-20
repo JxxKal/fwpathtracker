@@ -339,13 +339,16 @@ export interface DiagramResult {
     families?: number; services?: number; firewalls?: number; hosts?: number;
     hosts_not_in_itop?: number; hosts_not_in_service?: number; cis_unplaced?: number;
     // nur Segmentplan eines Service
-    segments?: number };
+    segments?: number;
+    // nur Switch-Physik eines VLANs
+    switches_transit?: number; hosts_placed?: number };
 }
 export interface ServiceFamilies {
   families: { id: string; name: string; services: number;
     service_list: { id: string; name: string }[] }[];
   errors: string[];
 }
+export type ServiceView = 'segments' | 'switches';
 export interface ServiceNetwork {
   id: string; cidr: string; vlan: number | null; name: string | null; interface: string;
   fw_id: string; site: string | null; enabled: boolean; cis: number;
@@ -516,7 +519,19 @@ export async function buildDiagram(scope: DiagramScope, device: string | null, v
   location: string | null = null, group: string | null = null,
   family: string | null = null, showFirewalls = true,
   hideNotInItop = false, hideNotInService = false,
-  service: string | null = null, networks: string[] = []): Promise<DiagramResult> {
+  service: string | null = null, networks: string[] = [],
+  serviceView: ServiceView = 'segments'): Promise<DiagramResult> {
+  if (isDemoMode() && view === 'services' && service && serviceView === 'switches') {
+    const xml = '<?xml version="1.0" encoding="UTF-8"?>\n<mxfile host="A38"><diagram name="Demo" id="demo"><mxGraphModel><root>'
+      + '<mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>';
+    return {
+      filename: 'A38_Netzplan_switches_Backup_VLAN140.drawio', xml, hosts_mode: 'all',
+      warnings: ['2 Hosts ohne Switchport — keine MAC bekannt (ARP/FAZ) oder in keiner FDB gefunden; sie stehen in einer Liste.'],
+      stats: { devices: 0, vdoms: 0, networks: 1, hosts_found: 7, hosts_shown: 7, neighbors: 0,
+        switches: 3, sites: 1, hosts_reduced: false, segments: 1, firewalls: 1, hosts: 7,
+        hosts_not_in_itop: 1, hosts_not_in_service: 0, switches_transit: 1, hosts_placed: 5 },
+    };
+  }
   if (isDemoMode() && view === 'services' && service) {
     const xml = '<?xml version="1.0" encoding="UTF-8"?>\n<mxfile host="A38"><diagram name="Demo" id="demo"><mxGraphModel><root>'
       + '<mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>';
@@ -564,7 +579,7 @@ export async function buildDiagram(scope: DiagramScope, device: string | null, v
     body: JSON.stringify({ scope, device, vdom, site, hosts, expand_hosts: expandHosts,
       view, location, group, family, show_firewalls: showFirewalls,
       hide_not_in_itop: hideNotInItop, hide_not_in_service: hideNotInService,
-      service, networks }),
+      service, networks, service_view: serviceView }),
   });
 }
 

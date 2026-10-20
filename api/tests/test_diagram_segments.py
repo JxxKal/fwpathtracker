@@ -53,7 +53,7 @@ def _placed(inventory):
 async def _build(inventory, prefixes, selected=None, **kw):
     fams, nets = _placed(inventory)
     args = dict(family=fams[0], nets=nets, selected=selected or [], itop_hosts=ITOP_HOSTS,
-                arp=Arp(), lldp=LLDP)
+                arp=Arp())
     args.update(kw)
     return await segments.build(inventory, prefixes, **args)
 
@@ -122,7 +122,6 @@ async def test_hosts_are_marked_like_the_overview(inventory, prefixes):
     by_ip = {h["ip"]: h for h in seg["hosts"]}
     assert by_ip["10.4.5.10"]["in_itop"] and by_ip["10.4.5.99"]["in_itop"] is False
     assert m["stats"]["hosts_not_in_service"] == 1                      # fremd-d
-    assert [s["name"] for s in seg["switches"]] == ["sw-d1", "sw-other"]   # ungetaggt
     assert m["stats"]["segments"] == 1
 
 
@@ -139,8 +138,7 @@ async def test_render_draws_segments_switches_hosts_and_one_cloud(inventory, pre
     assert sum(1 for c in root.iter("mxCell") if "shape=cloud" in (c.get("style") or "")) == 1
     assert sum(1 for c in root.iter("mxCell")
                if (c.get("style") or "").startswith("rounded=1;arcSize=50")) == 3   # Leisten
-    assert any("sw-d1<br>sw-other" in lb for lb in labels)          # ein Symbol, Namen darunter
-    assert any(lb == "×2" for lb in labels)
+    assert not any("sw-d1" in lb for lb in labels)            # Switches: eigene Ansicht
     assert any("bk-d" in lb for lb in labels)
     edges = [c for c in root.iter("mxCell") if c.get("edge") == "1"]
     assert any((c.get("value") or "") == "Default via wan-d" for c in edges)

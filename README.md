@@ -202,19 +202,25 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   **Services** zeichnet die iTop-Servicefamilien: je Service die VLANs, in
   denen seine CIs per IP liegen. Wird darin **ein Service** gewählt, listet
   A38 dessen VLANs nach Standort zum Ankreuzen, und es entsteht ein
-  **Segmentplan**: jedes gewählte VLAN als grüne Busleiste. Darunter steht
-  links ein Switch-Symbol mit „×N" und den Namen aller Switches, die in
-  LibreNMS das VLAN führen und zum Standort gehören: per LLDP von der Firewall
-  aus erreichbar (die Firewall wird am Namen oder an einer Interface-IP
-  erkannt) oder per Management-IP in einem Netz dieser Firewall. Dieselbe VLAN-Nummer gibt es an jedem
-  Standort, erst die LLDP-Nachbarschaft macht daraus die Switches *dieses*
-  Segments. Daneben hängen die Hosts des Service. Fremde Hosts sind
-  standardmäßig ausgeblendet und lassen sich rot markiert einblenden. Die
-  Leitung jedes Segments führt zum Firewall-Interface. Von dort geht es über
-  den VDOM-Link zum Router-VDOM, der wie im Tracker erkannt wird (Name, sonst
-  Default-Route, sonst Overlay), und weiter in die **SD-WAN-Wolke** in der
-  Mitte. Jeder Standort ist ein Kasten, die Firewalls stehen zur Wolke hin.
-  „Backup" ergibt so das Backup-VLAN aller Standorte auf einem Blatt.
+  **Segmentplan**: jedes gewählte VLAN als grüne Busleiste mit den Hosts des
+  Service darunter. Fremde Hosts sind standardmäßig ausgeblendet und lassen
+  sich rot markiert einblenden. Die Leitung jedes Segments führt zum
+  Firewall-Interface. Von dort geht es über den VDOM-Link zum Router-VDOM,
+  der wie im Tracker erkannt wird (Name, sonst Default-Route, sonst Overlay),
+  und weiter in die **SD-WAN-Wolke** in der Mitte. Jeder Standort ist ein
+  Kasten, die Firewalls stehen zur Wolke hin. „Backup" ergibt so das
+  Backup-VLAN aller Standorte auf einem Blatt. Switches zeigt der Segmentplan
+  bewusst nicht. Dafür gibt es die **Switch-Physik eines VLANs**: Man wählt
+  genau ein VLAN, und gezeichnet wird jeder Switch, an dem laut FDB ein Host
+  dieses VLANs direkt hängt (an einem Port ohne LLDP-Nachbarn), mit Port und
+  Host je Zeile. Sieht man eine MAC an mehreren Ports, gilt der Port mit den
+  wenigsten MACs. Kandidaten sind die Switches des Standorts, die das VLAN in
+  LibreNMS führen: per LLDP von der Firewall aus erreichbar (die Firewall
+  wird am Namen oder an einer Interface-IP erkannt) oder per Management-IP in
+  einem Netz dieser Firewall. Dazu kommen die LLDP-Verbindungen mit den Ports
+  an beiden Enden, die Switches auf dem Weg zur Firewall als *Transit* und
+  der Uplink zur Firewall. Oben stehen Segment- und Router-VDOM, darüber das
+  SD-WAN. Hosts ohne Switchport stehen in einer Liste daneben.
   **Physisch** zeichnet, wie die Netzwerkkomponenten untereinander hängen:
   Knoten und Kanten aus den **LLDP**-Nachbarschaften in LibreNMS, mit den Ports
   an beiden Enden, Ebenen per Breitensuche vom bestvernetzten Gerät (Core oben,

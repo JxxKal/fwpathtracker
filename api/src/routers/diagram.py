@@ -13,7 +13,8 @@ import httpx
 
 from deps import get_current_user, require_admin
 from diagram import (drawio, linkstatus, logical, model as diagram_model,
-                     physical, segments, services as service_view, titleblock)
+                     physical, segments, services as service_view, titleblock,
+                     vlanphys)
 from netguard import guard_egress_url
 from resolver import dns_source
 from resolver.dns_cache import build_reverse
@@ -77,6 +78,9 @@ class DiagramRequest(BaseModel):
     # /service-networks). Leer = Übersicht der Familie(n).
     service: str | None = Field(default=None, max_length=200)
     networks: list[str] = Field(default_factory=list, max_length=200)
+    # segments = Segmentplan (logisch, mehrere VLANs); switches = Switch-Physik
+    # EINES VLANs (FDB + LLDP bis zur Firewall).
+    service_view: str = Field(default="segments", pattern="^(segments|switches)$")
     # Nur für die physische Sicht: Einschränkung auf einen LibreNMS-Standort
     # (bei uns teils raumscharf) oder eine Gerätegruppe.
     location: str | None = Field(default=None, max_length=200)
@@ -535,9 +539,13 @@ async def _lldp(state, warnings: list[str]) -> dict | None:
 
 
 async def _segments(body: DiagramRequest, request: Request, user: dict) -> dict:
-    """Segmentplan: die gewählten VLANs eines Service mit Switches, Hosts und
-    der Kopplung über Firewall und Router-VDOM ins SD-WAN."""
+    """Segmentplan: die gewählten VLANs eines Service mit Hosts und der
+    Kopplung über Firewall und Router-VDOM ins SD-WAN. Mit service_view
+    'switches' stattdessen die Switch-Physik EINES VLANs."""
     state = request.app.state
+    phys = body.service_view == "switches"
+    if phys and len(body.networks) != 1:
+        raise HTTPException(422, "Die Switch-Physik zeichnet genau ein VLAN — bitte eines wählen.")
     itop_cfg, data, itop_hosts, itop_subnets = await _itop_service_data(state)
     itop = state.resolver.itop
     try:
@@ -570,7 +578,7 @@ async def _segments(body: DiagramRequest, request: Request, user: dict) -> dict:
             state.inventory, state.prefixes, family=fams[0], nets=nets,
             selected=body.networks, itop_hosts=itop_hosts, addresses=addresses, arp=arp,
             dns=reverse, librenms_devices=librenms_devices, faz_hosts=faz_hosts,
-            arp_max_age_s=arp_max_age_s, sites=await _sites(), lldp=lldp,
+            arp_max_age_s=arp_max_age_s, sites=await _sites(),
             router_vdom_pattern=tracker_cfg.get("router_vdom_pattern",
                                                 segments.DEFAULT_ROUTER_RE),
             overlay_pattern=tracker_cfg.get("overlay_pattern", segments.DEFAULT_OVERLAY_RE))
@@ -579,6 +587,9 @@ async def _segments(body: DiagramRequest, request: Request, user: dict) -> dict:
     if reverse is not None:
         await reverse.flush()
     warnings += mdl["warnings"]
+    if phys:
+        return await _switch_physics(body, request, user, mdl, lldp, warnings,
+                                     _source_note(faz_hosts, arp_max_age_s))
     st = mdl["stats"]
     if st["hosts_not_in_service"] and not body.hide_not_in_service:
         warnings.append(f"{st['hosts_not_in_service']} Hosts in den Segmenten stehen im iTop, "
@@ -592,12 +603,48 @@ async def _segments(body: DiagramRequest, request: Request, user: dict) -> dict:
         tb = titleblock.info_from(
             cfg_tb, title=mdl["title"],
             subtitle=(f"{st['sites']} Standorte · {st['segments']} Segmente · "
-                      f"{st['firewalls']} Firewalls · {st['switches']} Switches · "
-                      f"{st['hosts']} Hosts"),
+                      f"{st['firewalls']} Firewalls · {st['hosts']} Hosts"),
             author=str(user.get("username") or ""), drawing_no=f"{prefix}-{stem.upper()}",
-            note=_source_note(faz_hosts, arp_max_age_s).replace(" und DNS", ", LibreNMS (LLDP) und DNS"))
+            note=_source_note(faz_hosts, arp_max_age_s))
     return {"filename": f"A38_Netzplan_{stem}.drawio",
             "xml": segments.render(mdl, tb, body.hide_not_in_itop, body.hide_not_in_service),
+            "stats": st, "hosts_mode": "all", "warnings": warnings}
+
+
+
+async def _switch_physics(body: DiagramRequest, request: Request, user: dict, seg: dict,
+                          lldp: dict | None, warnings: list[str], note: str) -> dict:
+    state = request.app.state
+    cfg = await read_config("librenms")
+    client = state.locate.librenms
+
+    async def fdb(did: str) -> list[dict]:
+        return await client.device_fdb(cfg, did)
+
+    async def ports(did: str) -> list[dict]:
+        return await client.device_ports(cfg, did)
+
+    mdl = await vlanphys.build(seg, state.inventory, lldp=lldp, fdb=fdb, ports=ports,
+                               hide_not_in_itop=body.hide_not_in_itop,
+                               hide_not_in_service=body.hide_not_in_service)
+    warnings += mdl["warnings"]
+    st = mdl["stats"]
+    net = mdl["net"]
+    raw = f"{mdl['service']['name']}_" + (f"VLAN{net['vlan']}" if net.get("vlan") is not None
+                                           else net["cidr"])
+    stem = "switches_" + (re.sub(r"[^A-Za-z0-9_.-]+", "_", raw).strip("_") or "vlan")
+    cfg_tb = await read_config("titleblock")
+    tb = None
+    if cfg_tb.get("enabled") is not False:
+        prefix = (cfg_tb.get("drawing_no_prefix") or "A38").strip()
+        tb = titleblock.info_from(
+            cfg_tb, title=mdl["title"],
+            subtitle=(f"{mdl['site']} · {net['cidr']} · {st['switches']} Switches "
+                      f"({st['switches_transit']} Transit) · {st['hosts_placed']}/{st['hosts']} "
+                      "Hosts am Switchport"),
+            author=str(user.get("username") or ""), drawing_no=f"{prefix}-{stem.upper()}",
+            note=note.replace(" und DNS", ", LibreNMS (LLDP, FDB) und DNS"))
+    return {"filename": f"A38_Netzplan_{stem}.drawio", "xml": vlanphys.render(mdl, tb),
             "stats": st, "hosts_mode": "all", "warnings": warnings}
 
 
