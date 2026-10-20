@@ -60,6 +60,16 @@ def _port_name(p: dict) -> str:
     return str(p.get("ifName") or p.get("ifDescr") or p.get("port_id") or "?")
 
 
+def _remote_port(ln: dict) -> str:
+    """LLDP-Portname des Nachbarn ohne angehängte Chassis-MAC — FortiGates
+    melden `port13 (0401a13f4fb3)`."""
+    return re.sub(r"\s*\([0-9a-fA-F:.-]{8,}\)\s*$", "", str(ln.get("remote_port") or "")) or "?"
+
+
+def _short(name) -> str:
+    return str(name or "").strip().lower().split(".")[0]
+
+
 async def build(seg: dict, inv: Inventory, *, lldp: dict | None, fdb: Fetch, ports: Fetch,
                 hide_not_in_itop: bool = False, hide_not_in_service: bool = False,
                 access_max: int = ACCESS_MAX_MACS) -> dict:
@@ -106,8 +116,12 @@ async def build(seg: dict, inv: Inventory, *, lldp: dict | None, fdb: Fetch, por
             if b in by_id or rname.lower().split(".")[0] in known or is_me_name(rname):
                 port_nb[key] = "uplink"
             elif rname or ln.get("remote_platform"):
+                # Nachbar ohne Switch-Rolle. Nur ein Hostname taugt als „via" —
+                # meldet sich bloß eine Plattform (Server-NIC mit eigenem
+                # LLDP-Agenten), ist der Nachbar der Host selbst.
                 port_nb.setdefault(key, "edge")
-                port_peer[key] = rname or str(ln.get("remote_platform"))
+                if rname:
+                    port_peer[key] = rname
         if a in by_id and b in by_id:
             adj.setdefault(a, set()).add(b)
             adj.setdefault(b, set()).add(a)
@@ -171,9 +185,12 @@ async def build(seg: dict, inv: Inventory, *, lldp: dict | None, fdb: Fetch, por
                 best[mac] = rank
     attached: dict[str, list[dict]] = {}
     for mac, (_k, n, did, pid) in best.items():
+        host, peer = host_by_mac[mac], port_peer.get((did, pid))
+        if peer and _short(peer) in (_short(host.get("name")), host["ip"]):
+            peer = None                                   # der Nachbar IST der Host
         attached.setdefault(did, []).append(
-            {"host": host_by_mac[mac], "port": port_names.get(did, {}).get(pid, pid),
-             "via": port_peer.get((did, pid)), "shared": n > 1})
+            {"host": host, "port": port_names.get(did, {}).get(pid, pid),
+             "via": peer, "shared": n > 1})
     placed = {id(r["host"]) for rows in attached.values() for r in rows}
 
     def reason(h: dict) -> str:
@@ -243,12 +260,12 @@ async def build(seg: dict, inv: Inventory, *, lldp: dict | None, fdb: Fetch, por
                 continue
             seen.add(pair)
             out["links"].append({"a": a, "b": b, "a_port": pname(a, ln.get("local_port_id")),
-                                 "b_port": str(ln.get("remote_port") or "?")})
+                                 "b_port": _remote_port(ln)})
         elif a in keep and (is_me_name(ln.get("remote_hostname")) or b in me_ids):
             out["fw_links"].append({"sw": a, "sw_port": pname(a, ln.get("local_port_id")),
-                                    "fw_port": str(ln.get("remote_port") or "?"), "lldp": True})
+                                    "fw_port": _remote_port(ln), "lldp": True})
         elif a in me_ids and b in keep:
-            out["fw_links"].append({"sw": b, "sw_port": str(ln.get("remote_port") or "?"),
+            out["fw_links"].append({"sw": b, "sw_port": _remote_port(ln),
                                     "fw_port": "?", "lldp": True})
     # Je Switch EIN Uplink — LibreNMS meldet die Kante oft von beiden Seiten.
     uniq: dict[str, dict] = {}
@@ -308,7 +325,7 @@ HEAD = 44
 LEVEL_GAP = 80
 COL_GAP = 40
 X0, Y0 = 40, 40
-FW_W, FW_H = 420, 78
+FW_W, FW_H = 530, 78
 CLOUD_W, CLOUD_H = 200, 90
 
 STYLE = {
@@ -318,6 +335,7 @@ STYLE = {
     "switch": "shape={stencil};html=1;aspect=fixed;{paint}",
     "name": "text;html=1;align=left;verticalAlign=top;fontSize=10;whiteSpace=wrap;",
     "row": "text;html=1;align=left;verticalAlign=middle;fontSize=9;whiteSpace=nowrap;"
+           "overflow=hidden;"
            "spacingLeft=2;",
     "row-icon": "shape={stencil};html=1;aspect=fixed;{paint}",
     "lldp": "edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=none;strokeWidth=2;"
@@ -351,7 +369,9 @@ def _row_label(r: dict, ips: set[str]) -> str:
         color = f"color:{segments.RED};"
     elif service_view._foreign(h, ips):
         color = f"color:{segments.RED};font-weight:bold;"
-    via = f"<i>via {esc(r['via'])}</i> · " if r.get("via") else ""
+    peer = r.get("via") or ""
+    peer = peer if len(peer) <= 22 else peer[:21] + "…"
+    via = f"<i>via {esc(peer)}</i> · " if peer else ""
     text = f"<b>{esc(r['port'])}</b> · {via}" + (f"{name} " if name else "") + esc(h["ip"])
     return f"<span style='{color}'>{text}</span>" if color else text
 
@@ -393,7 +413,7 @@ def render(model: dict, title_block: dict | None = None) -> str:
                18, parent=fid)
     seg_vdom = net["vdom"]
     router = fw.get("router")
-    pill_w = 120
+    pill_w = 165
     seg_pill = doc.vertex(esc(f"VDOM {seg_vdom}") + f"<br><span style='font-size:8px'>"
                           f"{esc(net['interface'])} · GW {esc(net['fw_ip'])}</span>",
                           segments.STYLE["pill-router" if seg_vdom == router else "pill"],
@@ -401,7 +421,7 @@ def render(model: dict, title_block: dict | None = None) -> str:
     out_pill = seg_pill
     if router and router != seg_vdom:
         out_pill = doc.vertex(esc(f"VDOM {router}") + "<br><span style='font-size:8px'>Router"
-                              "</span>", segments.STYLE["pill-router"], 130 + pill_w + 40,
+                              "</span>", segments.STYLE["pill-router"], 130 + pill_w + 50,
                               (FW_H - 34) / 2, pill_w, 34, parent=fid)
         doc.edge(seg_pill, out_pill, esc(fw["links"].get(seg_vdom, "Inter-VDOM")),
                  segments.STYLE["link"] + "strokeColor=#888888;dashed=1;", parent=fid)
@@ -446,6 +466,7 @@ def render(model: dict, title_block: dict | None = None) -> str:
                 doc.vertex(_row_label(r, ips), STYLE["row"], ICON_COL + 28, ry, BLOCK_W - ICON_COL - 30,
                            ROW, parent=bid,
                            tooltip=service_view._host_tooltip(r["host"], ips)
+                           + (f"\nhinter LLDP-Nachbar {r['via']}" if r.get("via") else "")
                            + ("\nPort trägt mehrere MACs" if r["shared"] else ""))
                 ry += ROW
             if len(sw["hosts"]) > HOST_ROWS_MAX:

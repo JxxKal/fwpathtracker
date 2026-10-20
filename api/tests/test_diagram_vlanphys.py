@@ -121,6 +121,19 @@ async def test_edge_port_behind_a_hypervisor_is_home_and_named(inventory, prefix
     assert row["port"] == "Gi1/0/6" and row["via"] == "esx-07"
 
 
+async def test_a_server_nic_speaking_lldp_is_the_host_not_a_via(inventory, prefixes):
+    import copy
+    lldp = copy.deepcopy(LLDP)
+    lldp["links"].append({"local_device_id": 2, "local_port_id": 206, "remote_hostname": "",
+                          "remote_platform": "Broadcom P210p NetXtreme-E Dual-port 10Gb",
+                          "remote_device_id": 0})
+    lldp["links"][0]["remote_port"] = "port5 (0401a13f4fb3)"
+    m = await _model(inventory, prefixes, lldp=lldp)
+    row = next(r for s in m["switches"] for r in s["hosts"] if r["host"]["ip"] == "10.4.5.99")
+    assert row["port"] == "Gi1/0/6" and row["via"] is None
+    assert m["fw_links"][0]["fw_port"] == "port5"
+
+
 async def test_render_has_firewall_switches_and_labelled_links(inventory, prefixes):
     m = await _model(inventory, prefixes)
     root = ET.fromstring(vlanphys.render(m))
