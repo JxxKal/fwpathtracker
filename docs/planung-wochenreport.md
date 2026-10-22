@@ -3,7 +3,7 @@
 Planung für einen automatisch erzeugten Wochenbericht über die Änderungen in der
 Infrastruktur, aufbereitet zum Lesen und als PDF exportierbar.
 
-**Stand:** 22.10.2026 · Entwurf, noch nichts umgesetzt
+**Stand:** 22.10.2026 · Schritt 1 (Graylog als eigene Quelle) umgesetzt, gegen das echte Graylog noch nicht geprüft
 **Betrifft:** neue Pakete `api/src/report/` und `api/src/graylog/`, Aufteilung der
 Webdrive-Einstellungen, Scheduler in `api/src/main.py`, neue Ansicht im Frontend,
 ein Render-Dienst für PDF und draw.io-Bilder
@@ -376,7 +376,7 @@ Entscheidung und kein Versäumnis.
 
 | # | Schritt | Ergebnis |
 |---|---|---|
-| 1 | Graylog als eigene Quelle, Migration aus `webdrive`, Panel mit Rollen-Filtern und Treffertest | Grundlage; Webdrive läuft unverändert |
+| 1 | ✅ Graylog als eigene Quelle, Migration aus `webdrive`, Panel mit Rollen-Filtern und Treffertest | Grundlage; Webdrive läuft unverändert |
 | 2 | Gerüst: `weekly_report`, Scheduler mit Advisory-Lock, manueller Lauf, Quellenstatus | ein leerer Bericht, der pünktlich entsteht |
 | 3 | Kapitel aus Quellen mit eigener Historie: Zabbix, ARP/DNS, FAZ-Ereignislogs, Webdrive, LibreNMS-Eventlog | **erster brauchbarer Bericht ohne Wartezeit** |
 | 4 | HTML-Ansicht mit SVG-Diagrammen in A38 | lesbar im Browser |

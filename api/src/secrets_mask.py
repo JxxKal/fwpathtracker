@@ -18,6 +18,7 @@ SECRET_FIELDS: dict[str, tuple[str, ...]] = {
     "webdrive": ("token", "fac_api_key"),
     "faz": ("token",),
     "zabbix": ("token",),
+    "graylog": ("token",),
 }
 
 

@@ -96,6 +96,7 @@ export default function WebdrivePanel() {
       <div>
         <h2 className="font-medium text-slate-100">{de.settings.webdrive}</h2>
         <p className="mt-0.5 text-xs text-slate-500">{de.settings.webdriveHint}</p>
+        <p className="mt-0.5 text-xs text-slate-500">{de.settings.webdriveConnHint}</p>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         {TEXT_FIELDS.map(([key, label, placeholder]) => (

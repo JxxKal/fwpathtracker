@@ -14,7 +14,7 @@ from collections import Counter
 from datetime import datetime, timedelta
 
 from webdrive.correlate import new_identities
-from webdrive.graylog import GraylogNotConfigured
+from graylog.client import GraylogNotConfigured
 from webdrive.parse import detect_source, parse_message
 
 SLICE = timedelta(hours=1)

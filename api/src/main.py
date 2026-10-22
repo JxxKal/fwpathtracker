@@ -32,13 +32,14 @@ from routers import auth as auth_router
 from routers import config as config_router
 from routers import (checks, diagram, dns_admin, faz_admin, faz_insight, fmg_admin, itop_admin,
                      librenms_admin, locate, saml, search, ssl, switchview, trace, users, vlans, webdrive,
-                     zabbix_admin)
+                     zabbix_admin, graylog_admin)
 from routers.auth import hash_password
 from routers.config import read_config
 from faz.client import FazSource
 from zabbix.client import ZabbixClient
 from webdrive.fac import FacClient
-from webdrive.graylog import GraylogClient
+from graylog.client import GraylogClient
+from graylog.config import migrate as migrate_graylog, webdrive_config
 from webdrive.poller import WebdrivePoller
 from webdrive.store import WebdriveStore
 
@@ -169,7 +170,7 @@ async def _periodic_webdrive_poll(app: FastAPI) -> None:
     (poll_interval_s, Default und Minimum 60 s). <= 0 oder nicht konfiguriert →
     alle 5 min erneut nachsehen."""
     while True:
-        cfg = await read_config("webdrive")
+        cfg = await webdrive_config()
         interval = int(cfg.get("poll_interval_s", 60))
         if interval <= 0 or not cfg.get("base_url") or not cfg.get("token"):
             await asyncio.sleep(300)
@@ -201,6 +202,11 @@ async def lifespan(app: FastAPI):
     app.state.faz = FazSource()
     app.state.zabbix = ZabbixClient()
     app.state.set_inventory = lambda inv: _rebuild_state(app, inv)
+    app.state.graylog = GraylogClient()
+    try:
+        await migrate_graylog()
+    except Exception as exc:  # Start nie daran scheitern lassen
+        log.warning("Graylog-Config nicht übernommen: %s", exc)
     await _rebuild_state(app, await load_inventory(pool))
 
     sync_task = asyncio.create_task(_periodic_sync(app))
@@ -230,6 +236,7 @@ app.include_router(librenms_admin.router)
 app.include_router(faz_admin.router)  # FortiAnalyzer (Asset Identity Center)
 app.include_router(faz_insight.router)  # Flow-Historie, Denies, Bestandsabgleich
 app.include_router(zabbix_admin.router)  # Betriebszustand (Zabbix 7)
+app.include_router(graylog_admin.router)  # Graylog als Quelle (Webdrive, AD, iFIX)
 app.include_router(dns_admin.router)  # Stand des Reverse-DNS-Caches
 app.include_router(search.router)
 app.include_router(locate.router)  # Switchport-Suche + Netzwerkport-Check (LibreNMS-FDB)

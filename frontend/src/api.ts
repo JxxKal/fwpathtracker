@@ -964,6 +964,34 @@ export async function zabbixTest(): Promise<{
   return request('/api/zabbix/test', { method: 'POST' });
 }
 
+export interface GraylogRole {
+  label: string; query: string; hits: number | null; error: string | null; computers: string[];
+}
+export interface GraylogTestResult {
+  ok: boolean; version: string;
+  streams: { id: string; title: string; disabled: boolean; removes_from_default: boolean }[];
+  streams_error: string | null; prefix: string; winlogbeat: boolean;
+  roles: Record<'ad' | 'ifix', GraylogRole>;
+  providers: { name: string; hits: number; sampled?: boolean }[];
+  aggregation: { ok: boolean; error: string | null };
+}
+
+export async function graylogTest(): Promise<GraylogTestResult> {
+  if (isDemoMode()) {
+    return { ok: true, version: '5.0.13', prefix: 'winlogbeat_', winlogbeat: true,
+      streams: [{ id: '000000000000000000000001', title: 'All messages', disabled: false, removes_from_default: false },
+        { id: '6ac65d19981aaf2334c18dd7', title: 'Webdrive', disabled: false, removes_from_default: false }],
+      streams_error: null,
+      roles: {
+        ad: { label: 'Active Directory', query: 'winlogbeat_winlog_channel:Security', hits: 1843211, error: null, computers: ['dc01', 'dc02'] },
+        ifix: { label: 'iFIX (SCADA)', query: '', hits: null, error: 'Kein Filter eingetragen.', computers: [] },
+      },
+      providers: [{ name: 'Microsoft-Windows-RestartManager', hits: 912 }, { name: 'iFIX', hits: 388 }, { name: 'MSSQLSERVER', hits: 120 }],
+      aggregation: { ok: true, error: null } };
+  }
+  return request('/api/graylog/test', { method: 'POST' });
+}
+
 export async function zabbixRefresh(): Promise<{ ok: boolean }> {
   if (isDemoMode()) return { ok: true };
   return request('/api/zabbix/refresh', { method: 'POST' });

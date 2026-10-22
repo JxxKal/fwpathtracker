@@ -6,9 +6,9 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from deps import get_current_user, require_admin
-from routers.config import read_config
+from graylog.config import webdrive_config
 from webdrive.fac import FacNotConfigured
-from webdrive.graylog import GraylogNotConfigured, base_url
+from graylog.client import GraylogNotConfigured, base_url
 from webdrive.parse import detect_source, parse_message
 from webdrive.poller import queries
 from webdrive.state import build, user_list
@@ -33,7 +33,7 @@ def clamp_since(since: datetime | None, now: datetime, retention_days: int) -> d
 @router.get("/status")
 async def status(request: Request, since: datetime | None = None,
                  _user: dict = Depends(get_current_user)) -> dict:
-    cfg = await read_config("webdrive")
+    cfg = await webdrive_config()
     if not cfg.get("base_url"):
         return {"configured": False}
     now = datetime.now(timezone.utc)
@@ -70,7 +70,7 @@ async def status(request: Request, since: datetime | None = None,
 
 @router.post("/test")
 async def test_connection(request: Request, _admin: dict = Depends(require_admin)) -> dict:
-    cfg = await read_config("webdrive")
+    cfg = await webdrive_config()
     try:
         return await request.app.state.webdrive_poller.client.test(cfg)
     except GraylogNotConfigured as exc:
@@ -83,7 +83,7 @@ async def test_connection(request: Request, _admin: dict = Depends(require_admin
 
 @router.post("/fac-test")
 async def fac_test(request: Request, _admin: dict = Depends(require_admin)) -> dict:
-    cfg = await read_config("webdrive")
+    cfg = await webdrive_config()
     request.app.state.webdrive_fac.invalidate()
     try:
         return await request.app.state.webdrive_fac.test(cfg)
@@ -104,7 +104,7 @@ async def poller_state(request: Request, _admin: dict = Depends(require_admin)) 
 @router.post("/reload")
 async def reload(request: Request, _admin: dict = Depends(require_admin)) -> dict:
     """Letzte 24 h neu aus Graylog einlesen — nach Änderungen an Stream oder Abfragen."""
-    cfg = await read_config("webdrive")
+    cfg = await webdrive_config()
     await request.app.state.webdrive_store.reset_poll()
     try:
         stats = await request.app.state.webdrive_poller.run_once(cfg, datetime.now(timezone.utc))
@@ -118,7 +118,7 @@ async def probe(request: Request, _admin: dict = Depends(require_admin)) -> dict
     """Diagnose fürs Settings-Panel: die tatsächlichen Abfragen, die Treffer der
     letzten 15 min je erkannter Quelle und Rohnachrichten, so wie A38 sie
     bekommt — damit sich ein abweichendes Logformat ohne Graylog-Zugang erkennen lässt."""
-    cfg = await read_config("webdrive")
+    cfg = await webdrive_config()
     client = request.app.state.webdrive_poller.client
     now = datetime.now(timezone.utc)
     qs = queries(cfg)
