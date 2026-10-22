@@ -32,13 +32,15 @@ from routers import auth as auth_router
 from routers import config as config_router
 from routers import (checks, diagram, dns_admin, faz_admin, faz_insight, fmg_admin, itop_admin,
                      librenms_admin, locate, saml, search, ssl, switchview, trace, users, vlans, webdrive,
-                     zabbix_admin, graylog_admin)
+                     zabbix_admin, graylog_admin, report)
 from routers.auth import hash_password
 from routers.config import read_config
 from faz.client import FazSource
 from zabbix.client import ZabbixClient
 from webdrive.fac import FacClient
 from graylog.client import GraylogClient
+from report import build as report_build, period as report_period
+from report.store import ReportStore
 from graylog.config import migrate as migrate_graylog, webdrive_config
 from webdrive.poller import WebdrivePoller
 from webdrive.store import WebdriveStore
@@ -182,6 +184,37 @@ async def _periodic_webdrive_poll(app: FastAPI) -> None:
         await asyncio.sleep(max(interval, 60))
 
 
+REPORT_LOCK = 0x4133385752    # pg_advisory_lock-Schlüssel: „A38WR"
+
+
+async def _periodic_report(app: FastAPI) -> None:
+    """Wochenreport zum Zeitplan (Default Freitag 06:30). Alle 5 min nachsehen,
+    ob ein Zeitfenster fällig ist; mehrere API-Worker erzeugen ihn nur einmal."""
+    while True:
+        await asyncio.sleep(300)
+        try:
+            cfg = await read_config("report")
+            if not cfg.get("enabled"):
+                continue
+            store = app.state.report_store
+            todo = report_period.due(datetime.now(timezone.utc), cfg,
+                                     await store.last_scheduled_end())
+            if not todo:
+                continue
+            async with database.get_pool().acquire() as conn:
+                if not await conn.fetchval("SELECT pg_try_advisory_lock($1)", REPORT_LOCK):
+                    continue
+                try:
+                    for start, end in todo:
+                        await report_build.run(app.state, read_config, start, end,
+                                               trigger="schedule")
+                    await store.purge(int(cfg.get("retention_days", 365)))
+                finally:
+                    await conn.execute("SELECT pg_advisory_unlock($1)", REPORT_LOCK)
+        except Exception as exc:
+            log.warning("Wochenreport fehlgeschlagen: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     cfg = Config()
@@ -203,6 +236,7 @@ async def lifespan(app: FastAPI):
     app.state.zabbix = ZabbixClient()
     app.state.set_inventory = lambda inv: _rebuild_state(app, inv)
     app.state.graylog = GraylogClient()
+    app.state.report_store = ReportStore(pool)
     try:
         await migrate_graylog()
     except Exception as exc:  # Start nie daran scheitern lassen
@@ -214,6 +248,7 @@ async def lifespan(app: FastAPI):
     arp_task = asyncio.create_task(_periodic_arp_sweep(app))
     dns_task = asyncio.create_task(_periodic_dns_purge(app))
     webdrive_task = asyncio.create_task(_periodic_webdrive_poll(app))
+    report_task = asyncio.create_task(_periodic_report(app))
     try:
         yield
     finally:
@@ -222,6 +257,7 @@ async def lifespan(app: FastAPI):
         arp_task.cancel()
         dns_task.cancel()
         webdrive_task.cancel()
+        report_task.cancel()
         await database.close_pool()
 
 
@@ -237,6 +273,7 @@ app.include_router(faz_admin.router)  # FortiAnalyzer (Asset Identity Center)
 app.include_router(faz_insight.router)  # Flow-Historie, Denies, Bestandsabgleich
 app.include_router(zabbix_admin.router)  # Betriebszustand (Zabbix 7)
 app.include_router(graylog_admin.router)  # Graylog als Quelle (Webdrive, AD, iFIX)
+app.include_router(report.router)  # Wochenreport „Stephan fragt, A38 antwortet"
 app.include_router(dns_admin.router)  # Stand des Reverse-DNS-Caches
 app.include_router(search.router)
 app.include_router(locate.router)  # Switchport-Suche + Netzwerkport-Check (LibreNMS-FDB)

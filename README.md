@@ -645,7 +645,7 @@ internen Servicenamen (`db`, `api`, `frontend`) ab.
 
 **Fachliche Config** liegt in `system_config` (JSONB, per Web-UI) — Keys:
 `fmg`, `itop`, `dns`, `sites`, `tracker`, `saml`, `checks`, `site_supernets`,
-`librenms`, `faz`, `zabbix`, `graylog`, `webdrive`.
+`librenms`, `faz`, `zabbix`, `graylog`, `webdrive`, `report`.
 `GET /api/config/*` maskiert Secrets (`•••`), `PATCH` merged den Sentinel zurück.
 
 ---

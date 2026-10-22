@@ -122,6 +122,29 @@ class ZabbixClient:
         self._problems["all"] = rows
         return rows
 
+    async def events(self, cfg: dict, frm: int, to: int, limit: int = 10000) -> list[dict]:
+        """Probleme, die im Zeitraum BEGANNEN, mit Ende (falls schon behoben).
+
+        Für den Wochenreport. Braucht `event.get` in der Allow-Liste des
+        API-Users. Ende = Zeit des Recovery-Events; offen = None."""
+        rows = await self._call(cfg, "event.get", {
+            "output": ["eventid", "clock", "name", "severity", "r_eventid", "acknowledged"],
+            "source": 0, "object": 0, "value": 1,
+            "time_from": int(frm), "time_till": int(to),
+            "selectHosts": ["hostid", "name"],
+            "sortfield": ["clock"], "sortorder": "ASC", "limit": limit,
+            **self._groups(cfg),
+        }) or []
+        rids = sorted({r["r_eventid"] for r in rows if str(r.get("r_eventid") or "0") != "0"})
+        ends: dict[str, int] = {}
+        for i in range(0, len(rids), 1000):
+            for e in await self._call(cfg, "event.get", {
+                    "output": ["eventid", "clock"], "eventids": rids[i:i + 1000]}) or []:
+                ends[str(e["eventid"])] = int(e["clock"])
+        for r in rows:
+            r["r_clock"] = ends.get(str(r.get("r_eventid") or ""))
+        return rows
+
     async def test(self, cfg: dict) -> dict:
         """Verbindungstest fürs Settings-Panel: Version, Hosts, aktive Probleme."""
         self._url(cfg)

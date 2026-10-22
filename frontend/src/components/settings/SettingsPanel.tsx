@@ -10,6 +10,7 @@ import GraylogPanel from './GraylogPanel';
 import ItopPanel from './ItopPanel';
 import LibrenmsPanel from './LibrenmsPanel';
 import SamlPanel from './SamlPanel';
+import ReportPanel from './ReportPanel';
 import ShapesPanel from './ShapesPanel';
 import SiteSupernetsPanel from './SiteSupernetsPanel';
 import SitesPanel from './SitesPanel';
@@ -36,6 +37,7 @@ const PANELS: Record<string, () => JSX.Element> = {
   webdrive: () => <WebdrivePanel />,
   dns: () => <DnsPanel />,
   drawio: () => <DrawioPanel />,
+  report: () => <ReportPanel />,
   titleblock: () => <TitleBlockPanel />,
   shapes: () => <ShapesPanel />,
   sites: () => <SitesPanel />,
@@ -65,6 +67,7 @@ const GROUPS: NavGroup[] = [
       { id: 'drawio', label: de.settingsNav.drawio },
       { id: 'titleblock', label: de.settingsNav.titleblock },
       { id: 'shapes', label: de.settingsNav.shapes },
+      { id: 'report', label: de.settingsNav.report },
     ],
   },
   {

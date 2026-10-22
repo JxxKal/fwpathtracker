@@ -84,6 +84,16 @@ class DnsCache:
                 str(int(retention_days)))
         return int(result.split()[-1]) if result else 0
 
+    async def new_names(self, frm, to, limit: int = 2000) -> list[dict]:
+        """Namen, die im Zeitraum zum ersten Mal aufgelöst wurden. Der Cache
+        kennt nur, wonach gefragt wurde — „neu" heißt „zum ersten Mal gesehen"."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT ip, name, first_seen FROM dns_cache WHERE name IS NOT NULL "
+                "AND first_seen >= $1 AND first_seen < $2 ORDER BY first_seen LIMIT $3",
+                frm, to, limit)
+        return [dict(r) for r in rows]
+
     async def stats(self) -> dict:
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(

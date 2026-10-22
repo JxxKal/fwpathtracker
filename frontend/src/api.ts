@@ -1312,3 +1312,60 @@ function demoReconcile(q: string, activeDays: number, staleDays: number): Reconc
     stats: { hosts: 4, in_itop: 3, active: 3, with_findings: 3 }, observed: true, faz: true,
     dns: true, active_days: activeDays, stale_days: staleDays, warnings: [] };
 }
+
+// ── Wochenreport „Stephan fragt, A38 antwortet" ───────────────────────────────
+
+export type ReportStatus = 'ok' | 'partial' | 'error' | 'off' | 'failed';
+export interface ReportKpi { key: string; label: string; value: number; prev?: number | null }
+export interface ReportChart {
+  type: 'daily' | 'top'; title: string; stacked?: boolean;
+  series?: { label: string; color: string; values: number[] }[];
+  items?: { label: string; value: number }[];
+}
+export interface ReportTable { title: string; columns: string[]; rows: (string | number)[][]; total: number | null }
+export interface ReportAttention { title: string; why: string; source: string; level: 'high' | 'medium' }
+export interface ReportChapter {
+  id: string; question: string; source: string; status: ReportStatus; note: string | null;
+  answer: string; hints?: string[]; kpis: ReportKpi[]; daily: number[]; charts: ReportChart[];
+  tables: ReportTable[]; attention: ReportAttention[];
+}
+export interface ReportData {
+  version: number; title: string;
+  period: { start: string; end: string; kw: string; kw_key: string; from: string; to: string };
+  days: { date: string; label: string }[];
+  sources: { id: string; question: string; source: string; status: ReportStatus; note: string | null }[];
+  summary: { kpis: ReportKpi[]; status: ReportStatus; attention: number };
+  heatmap: { id: string; label: string; values: number[] }[];
+  attention: ReportAttention[];
+  chapters: ReportChapter[];
+}
+export interface ReportListItem {
+  id: number; period_start: string; period_end: string; created_at: string;
+  trigger: 'schedule' | 'manual'; status: ReportStatus; created_by: string | null;
+  summary?: { kpis: ReportKpi[]; status: ReportStatus; attention: number };
+}
+export interface ReportList {
+  reports: ReportListItem[];
+  schedule: { enabled: boolean; next: string };
+  default: { start: string; end: string };
+}
+
+export async function reportList(): Promise<ReportList> {
+  if (isDemoMode()) return (await import('./components/report/demoReport')).demoList();
+  return request('/api/report');
+}
+
+export async function reportGet(id: number): Promise<ReportListItem & { data: ReportData }> {
+  if (isDemoMode()) return (await import('./components/report/demoReport')).demoReport(id);
+  return request(`/api/report/${id}`);
+}
+
+export async function reportRun(start?: string, end?: string): Promise<{ id: number; status: ReportStatus }> {
+  if (isDemoMode()) return { id: 1, status: 'partial' };
+  return request('/api/report/run', { method: 'POST', body: JSON.stringify({ start, end }) });
+}
+
+export async function reportDelete(id: number): Promise<{ ok: boolean }> {
+  if (isDemoMode()) return { ok: true };
+  return request(`/api/report/${id}`, { method: 'DELETE' });
+}

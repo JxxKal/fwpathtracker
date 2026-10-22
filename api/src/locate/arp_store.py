@@ -167,6 +167,35 @@ class ArpStore:
                 "ORDER BY mac, last_seen DESC", clean)
         return {r["mac"]: row_to_binding(r) for r in rows}
 
+    async def week(self, frm: datetime, to: datetime, limit: int = 2000) -> dict:
+        """Für den Wochenreport: MACs, die im Zeitraum zum ERSTEN Mal auftauchten,
+        und MACs, die in der Vorwoche noch da waren und seitdem fehlen.
+
+        `history_start` sagt, seit wann aufgezeichnet wird — beginnt die
+        Historie im Zeitraum selbst, ist dort alles „neu" und der Befund wertlos."""
+        async with self._pool.acquire() as conn:
+            start = await conn.fetchval("SELECT min(first_seen) FROM arp_history")
+            new = await conn.fetch(
+                "SELECT mac, min(first_seen) AS first_seen, "
+                "(array_agg(ip ORDER BY last_seen DESC))[1] AS ip, "
+                "(array_agg(device ORDER BY last_seen DESC))[1] AS device, "
+                "(array_agg(interface ORDER BY last_seen DESC))[1] AS interface "
+                "FROM arp_history GROUP BY mac "
+                "HAVING min(first_seen) >= $1 AND min(first_seen) < $2 "
+                "ORDER BY 2 LIMIT $3", frm, to, limit)
+            gone = await conn.fetch(
+                "SELECT mac, max(last_seen) AS last_seen, "
+                "(array_agg(ip ORDER BY last_seen DESC))[1] AS ip, "
+                "(array_agg(device ORDER BY last_seen DESC))[1] AS device "
+                "FROM arp_history GROUP BY mac "
+                "HAVING max(last_seen) >= $1 AND max(last_seen) < $2 "
+                "ORDER BY 2 DESC LIMIT $3", frm - (to - frm), frm, limit)
+            seen = await conn.fetchval(
+                "SELECT count(DISTINCT mac) FROM arp_history "
+                "WHERE last_seen >= $1 AND first_seen < $2", frm, to)
+        return {"history_start": start, "seen": seen or 0,
+                "new": [dict(r) for r in new], "gone": [dict(r) for r in gone]}
+
     async def purge(self, retention_days: int) -> int:
         """Bindungen löschen, die länger als `retention_days` nicht gesehen wurden."""
         if retention_days <= 0:

@@ -3,7 +3,7 @@
 Planung für einen automatisch erzeugten Wochenbericht über die Änderungen in der
 Infrastruktur, aufbereitet zum Lesen und als PDF exportierbar.
 
-**Stand:** 22.10.2026 · Schritt 1 (Graylog als eigene Quelle) umgesetzt, gegen das echte Graylog noch nicht geprüft
+**Stand:** 22.10.2026 · Schritte 1–4, 6 und 12 umgesetzt (Graylog-Quelle, Gerüst mit Zeitplan, Kapitel FAZ/Zabbix/ARP/DNS/LibreNMS/Webdrive/AD/iFIX, Ansicht mit Druck), gegen die echten Quellen noch nicht geprüft. Offen: PDF-Dienst, iTop-Änderungslog, FMG-Diff, draw.io
 **Betrifft:** neue Pakete `api/src/report/` und `api/src/graylog/`, Aufteilung der
 Webdrive-Einstellungen, Scheduler in `api/src/main.py`, neue Ansicht im Frontend,
 ein Render-Dienst für PDF und draw.io-Bilder
@@ -377,17 +377,17 @@ Entscheidung und kein Versäumnis.
 | # | Schritt | Ergebnis |
 |---|---|---|
 | 1 | ✅ Graylog als eigene Quelle, Migration aus `webdrive`, Panel mit Rollen-Filtern und Treffertest | Grundlage; Webdrive läuft unverändert |
-| 2 | Gerüst: `weekly_report`, Scheduler mit Advisory-Lock, manueller Lauf, Quellenstatus | ein leerer Bericht, der pünktlich entsteht |
-| 3 | Kapitel aus Quellen mit eigener Historie: Zabbix, ARP/DNS, FAZ-Ereignislogs, Webdrive, LibreNMS-Eventlog | **erster brauchbarer Bericht ohne Wartezeit** |
-| 4 | HTML-Ansicht mit SVG-Diagrammen in A38 | lesbar im Browser |
+| 2 | ✅ Gerüst: `weekly_report`, Scheduler mit Advisory-Lock, manueller Lauf, Quellenstatus | ein leerer Bericht, der pünktlich entsteht |
+| 3 | ✅ Kapitel aus Quellen mit eigener Historie: Zabbix, ARP/DNS, FAZ-Ereignislogs, Webdrive, LibreNMS-Eventlog | **erster brauchbarer Bericht ohne Wartezeit** |
+| 4 | ✅ HTML-Ansicht mit SVG-Diagrammen in A38 | lesbar im Browser |
 | 5 | Render-Container, PDF-Export | exportierbar |
-| 6 | AD-Kapitel über Graylog-Aggregationen | nach Klärung von Fragen 1 und 2 |
-| 7 | Kapitel 1 „Was sollte sich jemand ansehen?" (Querabgleich) | der eigentliche Mehrwert |
+| 6 | ✅ AD-Kapitel über Graylog-Aggregationen | nach Klärung von Fragen 1 und 2 |
+| 7 | ✅ (erste Fassung) Kapitel 1 „Was sollte sich jemand ansehen?" (Querabgleich) | der eigentliche Mehrwert |
 | 8 | Scheduler aktiv, optional Mail oder Teams | läuft von selbst |
 | 9 | iTop-Änderungslog | nach Klärung von Frage 7 |
 | 10 | FMG-Diff aus der Zeitmaschine im Firewall-Kapitel | fachlicher Inhalt der Änderungen |
 | 11 | draw.io-Ausschnitte (Verkabelung, dann Vorher und Nachher) | die Lage, nicht nur die Menge |
-| 12 | iFIX-Kapitel: Knotenzustand sofort mit Schritt 6 (gleicher Winlogbeat-Parser), iFIX-Meldungen nach Klärung von Frage 3 | OT im selben Bericht |
+| 12 | ✅ iFIX-Kapitel: Knotenzustand sofort mit Schritt 6 (gleicher Winlogbeat-Parser), iFIX-Meldungen nach Klärung von Frage 3 | OT im selben Bericht |
 
 Schritt 3 kommt vor dem PDF: Was der Bericht aussagt, ist wichtiger als wie er
 gedruckt aussieht. Kapitel 7 steht hinter den Einzelkapiteln, weil es aus ihnen

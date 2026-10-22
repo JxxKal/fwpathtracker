@@ -341,6 +341,24 @@ class LibrenmsClient:
                                {"full": "1"})
         return _rows(body, "devices")
 
+    async def eventlog(self, cfg: dict, frm: str, to: str, limit: int = 10000) -> dict:
+        """/logs/eventlog im Zeitraum (Format 'YYYY-MM-DD HH:MM:SS', LibreNMS-Zeitzone).
+
+        Für den Wochenreport: Port up/down, Neustarts, neue Geräte. Seitenweise,
+        höchstens `limit` Zeilen; `complete` sagt, ob alles geholt wurde."""
+        page, rows, total = 1000, [], None
+        while len(rows) < limit:
+            body = await self._get(cfg, "logs/eventlog", {
+                "start": len(rows), "limit": page, "from": frm, "to": to})
+            batch = _rows(body, "logs")
+            if total is None:
+                total = int(body.get("total") or 0) or None
+            rows.extend(batch)
+            if len(batch) < page:
+                break
+        return {"logs": rows[:limit], "complete": len(rows) < limit,
+                "total": total if total is not None else len(rows)}
+
     async def test(self, cfg: dict) -> dict:
         """Verbindungstest fürs Settings-Panel: Version + Gerätezahl."""
         body = await self._get(cfg, "system")

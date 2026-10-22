@@ -64,3 +64,15 @@ body {
 .a38-sso:hover { background:rgba(139,92,246,0.12); border-color:rgba(139,92,246,0.7); }
 .a38-eye { transition:color 150ms; }
 .a38-eye:hover { color:#38bdf8; }
+
+/* Wochenreport drucken (Drucken / PDF): nur der Bericht, hell, je Kapitel eine Seite. */
+@media print {
+  body { background: #fff !important; }
+  header, nav, .print\:hidden { display: none !important; }
+  .report .fwpt-card { background: #fff !important; border-color: #ddd !important; box-shadow: none !important; }
+  .report, .report * { color: #111 !important; }
+  .report .report-page { break-before: page; }
+  .report .report-page:first-child { break-before: auto; }
+  .report table { break-inside: auto; }
+  .report tr { break-inside: avoid; }
+}

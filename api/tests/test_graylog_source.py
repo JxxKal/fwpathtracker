@@ -79,9 +79,13 @@ def test_role_queries_follow_the_field_prefix():
     assert winlog.role_query(cfg, "ifix", "") == "winlog_provider_name:iFIX"
     assert winlog.prefix_of({"field_prefix": ""}, "winlogbeat_") == ""
     dcs = {"roles": {"ad": {"hosts": ["dc01", " dc02 ", "dc01"]}, "ifix": {"hosts": ["scada1"]}}}
-    assert winlog.role_query(dcs, "ad", "") == \
-        '(winlog_channel:Security) AND source:("dc01" OR "dc02")'
-    assert winlog.role_query(dcs, "ifix", "") == 'source:("scada1")'
+    q = winlog.role_query(dcs, "ad", "")
+    assert q.startswith("(winlog_channel:Security) AND host_name:(")
+    assert "dc01 OR dc01.* OR DC01 OR DC01.*" in q and q.count("dc01") == 2
+    ifix = winlog.role_query(dcs, "ifix", "winlogbeat_")
+    assert ifix.startswith("((winlogbeat_event_code:1 OR winlogbeat_event_code:2)")
+    assert ifix.endswith("AND winlogbeat_host_name:(scada1 OR scada1.* OR SCADA1 OR SCADA1.*)")
+    assert winlog.host_terms("SVO3020-OT.op-tech.com")[0] == "SVO3020\\-OT.op\\-tech.com"
     assert winlog.prefix_of({}, None) == "winlogbeat_"
 
 
@@ -102,16 +106,18 @@ class FakeClient:
         return 1234 if "Security" in query else 0
 
     async def sample(self, cfg, query, frm, to, limit=50):
-        return [{f"{self.prefix}winlog_computer_name": "dc01", "source": "dc01"},
-                {f"{self.prefix}winlog_computer_name": "dc02"},
-                {f"{self.prefix}winlog_computer_name": "dc01",
+        return [{f"{self.prefix}host_name": "dc01", "source": "dc01"},
+                {f"{self.prefix}host_name": "dc02"},
+                {f"{self.prefix}host_name": "dc01",
                  f"{self.prefix}winlog_provider_name": "iFIX"}]
 
     async def aggregate(self, cfg, query, frm, to, field, limit=20):
         if self.fails:
             raise GraylogError("403")
-        if field == "source":
+        if field.endswith("host_name"):
             return [("SCADA01", 900), ("dc01", 80)]
+        if field == "source":
+            return [("collector", 980)]
         assert field == f"{self.prefix}winlog_provider_name"
         return [("iFIX", 42)]
 
@@ -122,7 +128,8 @@ async def test_diagnose_detects_prefix_counts_roles_and_suggests_providers(prefi
     assert out["version"] == "5.0.13" and out["winlogbeat"] and out["prefix"] == prefix
     assert out["roles"]["ad"]["hits"] == 1234
     assert out["roles"]["ad"]["computers"] == ["dc01", "dc02"]
-    assert out["roles"]["ifix"]["error"] == "Weder Rechner noch Filter eingetragen."
+    assert out["roles"]["ifix"]["hits"] == 0                       # Vorgabefilter greift
+    assert out["host_field"] == f"{prefix}host_name"
     assert out["providers"] == [{"name": "iFIX", "hits": 42}]
     assert out["hosts"][0] == {"name": "SCADA01", "hits": 900}
     assert out["aggregation"] == {"ok": True, "error": None}
@@ -132,7 +139,8 @@ async def test_diagnose_falls_back_to_a_sample_without_views_rights():
     out = await winlog.diagnose(FakeClient("", aggregate_fails=True), {}, NOW)
     assert out["aggregation"]["ok"] is False and "403" in out["aggregation"]["error"]
     assert out["providers"] == [{"name": "iFIX", "hits": 1, "sampled": True}]
-    assert out["hosts"] == [{"name": "dc01", "hits": 1, "sampled": True}]
+    assert out["hosts"] == [{"name": "dc01", "hits": 2, "sampled": True},
+                            {"name": "dc02", "hits": 1, "sampled": True}]
 
 
 def test_webdrive_keeps_its_own_connection_and_falls_back_to_graylog():
