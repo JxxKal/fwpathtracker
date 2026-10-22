@@ -87,9 +87,7 @@ export default function GraylogPanel() {
               <label className="mb-1 block text-xs text-slate-400">
                 {role === 'ad' ? de.settings.graylogHostsAd : de.settings.graylogHostsIfix}
               </label>
-              <input className="fwpt-input font-mono text-xs" value={hosts(role).join(', ')}
-                placeholder="host1, host2"
-                onChange={(e) => setHosts(role, e.target.value.split(/[,;\s]+/).filter(Boolean))} />
+              <HostList value={hosts(role)} onChange={(v) => setHosts(role, v)} />
             </div>
             <div>
               <label className="mb-1 block text-xs text-slate-400">
@@ -121,6 +119,24 @@ export default function GraylogPanel() {
         {status && <span className="text-sm text-slate-400">{status}</span>}
       </div>
     </div>
+  );
+}
+
+const parseHosts = (text: string) => text.split(/[,;\s]+/).filter(Boolean);
+
+/** Kommagetrennte Rechnerliste. Der Text gehört dem Feld — würde er bei jeder
+ *  Eingabe aus der Liste neu gebaut, verschwände ein gerade getipptes Komma. */
+function HostList({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  const [text, setText] = useState(value.join(', '));
+  // Von außen geändert (Klick auf DC/iFIX im Test): Text nachziehen.
+  useEffect(() => {
+    if (parseHosts(text).join('\n') !== value.join('\n')) setText(value.join(', '));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+  return (
+    <input className="fwpt-input font-mono text-xs" value={text} placeholder="host1, host2"
+      onChange={(e) => { setText(e.target.value); onChange(parseHosts(e.target.value)); }}
+      onBlur={() => setText(value.join(', '))} />
   );
 }
 
