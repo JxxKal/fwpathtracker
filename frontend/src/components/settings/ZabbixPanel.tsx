@@ -28,8 +28,11 @@ export default function ZabbixPanel() {
     setTest(null);
     try {
       const r = await zabbixTest();
+      const list = r.groups.map((g) => `${g.name} (${g.hosts})`).join(', ');
       setTest({ ok: true,
-        text: `OK — Zabbix ${r.version}, ${r.hosts} Hosts, ${r.problems} aktive Probleme` });
+        text: `OK — Zabbix ${r.version}, ${r.hosts} Hosts, ${r.problems} aktive Probleme. `
+          + `Sichtbar ${r.filtered ? '(gefiltert) ' : ''}in ${r.groups.length} Host-Gruppen: `
+          + `${list || '—'}. Fehlen Hosts, fehlt dem API-User das Leserecht auf ihre Gruppe.` });
     } catch (e) {
       setTest({ ok: false, text: e instanceof Error ? e.message : String(e) });
     } finally { setBusy(false); }

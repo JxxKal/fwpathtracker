@@ -129,5 +129,12 @@ class ZabbixClient:
         self.invalidate()
         hosts = await self.hosts(cfg)
         problems = await self.problems(cfg)
+        # Welche Host-Gruppen sieht der User? Zabbix verschweigt Hosts ohne
+        # Leserecht kommentarlos — die Liste zeigt, wo Rechte fehlen.
+        groups = await self._call(cfg, "hostgroup.get", {
+            "output": ["groupid", "name"], "selectHosts": "count", **self._groups(cfg)}) or []
         return {"ok": True, "version": str(version or "unbekannt"), "hosts": len(hosts),
-                "problems": len(problems)}
+                "problems": len(problems), "filtered": bool(self._groups(cfg)),
+                "groups": sorted(({"id": str(g.get("groupid")), "name": g.get("name") or "?",
+                                   "hosts": int(g.get("hosts") or 0)} for g in groups),
+                                 key=lambda g: (-g["hosts"], g["name"]))}

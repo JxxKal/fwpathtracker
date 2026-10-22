@@ -954,9 +954,13 @@ export async function fazRefresh(): Promise<{ ok: boolean }> {
 }
 
 export async function zabbixTest(): Promise<{
-  ok: boolean; version: string; hosts: number; problems: number;
+  ok: boolean; version: string; hosts: number; problems: number; filtered: boolean;
+  groups: { id: string; name: string; hosts: number }[];
 }> {
-  if (isDemoMode()) return { ok: true, version: '7.4.15', hosts: 812, problems: 23 };
+  if (isDemoMode()) {
+    return { ok: true, version: '7.4.15', hosts: 36, problems: 4, filtered: false,
+      groups: [{ id: '2', name: 'Linux servers', hosts: 30 }, { id: '7', name: 'Switches', hosts: 6 }] };
+  }
   return request('/api/zabbix/test', { method: 'POST' });
 }
 

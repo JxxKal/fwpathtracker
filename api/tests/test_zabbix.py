@@ -64,7 +64,10 @@ async def test_client_sends_bearer_and_version_without_auth(monkeypatch):
         seen.append((body["method"], req.headers.get("authorization")))
         assert str(req.url) == "https://zabbix.example.net/api_jsonrpc.php"
         result = {"apiinfo.version": "7.4.15", "host.get": HOSTS,
-                  "trigger.get": TRIGGERS}[body["method"]]
+                  "trigger.get": TRIGGERS,
+                  "hostgroup.get": [{"groupid": "2", "name": "Linux servers", "hosts": "3"},
+                                    {"groupid": "7", "name": "Switches", "hosts": "1"}],
+                  }[body["method"]]
         return httpx.Response(200, json={"jsonrpc": "2.0", "result": result, "id": 1})
 
     real = httpx.AsyncClient
@@ -73,11 +76,13 @@ async def test_client_sends_bearer_and_version_without_auth(monkeypatch):
     monkeypatch.setattr(zclient, "guard_egress_url", lambda *a: None)
     c = zclient.ZabbixClient()
     out = await c.test(CFG)
-    assert out == {"ok": True, "version": "7.4.15", "hosts": 4, "problems": 3}
-    assert seen == [("apiinfo.version", None), ("host.get", "Bearer tok"),
-                    ("trigger.get", "Bearer tok")]
+    assert out["version"] == "7.4.15" and out["hosts"] == 4 and out["problems"] == 3
+    assert out["groups"][0] == {"id": "2", "name": "Linux servers", "hosts": 3}
+    assert not out["filtered"]
+    assert seen[:3] == [("apiinfo.version", None), ("host.get", "Bearer tok"),
+                        ("trigger.get", "Bearer tok")]
     await c.hosts(CFG)                                            # gecacht
-    assert len(seen) == 3
+    assert len(seen) == 4
 
 
 async def test_client_raises_on_rpc_error(monkeypatch):
