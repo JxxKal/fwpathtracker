@@ -160,19 +160,29 @@ wird Graylog zu einer **eigenen Datenquelle**:
 | Neu: Config `graylog` | Bleibt: Config `webdrive` |
 |---|---|
 | `base_url`, `token`, `ssl_verify`, `timeout_s` | `stream_id`, `fac_query`, `oc_query`, `oc_ip`, `sync_rule`, FAC-Zugang, Poller-Takt |
-| **Streams** mit Rolle: `{id, label, kind: ad \| ifix \| syslog \| webdrive \| …}` | nutzt die Verbindung aus `graylog` |
+| **Quellen** mit Rolle: `{label, kind: ad \| ifix \| …, stream, filter}`; Stream standardmäßig *All messages* | nutzt die Verbindung aus `graylog` |
 
 - **Migration ohne Zutun.** Beim Start werden `base_url` und `token` aus
   `webdrive` nach `graylog` übernommen, wenn `graylog` noch leer ist. Webdrive
   läuft danach unverändert weiter.
+- **Alles liegt in *All messages*.** AD und iFIX sind dort enthalten. Getrennt
+  wird deshalb **per Filter**, nicht per Stream: AD über
+  `winlog.channel:Security` und die Domain Controller, iFIX über den
+  iFIX-Provider bzw. die iFIX-Knoten. Die Filter sind je Rolle konfigurierbar,
+  der Stream bleibt *All messages* (`000000000000000000000001`), sofern niemand
+  etwas anderes einträgt.
+- **Fallstrick „Remove matches from All messages".** Hat ein Stream diese
+  Option gesetzt, fehlen seine Nachrichten in *All messages*, ohne dass es
+  auffällt. Der Verbindungstest zählt deshalb je Rolle die Treffer der letzten
+  24 Stunden. Null Treffer heißt: Filter, Feldname oder Stream stimmt nicht.
 - **Eigener Token, eigener Graylog-User.** Mehr Rechte für den Report sollen
   nicht automatisch der Webdrive-Abfrage zufallen. Empfehlung: ein User
-  `a38-report` mit der Rolle *Reader* und Lesen auf genau die Streams aus der
-  Liste. Globale Suchrechte sind nicht nötig, weil jede Abfrage einen Stream
+  `a38-report` mit der Rolle *Reader* und Leserecht auf den Stream *All
+  messages*. Globale Suchrechte sind nicht nötig, weil jede Abfrage den Stream
   nennt. Diese Regel beachtet der vorhandene Client schon (`DEFAULT_STREAM`).
-- **Settings-Panel „Graylog"** unter Datenquellen. Der Verbindungstest listet,
-  wie bei Zabbix, die **sichtbaren Streams**. Fehlende Rechte fallen so sofort
-  auf.
+- **Settings-Panel „Graylog"** unter Datenquellen. Der Verbindungstest zeigt
+  die Version, die sichtbaren Streams und je Rolle (AD, iFIX) die Treffer der
+  letzten 24 Stunden samt erkannter Feldschreibweise.
 
 ### Zählen statt Herunterladen
 
@@ -341,10 +351,9 @@ Entscheidung und kein Versäumnis.
 1. ~~Welche Graylog-Version läuft?~~ **5.0.13** → Views-API (`/api/views/search/sync`
    mit Pivot). Zu prüfen ist, ob der Reader-User Views-Suchen ausführen darf.
    Bei Graylog genügt dafür normalerweise das Leserecht auf die Streams.
-2. **Welche Streams gibt es?** Beide Quellen kommen über Winlogbeat. Offen ist
-   noch, ob AD und iFIX in getrennten Streams liegen und ob der Beats-Input
-   Präfixe setzt. Eine Beispielnachricht je Stream genügt, notfalls aus dem
-   Probe-Test.
+2. ~~Welche Streams gibt es?~~ **Alles liegt in *All messages***, getrennt
+   wird per Filter. Offen ist nur, ob der Beats-Input Präfixe setzt. Das
+   erkennt der Verbindungstest.
 3. **Welcher Provider schreibt die iFIX-Meldungen**, und welche davon sind
    wichtig (Alarme, Verbindungsabbrüche, Bedieneingriffe)? Den Knotenzustand
    (Neustarts, Dienstabbrüche, Abstürze) liefert das Windows-Ereignisprotokoll
@@ -367,7 +376,7 @@ Entscheidung und kein Versäumnis.
 
 | # | Schritt | Ergebnis |
 |---|---|---|
-| 1 | Graylog als eigene Quelle, Migration aus `webdrive`, Panel mit Stream-Liste | Grundlage; Webdrive läuft unverändert |
+| 1 | Graylog als eigene Quelle, Migration aus `webdrive`, Panel mit Rollen-Filtern und Treffertest | Grundlage; Webdrive läuft unverändert |
 | 2 | Gerüst: `weekly_report`, Scheduler mit Advisory-Lock, manueller Lauf, Quellenstatus | ein leerer Bericht, der pünktlich entsteht |
 | 3 | Kapitel aus Quellen mit eigener Historie: Zabbix, ARP/DNS, FAZ-Ereignislogs, Webdrive, LibreNMS-Eventlog | **erster brauchbarer Bericht ohne Wartezeit** |
 | 4 | HTML-Ansicht mit SVG-Diagrammen in A38 | lesbar im Browser |
