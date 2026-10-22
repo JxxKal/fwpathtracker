@@ -35,6 +35,7 @@ from diagram.mx import Doc, esc
 from engine.path import _edge_vdom, _overlay_vdom, _router_vdom
 from inventory.prefixes import PrefixTable
 from inventory.store import Inventory
+from zabbix import status as zabbix_status
 
 DEFAULT_ROUTER_RE = "(?i)(router|wan.?edge)"
 DEFAULT_OVERLAY_RE = "(?i)(vpn|ovl|sdwan|tun|ipsec)"
@@ -365,6 +366,24 @@ STYLE = {
 }
 
 
+def status_dot(doc: Doc, st: dict | None, x: float, y: float, size: float,
+               parent: str) -> None:
+    """Zabbix-Zustand als Punkt an der Ecke eines Symbols — nur wenn Zabbix
+    den Host kennt. Kein Punkt heißt: nicht überwacht, nicht: in Ordnung."""
+    color = zabbix_status.color(st)
+    if color:
+        doc.vertex("", f"ellipse;html=1;aspect=fixed;fillColor={color};strokeColor=#ffffff;"
+                   "strokeWidth=1;", x, y, size, size, parent=parent,
+                   tooltip=zabbix_status.tooltip(st))
+
+
+LEGEND_ZABBIX = (f"<span style='color:{zabbix_status.OK_COLOR}'>●</span>"
+                 f"<span style='color:{zabbix_status.SEVERITY_COLOR[2]}'>●</span>"
+                 f"<span style='color:{zabbix_status.SEVERITY_COLOR[4]}'>●</span>"
+                 f"<span style='color:{zabbix_status.DOWN_COLOR}'>●</span> = Zabbix: ok, "
+                 "Problem (Farbe = Schwere), nicht erreichbar; kein Punkt = nicht überwacht")
+
+
 def _host_cell(h: dict, ips: set[str]) -> tuple[str, str]:
     stencil, paint = drawio.SHAPES[drawio.host_shape(h)]
     style = STYLE["host"].format(stencil=stencil, paint=paint)
@@ -506,6 +525,7 @@ def _draw_site(doc: Doc, s: _Site, x: float, y: float, ips: set[str]) -> list[tu
                            ROW_H - 8, parent=box, tooltip=tip)
             label, style = _host_cell(host, ips)
             hid = doc.vertex(label, style, hx, hy, HOST_ICON, HOST_ICON, parent=box, tooltip=tip)
+            status_dot(doc, host.get("zabbix"), hx + HOST_ICON - 6, hy - 4, 10, box)
             if r == 0:
                 doc.edge(bar, hid, "", STYLE["stub"]
                          + f"exitX={(c * SLOT_W + SLOT_W / 2) / BAR_W:.3f};exitY=1;"
@@ -577,7 +597,11 @@ def render(mdl: dict, title_block: dict | None = None, hide_not_in_itop: bool = 
              else "ausgeblendet: Hosts, die nicht am Service hängen",
              (f"<span style='color:{RED}'>□ rot umrandet</span> = nicht im iTop geführt")
              if not hide_not_in_itop else "ausgeblendet: Hosts, die nicht im iTop stehen"]
-    doc.vertex("<br>".join(lines), STYLE["legend"], lx, y0, LEGEND_W, LEGEND_H)
+    legend_h = LEGEND_H
+    if mdl.get("zabbix"):
+        lines.append(LEGEND_ZABBIX)
+        legend_h += 26
+    doc.vertex("<br>".join(lines), STYLE["legend"], lx, y0, LEGEND_W, legend_h)
     if title_block:
-        titleblock.draw(doc, lx, y0 + LEGEND_H + SITE_GAP / 2, title_block)
+        titleblock.draw(doc, lx, y0 + legend_h + SITE_GAP / 2, title_block)
     return doc.to_xml()

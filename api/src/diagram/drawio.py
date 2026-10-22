@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from diagram import titleblock
 from diagram.mx import Doc as _Doc, esc as _esc
+from zabbix import status as zabbix_status
 
 NET_W, NET_HEAD = 240, 48
 HOST_H, HOST_W = 30, 216
@@ -191,7 +192,8 @@ def _host_tooltip(h: dict) -> str:
     lnms = h.get("librenms") or {}
     if lnms:
         rows.append(("LibreNMS", " ".join(str(v) for v in (lnms.get("hostname"), lnms.get("hardware")) if v)))
-    return "\n".join(f"{k}: {v}" for k, v in rows if v not in (None, ""))
+    tip = "\n".join(f"{k}: {v}" for k, v in rows if v not in (None, ""))
+    return tip + ("\n" + zabbix_status.tooltip(h["zabbix"]) if h.get("zabbix") else "")
 
 
 def _net_height(net: dict) -> tuple[float, float]:

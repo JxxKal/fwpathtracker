@@ -19,6 +19,7 @@ from netguard import guard_egress_url
 from resolver import dns_source
 from resolver.dns_cache import build_reverse
 from routers.config import read_config
+from zabbix import status as zabbix_status
 
 log = logging.getLogger("routers.diagram")
 router = APIRouter(prefix="/api/diagram", tags=["diagram"])
@@ -85,6 +86,8 @@ class DiagramRequest(BaseModel):
     # (bei uns teils raumscharf) oder eine Gerätegruppe.
     location: str | None = Field(default=None, max_length=200)
     group: str | None = Field(default=None, max_length=200)
+    # Betriebszustand aus Zabbix an Hosts und Switches (nur wenn konfiguriert).
+    monitoring: bool = True
 
 
 def _site_detail(site: str | None, scores: dict[str, int]) -> str | None:
@@ -491,6 +494,12 @@ async def _services(body: DiagramRequest, request: Request, user: dict) -> dict:
     if reverse is not None:
         await reverse.flush()
     warnings += mdl["warnings"]
+    zbx = await _zabbix(body, state, warnings)
+    if zbx is not None:
+        counts = zabbix_status.annotate(zbx, (h for n in mdl["networks"].values()
+                                              for h in n["hosts"]))
+        _zabbix_note(counts, warnings)
+        mdl["stats"].update(counts)
     st = mdl["stats"]
     if st["cis_unplaced"]:
         warnings.append(f"{st['cis_unplaced']} CIs lassen sich keinem Firewall-Netz zuordnen "
@@ -521,6 +530,32 @@ async def _services(body: DiagramRequest, request: Request, user: dict) -> dict:
     return {"filename": f"A38_Netzplan_{stem}.drawio", "xml": service_view.render(
             mdl, tb, body.show_firewalls, body.hide_not_in_itop, body.hide_not_in_service),
             "stats": st, "hosts_mode": "all", "warnings": warnings}
+
+
+async def _zabbix(body: DiagramRequest, state, warnings: list[str]) -> dict | None:
+    """Host-Index mit aktiven Problemen aus Zabbix. None, wenn abgeschaltet,
+    nicht konfiguriert oder nicht erreichbar — die Zeichnung entsteht trotzdem."""
+    if not body.monitoring:
+        return None
+    cfg = await read_config("zabbix")
+    if not cfg.get("base_url") or cfg.get("enabled") is False:
+        return None
+    client = state.zabbix
+    try:
+        return zabbix_status.index(await client.hosts(cfg), await client.problems(cfg))
+    except Exception as exc:
+        warnings.append(f"Zabbix nicht abrufbar — ohne Betriebszustand gezeichnet: {exc}")
+        return None
+
+
+def _zabbix_note(counts: dict, warnings: list[str]) -> None:
+    if counts["problems"] or counts["down"]:
+        warnings.append(f"Zabbix: {counts['down']} Hosts nicht erreichbar, "
+                        f"{counts['problems']} mit aktiven Problemen — farbiger Punkt am Symbol.")
+    if counts["unmonitored"]:
+        warnings.append(f"Zabbix: {counts['unmonitored']} von "
+                        f"{counts['unmonitored'] + counts['monitored']} Hosts werden nicht "
+                        "überwacht (weder IP noch Name in Zabbix).")
 
 
 async def _lldp(state, warnings: list[str]) -> dict | None:
@@ -585,10 +620,17 @@ async def _segments(body: DiagramRequest, request: Request, user: dict) -> dict:
     if reverse is not None:
         await reverse.flush()
     warnings += mdl["warnings"]
+    zbx = await _zabbix(body, state, warnings)
+    if zbx is not None:
+        mdl["zabbix"] = True
+        counts = zabbix_status.annotate(zbx, (h for site in mdl["sites"]
+                                              for net in site["segments"] for h in net["hosts"]))
+        _zabbix_note(counts, warnings)
+        mdl["stats"].update(counts)
     if phys:
         return await _switch_physics(body, request, user, mdl, lldp, warnings,
                                      _source_note(faz_hosts, arp_max_age_s), itop_cfg,
-                                     itop_hosts)
+                                     itop_hosts, zbx)
     st = mdl["stats"]
     if st["hosts_not_in_service"] and not body.hide_not_in_service:
         warnings.append(f"{st['hosts_not_in_service']} Hosts in den Segmenten stehen im iTop, "
@@ -613,7 +655,7 @@ async def _segments(body: DiagramRequest, request: Request, user: dict) -> dict:
 
 async def _switch_physics(body: DiagramRequest, request: Request, user: dict, seg: dict,
                           lldp: dict | None, warnings: list[str], note: str, itop_cfg: dict,
-                          itop_hosts: list[dict]) -> dict:
+                          itop_hosts: list[dict], zbx: dict | None = None) -> dict:
     state = request.app.state
     cfg = await read_config("librenms")
     client = state.locate.librenms
@@ -644,6 +686,10 @@ async def _switch_physics(body: DiagramRequest, request: Request, user: dict, se
                                  access_max=int(cfg.get("access_max_macs",
                                                         vlanphys.ACCESS_MAX_MACS)),
                                  virt=virt, itop_hosts=itop_hosts, mac_of=mac_of)
+        if zbx is not None:
+            m["zabbix"] = True
+            for sw in m["switches"]:
+                sw["zabbix"] = zabbix_status.lookup(zbx, sw.get("ip"), sw["name"])
         many = len(seg["sites"]) > 1 or len(seg["sites"][0]["segments"]) > 1
         warnings += [(f"{vlanphys._page_name(m)}: {w}" if many else w) for w in m["warnings"]]
         models.append(m)
@@ -652,6 +698,9 @@ async def _switch_physics(body: DiagramRequest, request: Request, user: dict, se
     st = {k: sum(m["stats"][k] for m in models) for k in keys}
     st.update(sites=len({m["site"] for m in models}), segments=len(models),
               firewalls=len({m["fw"]["device"] for m in models}))
+    for k in ("monitored", "problems", "down", "unmonitored"):
+        if k in seg["stats"]:
+            st[k] = seg["stats"][k]
     svc_name = models[0]["service"]["name"]
     vlans = [f"VLAN{m['net']['vlan']}" if m["net"].get("vlan") is not None else m["net"]["cidr"]
              for m in models]
@@ -767,6 +816,12 @@ async def build(body: DiagramRequest, request: Request,
         if reverse.stats["cached"]:
             warnings.append(f"{reverse.stats['cached']} Namen kamen aus dem DNS-Cache, "
                             f"{reverse.stats['asked']} wurden neu erfragt.")
+    zbx = await _zabbix(body, state, warnings) if wants_hosts else None
+    if zbx is not None:
+        counts = zabbix_status.annotate(zbx, (h for vd in mdl["vdoms"] for n in vd["networks"]
+                                              for h in n.get("hosts") or []))
+        _zabbix_note(counts, warnings)
+        mdl["stats"].update(counts)
     if mdl["stats"].get("names_from_dns"):
         warnings.append(f"{mdl['stats']['names_from_dns']} Gerätenamen kamen aus dem "
                         "Reverse-DNS — im iTop sind sie nicht gepflegt.")

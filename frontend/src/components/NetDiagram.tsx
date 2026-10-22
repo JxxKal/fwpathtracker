@@ -48,6 +48,7 @@ export default function NetDiagram() {
   const [showFw, setShowFw] = useState(true);
   const [hideNoItop, setHideNoItop] = useState(false);
   const [hideNoSvc, setHideNoSvc] = useState(false);
+  const [monitoring, setMonitoring] = useState(true);
   // Segmentplan: EIN Service, daraus die VLANs zum Ankreuzen. Leer = Übersicht.
   const [service, setService] = useState('');
   const [svcNets, setSvcNets] = useState<ServiceNetworks | null>(null);
@@ -131,7 +132,7 @@ export default function NetDiagram() {
         scope === 'vdom' ? vdom : null, scope === 'site' ? site : null, hosts, expand, view,
         physical ? location || null : null, physical ? group || null : null,
         svcView ? family || null : null, showFw, hideNoItop, hideNoSvc,
-        segView ? service : null, segView ? [...picked] : [], svcMode));
+        segView ? service : null, segView ? [...picked] : [], svcMode, monitoring));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally { setBusy(false); }
@@ -196,6 +197,12 @@ export default function NetDiagram() {
           <label className="flex items-center gap-1.5 pb-2 text-xs text-slate-300" title={de.diagram.hideNotInServiceHint}>
             <input type="checkbox" checked={hideNoSvc} onChange={(e) => setHideNoSvc(e.target.checked)} />
             {de.diagram.hideNotInService}
+          </label>
+        )}
+        {!physical && (
+          <label className="flex items-center gap-1.5 pb-2 text-xs text-slate-300" title={de.diagram.monitoringHint}>
+            <input type="checkbox" checked={monitoring} onChange={(e) => setMonitoring(e.target.checked)} />
+            {de.diagram.monitoring}
           </label>
         )}
         <label className={`flex flex-col gap-1 ${noScope ? 'hidden' : ''}`}>
@@ -398,6 +405,12 @@ export default function NetDiagram() {
             res.xml.length <= MAX_LINK_BYTES
               ? <p className="text-slate-600">{de.diagram.openDrawioHint}</p>
               : <p className="text-amber-500">{de.diagram.tooBigForLink}</p>
+          )}
+          {res.stats.monitored !== undefined && (
+            <p className={res.stats.down || res.stats.problems ? 'text-amber-400' : 'text-slate-500'}>
+              {de.diagram.statZabbix(res.stats.monitored, res.stats.problems ?? 0,
+                res.stats.down ?? 0, res.stats.unmonitored ?? 0)}
+            </p>
           )}
           {res.stats.segments !== undefined ? (
           <p className="text-slate-500">

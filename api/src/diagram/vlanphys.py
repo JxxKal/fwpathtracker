@@ -43,6 +43,7 @@ from diagram import drawio, segments, services as service_view, titleblock
 from diagram.mx import Doc, esc
 from inventory.store import Inventory
 from locate.mac import normalize_mac
+from zabbix import status as zabbix_status
 
 Fetch = Callable[[str], Awaitable[list[dict]]]
 
@@ -560,6 +561,7 @@ def _draw_hosts(doc: Doc, bid: str, sw: dict, ips: set[str]) -> None:
         hshape, hpaint = drawio.SHAPES[drawio.host_shape(r["host"])]
         doc.vertex("", STYLE["row-icon"].format(stencil=hshape, paint=hpaint),
                    x0, ry + 2, 13, 13, parent=bid)
+        segments.status_dot(doc, r["host"].get("zabbix"), x0 + 8, ry, 8, bid)
         doc.vertex(_row_label(r, ips), STYLE["row"], x0 + 16, ry, w - 16, ROW, parent=bid,
                    tooltip=_row_tip(r, ips))
         ry += ROW
@@ -584,6 +586,7 @@ def _draw_hosts(doc: Doc, bid: str, sw: dict, ips: set[str]) -> None:
             vshape, vpaint = drawio.SHAPES[drawio.host_shape(h)]
             doc.vertex("", STYLE["row-icon"].format(stencil=vshape, paint=vpaint),
                        x0 + 20, vy + 2, 10, 10, parent=bid)
+            segments.status_dot(doc, h.get("zabbix"), x0 + 26, vy, 7, bid)
             label = esc(h.get("name") or h["ip"])
             color = _color(h, ips)
             doc.vertex(f"<span style='{color}'>{label}</span>" if color else label,
@@ -686,7 +689,8 @@ def _draw_page(doc: Doc, model: dict, title_block: dict | None) -> None:
                 f"Switch {sw['name']}", sw.get("ip"), sw.get("hardware"),
                 "Transit — kein Host dieses VLANs direkt angeschlossen" if transit
                 else f"{len(sw['hosts'])} Hosts direkt angeschlossen",
-                f"{sw['unknown']} weitere MACs ohne bekannten Host" if sw["unknown"] else None)
+                f"{sw['unknown']} weitere MACs ohne bekannten Host" if sw["unknown"] else None,
+                zabbix_status.tooltip(sw.get("zabbix")) or None)
                 if p)
             bid = doc.vertex("", STYLE["block-transit" if transit else "block"], x, y, BLOCK_W, h,
                              tooltip=tip)
@@ -695,6 +699,7 @@ def _draw_page(doc: Doc, model: dict, title_block: dict | None) -> None:
             cells[sw["id"]] = bid
             doc.vertex("", STYLE["switch"].format(stencil=stencil, paint=paint),
                        (ICON_COL - SW_W) / 2, 8, SW_W, SW_H, parent=bid, tooltip=tip)
+            segments.status_dot(doc, sw.get("zabbix"), (ICON_COL + SW_W) / 2 - 6, 3, 12, bid)
             doc.vertex(f"<b>{esc(sw['name'])}</b>"
                        + (f"<br><span style='color:#777'>{esc(sw['ip'])}</span>" if sw.get("ip")
                           else "") + ("<br><i>Transit</i>" if transit else ""),
@@ -723,6 +728,7 @@ def _draw_page(doc: Doc, model: dict, title_block: dict | None) -> None:
 
     # Hosts ohne Switchport und Legende rechts.
     lx = X0 + width + 60
+    below = Y0 + (206 if model.get("zabbix") else 180)
     if model["unplaced"]:
         lines = [f"<b>{len(model['unplaced'])} Hosts ohne Access-Port</b>"]
         lines += [(f"{esc(u['host'].get('name') or '')} " if u["host"].get("name") else "")
@@ -730,7 +736,7 @@ def _draw_page(doc: Doc, model: dict, title_block: dict | None) -> None:
                   for u in model["unplaced"][:40]]
         if len(model["unplaced"]) > 40:
             lines.append(f"… +{len(model['unplaced']) - 40} weitere")
-        doc.vertex("<br>".join(lines), STYLE["unplaced"], lx, Y0 + 180, 360,
+        doc.vertex("<br>".join(lines), STYLE["unplaced"], lx, below, 360,
                    30 + len(lines) * 12)
     vlan = f"VLAN {net['vlan']}" if net.get("vlan") is not None else net["interface"]
     legend = "<br>".join([
@@ -746,10 +752,10 @@ def _draw_page(doc: Doc, model: dict, title_block: dict | None) -> None:
         "„Hypervisor? (Trunk)“ = Trunk ohne LLDP, im iTop keine VM",
         "gestrichelter Kasten = Transit-Switch ohne eigene Hosts",
         f"<span style='color:{segments.RED}'>rot</span> = nicht im iTop bzw. nicht am Service",
-    ])
-    doc.vertex(legend, segments.STYLE["legend"], lx, Y0, 360, 150)
+    ] + ([segments.LEGEND_ZABBIX] if model.get("zabbix") else []))
+    doc.vertex(legend, segments.STYLE["legend"], lx, Y0, 360, 176 if model.get("zabbix") else 150)
     if title_block:
-        tb_y = Y0 + 180 + (30 + (min(len(model["unplaced"]), 40) + 3) * 12 + 20
+        tb_y = below + (30 + (min(len(model["unplaced"]), 40) + 3) * 12 + 20
                            if model["unplaced"] else 0)
         titleblock.draw(doc, lx, tb_y, title_block)
 

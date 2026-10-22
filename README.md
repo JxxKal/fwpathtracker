@@ -235,6 +235,17 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   an beiden Enden, die Switches auf dem Weg zur Firewall als *Transit* und
   der Uplink zur Firewall. Oben stehen Segment- und Router-VDOM, darüber das
   SD-WAN.
+  **Zabbix-Status** (Schalter im Netzplan, *Einstellungen → Zabbix*): Hosts
+  und Switches, die Zabbix überwacht, tragen einen farbigen Punkt — grün ok,
+  gelb bis rot nach der Schwere des höchsten aktiven Problems, dunkelrot
+  *nicht erreichbar* (alle Agent-/SNMP-Interfaces), violett Wartung. Die
+  Probleme stehen im Tooltip. Zugeordnet wird über die Interface-IP, sonst
+  über den Hostnamen (auch ohne Domain). Kein Punkt heißt *nicht überwacht*,
+  nicht *in Ordnung*; die Warnungen nennen die Zahl. Folgeprobleme
+  (`skipDependent`) und unterdrückte Probleme zählen nicht. Zugriff nur lesend
+  über JSON-RPC mit API-Token (Zabbix 7: `Authorization: Bearer`), optional
+  auf Host-Gruppen beschränkt; ist Zabbix nicht erreichbar, entsteht der Plan
+  ohne Status.
   **Physisch** zeichnet, wie die Netzwerkkomponenten untereinander hängen:
   Knoten und Kanten aus den **LLDP**-Nachbarschaften in LibreNMS, mit den Ports
   an beiden Enden, Ebenen per Breitensuche vom bestvernetzten Gerät (Core oben,
@@ -634,7 +645,7 @@ internen Servicenamen (`db`, `api`, `frontend`) ab.
 
 **Fachliche Config** liegt in `system_config` (JSONB, per Web-UI) — Keys:
 `fmg`, `itop`, `dns`, `sites`, `tracker`, `saml`, `checks`, `site_supernets`,
-`librenms`.
+`librenms`, `faz`, `zabbix`.
 `GET /api/config/*` maskiert Secrets (`•••`), `PATCH` merged den Sentinel zurück.
 
 ---

@@ -16,6 +16,7 @@ import SslPanel from './SslPanel';
 import TitleBlockPanel from './TitleBlockPanel';
 import UsersPanel from './UsersPanel';
 import WebdrivePanel from './WebdrivePanel';
+import ZabbixPanel from './ZabbixPanel';
 
 // Zwölf Panels untereinander waren eine Scrollstrecke. Dieselbe Seitenleiste
 // wie im Tracker und in den Network Tools, nach Aufgabe gruppiert: woher die
@@ -29,6 +30,7 @@ const PANELS: Record<string, () => JSX.Element> = {
   itop: () => <ItopPanel />,
   librenms: () => <LibrenmsPanel />,
   faz: () => <FazPanel />,
+  zabbix: () => <ZabbixPanel />,
   webdrive: () => <WebdrivePanel />,
   dns: () => <DnsPanel />,
   drawio: () => <DrawioPanel />,
@@ -49,6 +51,7 @@ const GROUPS: NavGroup[] = [
       { id: 'itop', label: de.settingsNav.itop },
       { id: 'librenms', label: de.settingsNav.librenms },
       { id: 'faz', label: de.settingsNav.faz },
+      { id: 'zabbix', label: de.settingsNav.zabbix },
       { id: 'webdrive', label: de.settingsNav.webdrive },
       { id: 'dns', label: de.settingsNav.dns },
     ],

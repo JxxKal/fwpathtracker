@@ -341,7 +341,9 @@ export interface DiagramResult {
     // nur Segmentplan eines Service
     segments?: number;
     // nur Switch-Physik eines VLANs
-    switches_transit?: number; hosts_placed?: number };
+    switches_transit?: number; hosts_placed?: number;
+    // nur mit Zabbix: Hosts mit Status, mit aktivem Problem, nicht erreichbar, ohne Überwachung
+    monitored?: number; problems?: number; down?: number; unmonitored?: number };
 }
 export interface ServiceFamilies {
   families: { id: string; name: string; services: number;
@@ -520,7 +522,7 @@ export async function buildDiagram(scope: DiagramScope, device: string | null, v
   family: string | null = null, showFirewalls = true,
   hideNotInItop = false, hideNotInService = false,
   service: string | null = null, networks: string[] = [],
-  serviceView: ServiceView = 'segments'): Promise<DiagramResult> {
+  serviceView: ServiceView = 'segments', monitoring = true): Promise<DiagramResult> {
   if (isDemoMode() && view === 'services' && service && serviceView === 'switches') {
     const xml = '<?xml version="1.0" encoding="UTF-8"?>\n<mxfile host="A38"><diagram name="Demo" id="demo"><mxGraphModel><root>'
       + '<mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel></diagram></mxfile>';
@@ -529,7 +531,8 @@ export async function buildDiagram(scope: DiagramScope, device: string | null, v
       warnings: ['2 Hosts ohne Switchport — keine MAC bekannt (ARP/FAZ) oder in keiner FDB gefunden; sie stehen in einer Liste.'],
       stats: { devices: 0, vdoms: 0, networks: 1, hosts_found: 7, hosts_shown: 7, neighbors: 0,
         switches: 3, sites: 1, hosts_reduced: false, segments: 1, firewalls: 1, hosts: 7,
-        hosts_not_in_itop: 1, hosts_not_in_service: 0, switches_transit: 1, hosts_placed: 5 },
+        hosts_not_in_itop: 1, hosts_not_in_service: 0, switches_transit: 1, hosts_placed: 5,
+        ...(monitoring ? { monitored: 6, problems: 1, down: 0, unmonitored: 1 } : {}) },
     };
   }
   if (isDemoMode() && view === 'services' && service) {
@@ -579,7 +582,7 @@ export async function buildDiagram(scope: DiagramScope, device: string | null, v
     body: JSON.stringify({ scope, device, vdom, site, hosts, expand_hosts: expandHosts,
       view, location, group, family, show_firewalls: showFirewalls,
       hide_not_in_itop: hideNotInItop, hide_not_in_service: hideNotInService,
-      service, networks, service_view: serviceView }),
+      service, networks, service_view: serviceView, monitoring }),
   });
 }
 
@@ -948,6 +951,18 @@ export async function fazTest(): Promise<FazTestResult> {
 export async function fazRefresh(): Promise<{ ok: boolean }> {
   if (isDemoMode()) return { ok: true };
   return request('/api/faz/refresh', { method: 'POST' });
+}
+
+export async function zabbixTest(): Promise<{
+  ok: boolean; version: string; hosts: number; problems: number;
+}> {
+  if (isDemoMode()) return { ok: true, version: '7.4.15', hosts: 812, problems: 23 };
+  return request('/api/zabbix/test', { method: 'POST' });
+}
+
+export async function zabbixRefresh(): Promise<{ ok: boolean }> {
+  if (isDemoMode()) return { ok: true };
+  return request('/api/zabbix/refresh', { method: 'POST' });
 }
 
 export async function librenmsRefresh(): Promise<{ ok: boolean }> {
