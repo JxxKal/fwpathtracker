@@ -21,6 +21,8 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
+from ipam import oui
+
 ACTIVE_STATUS = ("allocated", "reserved")
 
 SEVERITY = {"ip_conflict": "error", "not_in_itop": "warn", "itop_released": "warn",
@@ -112,7 +114,8 @@ def reconcile(cidr: str, *, itop_hosts: list[dict], itop_addresses: dict[str, di
         r = slot(b["ip"])
         r["macs"].append({"mac": b["mac"], "source": "arp", "first_seen": b.get("first_seen"),
                           "last_seen": b.get("last_seen"), "device": b.get("device"),
-                          "vdom": b.get("vdom"), "interface": b.get("interface")})
+                          "vdom": b.get("vdom"), "interface": b.get("interface"),
+                          "seen_by": b.get("source"), "seen_count": b.get("seen_count")})
         seen(r, _ts(b.get("last_seen")))
         if "arp" not in r["sources"]:
             r["sources"].append("arp")
@@ -153,6 +156,18 @@ def reconcile(cidr: str, *, itop_hosts: list[dict], itop_addresses: dict[str, di
             r["names"]["dns"] = dns_names[ip]
         if ip in fmg_names:
             r["names"]["fmg"] = fmg_names[ip]
+
+    # Wo steht dieselbe MAC noch? Eine MAC an vielen IPs ist meist ein Router,
+    # Hypervisor, Cluster oder Proxy-ARP — dann ist ein „Konflikt" keiner.
+    mac_ips: dict[str, set[str]] = {}
+    for r in rows.values():
+        for m in r["macs"]:
+            mac_ips.setdefault(m["mac"], set()).add(r["ip"])
+    for r in rows.values():
+        for m in r["macs"]:
+            m["other_ips"] = sorted(mac_ips[m["mac"]] - {r["ip"]},
+                                    key=ipaddress.IPv4Address)
+            m["vendor"] = oui.vendor(m["mac"])
 
     observed = any(r["macs"] for r in rows.values())
     for r in rows.values():
@@ -215,7 +230,7 @@ def _findings(r: dict, active_s: int, stale_s: int, observed: bool, now: datetim
     if len(macs) > 1:
         if _overlap(recent):
             _add(r, "ip_conflict", f"{len(macs)} MACs gleichzeitig an dieser IP: "
-                                   + ", ".join(sorted(macs)))
+                                   + ", ".join(sorted(macs)) + _conflict_hint(recent))
         else:
             newest = max(recent, key=lambda m: m["last_seen"])
             _add(r, "mac_changed", f"MAC gewechselt — jetzt {newest['mac']} "
@@ -233,6 +248,31 @@ def _findings(r: dict, active_s: int, stale_s: int, observed: bool, now: datetim
 
 
 _SRC_LABEL = {"dns": "DNS", "faz": "FortiAnalyzer"}
+
+
+def _conflict_hint(macs: list[dict]) -> str:
+    """Erklärung, wenn das Muster eher auf geteilte oder wandernde Adressen deutet.
+
+    Gleichzeitig heißt hier: Die Zeiträume von erster bis letzter Sichtung
+    überlappen. Eine IP, die zwischen zwei Knoten hin und her wandert
+    (Failover-Cluster), sieht genauso aus — die Historie speichert keine
+    Einzelsichtungen, nur den Zeitraum."""
+    by_mac = {m["mac"]: m for m in macs}
+    vendors = {(m.get("vendor") or {}).get("kind") for m in by_mac.values()}
+    shared = [m for m in by_mac.values() if m.get("other_ips")]
+    hints = []
+    if "shared" in vendors:
+        hints.append("eine davon ist eine virtuelle Router- bzw. Cluster-MAC (VRRP/HSRP/NLB)")
+    if len(shared) == len(by_mac):
+        ips = sorted({ip for m in shared for ip in m["other_ips"]}, key=ipaddress.IPv4Address)
+        hints.append("dieselben MACs stehen auch an " + ", ".join(ips[:5])
+                     + (" …" if len(ips) > 5 else "")
+                     + " — typisch für eine Cluster- oder Failover-IP, die zwischen Knoten "
+                       "wandert, für einen Hypervisor oder Proxy-ARP")
+    elif vendors == {"virtual"}:
+        hints.append("alle MACs sind virtuell — zwei VMs mit derselben IP oder eine "
+                     "verschobene/geklonte VM")
+    return (" — " + "; ".join(hints) + ".") if hints else ""
 
 
 def _overlap(macs: list[dict]) -> bool:

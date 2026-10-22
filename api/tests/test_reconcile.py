@@ -97,3 +97,31 @@ def test_firewall_interfaces_and_reserved_addresses_are_not_stale():
                    arp_rows=[_arp("10.1.1.31", "dd", _ago(days=1), _ago(hours=1))])
     assert rows["10.1.1.1"]["kind"] == "firewall" and codes(rows["10.1.1.1"]) == []
     assert codes(rows["10.1.1.9"]) == []
+
+
+def test_conflict_explains_shared_hyperv_macs_and_who_saw_them():
+    a, b, c = "00155d161404", "00155d10140f", "00155d10160d"
+    rows_in = [_arp("10.1.1.141", m, _ago(days=20), _ago(minutes=1)) for m in (a, b, c)]
+    rows_in += [_arp("10.1.1.143", m, _ago(days=20), _ago(minutes=30)) for m in (a, c)]
+    rows_in += [_arp("10.1.1.146", m, _ago(days=20), _ago(minutes=30)) for m in (a, c)]
+    rows_in[0]["source"], rows_in[0]["seen_count"] = "fortigate", 812
+    _, rows = _run(itop_hosts=[{"ip": "10.1.1.141", "name": "svo3035-ot", "kind": "VM"}],
+                   arp_rows=rows_in)
+    r = rows["10.1.1.141"]
+    text = r["findings"][0]["text"]
+    assert r["findings"][0]["code"] == "ip_conflict"
+    # b steht nur an .141 → nicht alle MACs geteilt; alle virtuell → VM-Hinweis.
+    assert "alle MACs sind virtuell" in text
+    m = next(x for x in r["macs"] if x["mac"] == a)
+    assert m["other_ips"] == ["10.1.1.143", "10.1.1.146"]
+    assert m["vendor"]["label"].startswith("Microsoft Hyper-V")
+    assert m["seen_by"] == "fortigate" and m["seen_count"] == 812
+    assert m["device"] == "fw-a" and m["interface"] == "lan1"
+
+
+def test_conflict_with_macs_at_several_ips_hints_at_cluster():
+    rows_in = [_arp("10.1.1.50", m, _ago(days=9), _ago(minutes=5)) for m in ("aa", "bb")]
+    rows_in += [_arp("10.1.1.51", m, _ago(days=9), _ago(minutes=5)) for m in ("aa", "bb")]
+    _, rows = _run(arp_rows=rows_in)
+    text = rows["10.1.1.50"]["findings"][-1]["text"]
+    assert "Cluster- oder Failover-IP" in text and "10.1.1.51" in text

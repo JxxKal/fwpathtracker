@@ -1236,7 +1236,9 @@ export interface ReconcileRow {
   ip: string; display_name: string | null; names: Record<string, string>;
   kind: string | null; itop_id: string | null; itop_status: string | null;
   macs: { mac: string; source: string; first_seen: string | null; last_seen: string | null;
-    device: string | null; vdom: string | null; interface: string | null }[];
+    device: string | null; vdom: string | null; interface: string | null;
+    seen_by?: string | null; seen_count?: number | null; other_ips?: string[];
+    vendor?: { label: string; kind: 'shared' | 'virtual' | 'device' } | null }[];
   last_seen: string | null; age_s: number | null; os: string | null; sources: string[];
   findings: { code: ReconcileCode; severity: 'error' | 'warn' | 'info'; text: string }[];
 }
@@ -1300,9 +1302,17 @@ function demoReconcile(q: string, activeDays: number, staleDays: number): Reconc
     { ...base, ip: '10.1.1.23', display_name: 'kamera-7.corp', names: { dns: 'kamera-7.corp' },
       last_seen: ago(0.1), age_s: 9000, sources: ['arp', 'faz'], os: 'Linux',
       findings: [{ code: 'not_in_itop', severity: 'warn', text: 'Aktiv, aber weder als CI noch als IP-Adresse im iTop.' }] },
-    { ...base, ip: '10.1.1.40', display_name: 'sps-40', names: { itop: 'sps-40' }, kind: 'Server',
+    { ...base, ip: '10.1.1.40', display_name: 'sps-40', names: { itop: 'sps-40' }, kind: 'VirtualMachine',
       last_seen: ago(0), age_s: 30, sources: ['itop-ci', 'arp'],
-      findings: [{ code: 'ip_conflict', severity: 'error', text: '2 MACs gleichzeitig an dieser IP: 000c29aa0001, 000c29aa0002' }] },
+      macs: [
+        { mac: '00155d161404', source: 'arp', first_seen: ago(20), last_seen: ago(0), device: 'fw-svo-01',
+          vdom: 'OT-Prod', interface: 'vl180', seen_by: 'fortigate', seen_count: 812,
+          other_ips: ['10.1.1.43', '10.1.1.46'], vendor: { label: 'Microsoft Hyper-V (virtuelle NIC)', kind: 'virtual' } },
+        { mac: '00155d10140f', source: 'arp', first_seen: ago(14), last_seen: ago(0.2), device: 'fw-svo-01',
+          vdom: 'OT-Prod', interface: 'vl180', seen_by: 'fortigate', seen_count: 97,
+          other_ips: [], vendor: { label: 'Microsoft Hyper-V (virtuelle NIC)', kind: 'virtual' } },
+      ],
+      findings: [{ code: 'ip_conflict', severity: 'error', text: '2 MACs gleichzeitig an dieser IP: 00155d10140f, 00155d161404 — alle MACs sind virtuell — zwei VMs mit derselben IP oder eine verschobene/geklonte VM.' }] },
     { ...base, ip: '10.1.1.77', display_name: 'alt-srv', names: { itop: 'alt-srv' }, kind: 'Server',
       last_seen: ago(64), age_s: 64 * 86400, sources: ['itop-ci', 'arp'],
       findings: [{ code: 'stale_in_itop', severity: 'info', text: 'Im iTop geführt, im Netz zuletzt vor 64 Tagen gesehen.' }] },

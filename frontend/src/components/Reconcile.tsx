@@ -35,6 +35,63 @@ function csv(rows: ReconcileRow[]): string {
   return [head.map(esc).join(';'), ...body].join('\n');
 }
 
+const dtShort = (iso: string | null) => (iso ? new Date(iso).toLocaleString('de-DE', {
+  day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—');
+
+/** MACs einer IP — bei Konflikt oder Wechsel gleich mit Herkunft: wer hat sie
+ *  wann gesehen, an welchen IPs steht sie noch, was verrät das Präfix. */
+function MacCell({ row }: { row: ReconcileRow }) {
+  const suspicious = row.findings.some((f) => f.code === 'ip_conflict' || f.code === 'mac_changed');
+  const [open, setOpen] = useState(suspicious);
+  const byMac = new Map<string, ReconcileRow['macs']>();
+  for (const m of row.macs) byMac.set(m.mac, [...(byMac.get(m.mac) ?? []), m]);
+  if (byMac.size === 0) return null;
+  return (
+    <div className="space-y-1">
+      {[...byMac.entries()].map(([mac, entries]) => {
+        const v = entries.find((e) => e.vendor)?.vendor;
+        const others = entries.find((e) => e.other_ips?.length)?.other_ips ?? [];
+        return (
+          <div key={mac}>
+            <button type="button" className="font-mono text-slate-300 hover:text-cyan-300"
+              onClick={() => setOpen(!open)} title={de.reconcile.macDetails}>
+              {mac}
+            </button>
+            {v && (
+              <span className={`ml-1 rounded px-1 text-[9px] ${v.kind === 'shared' ? 'bg-amber-900/60 text-amber-300'
+                : v.kind === 'virtual' ? 'bg-violet-900/60 text-violet-300' : 'bg-slate-800 text-slate-300'}`}>
+                {v.label}
+              </span>
+            )}
+            {open && (
+              <div className="ml-2 mt-0.5 space-y-0.5 border-l border-slate-700 pl-2 text-[10px] leading-snug text-slate-400">
+                {entries.map((e, i) => (
+                  <div key={i}>
+                    {e.source === 'faz'
+                      ? <>{de.reconcile.seenFaz} · {de.reconcile.lastSeen} {dtShort(e.last_seen)}</>
+                      : <>
+                        {de.reconcile.seenBy}{' '}
+                        <span className="text-slate-300">
+                          {[e.device, e.vdom && `VDOM ${e.vdom}`, e.interface].filter(Boolean).join(' · ') || '?'}
+                        </span>
+                        {e.seen_by && <> ({de.reconcile.via[e.seen_by] ?? e.seen_by})</>}
+                        <br />{dtShort(e.first_seen)} – {dtShort(e.last_seen)}
+                        {e.seen_count ? <> · {de.reconcile.times(e.seen_count)}</> : null}
+                      </>}
+                  </div>
+                ))}
+                {others.length > 0 && (
+                  <div className="text-amber-300/90">{de.reconcile.alsoAt} {others.join(', ')}</div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function Reconcile() {
   const [q, setQ] = useState('');
   const [activeDays, setActiveDays] = useState(7);
@@ -160,8 +217,8 @@ export default function Reconcile() {
                         ))}
                       </div>
                     </td>
-                    <td className="py-1.5 pr-3 font-mono text-[11px] text-slate-400">
-                      {[...new Set(r.macs.map((m) => m.mac))].map((m) => <div key={m}>{m}</div>)}
+                    <td className="py-1.5 pr-3 text-[11px] text-slate-400">
+                      <MacCell row={r} />
                     </td>
                     <td className="py-1.5 pr-3 text-xs">
                       {r.last_seen ? <WhenAgo iso={r.last_seen} /> : <span className="text-slate-500">{de.reconcile.never}</span>}
