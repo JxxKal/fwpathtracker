@@ -16,11 +16,12 @@ from datetime import datetime, timedelta
 PREFIXES = ("winlogbeat_", "")
 ROLES = {
     "ad": {"label": "Active Directory", "filter": "{p}winlog_channel:Security"},
-    # Der iFIX-Absender ist erst am echten Log bekannt — der Test schlägt ihn vor.
+    # iFIX erkennt man am Rechner, der über Winlogbeat sendet.
     "ifix": {"label": "iFIX (SCADA)", "filter": ""},
 }
 TEST_WINDOW = timedelta(hours=24)
 SAMPLE = 200
+HOSTS_SHOWN = 100
 
 
 def prefix_of(cfg: dict, detected: str | None) -> str:
@@ -36,12 +37,28 @@ def field(name: str, prefix: str) -> str:
     return prefix + name.replace(".", "_")
 
 
+def role_hosts(cfg: dict, role: str) -> list[str]:
+    """Rechner einer Rolle (Domain Controller, iFIX-Knoten) — Graylog setzt
+    `source` auf den Winlogbeat-Hostnamen."""
+    hosts = ((cfg.get("roles") or {}).get(role) or {}).get("hosts") or []
+    return list(dict.fromkeys(str(h).strip() for h in hosts if str(h).strip()))
+
+
 def role_query(cfg: dict, role: str, prefix: str) -> str:
-    roles = cfg.get("roles") or {}
-    raw = (roles.get(role) or {}).get("filter")
+    """Filter der Rolle UND ihre Rechner. Ohne Rechner gilt der Filter allein —
+    für AD heißt das: Security-Log aller Rechner, nicht nur der DCs."""
+    raw = ((cfg.get("roles") or {}).get(role) or {}).get("filter")
     if raw is None:
         raw = ROLES[role]["filter"]
-    return raw.replace("{p}", prefix).strip()
+    parts = []
+    if raw.strip():
+        parts.append(raw.replace("{p}", prefix).strip())
+    hosts = role_hosts(cfg, role)
+    if hosts:
+        parts.append("source:(" + " OR ".join(f'"{h}"' for h in hosts) + ")")
+    if len(parts) == 2:
+        return f"({parts[0]}) AND {parts[1]}"
+    return parts[0] if parts else ""
 
 
 async def detect_prefix(client, cfg: dict, now: datetime) -> str | None:
@@ -58,7 +75,7 @@ async def diagnose(client, cfg: dict, now: datetime) -> dict:
     für den iFIX-Filter und ob die Views-API (Aggregation) erlaubt ist."""
     out: dict = {"version": (await client.test(cfg))["version"], "streams": [],
                  "streams_error": None, "prefix": None, "winlogbeat": False, "roles": {},
-                 "providers": [], "aggregation": {"ok": False, "error": None}}
+                 "hosts": [], "providers": [], "aggregation": {"ok": False, "error": None}}
     try:
         out["streams"] = await client.streams(cfg)
     except Exception as exc:
@@ -73,7 +90,7 @@ async def diagnose(client, cfg: dict, now: datetime) -> dict:
         r = {"label": meta["label"], "query": q, "hits": None, "error": None,
              "computers": []}
         if not q:
-            r["error"] = "Kein Filter eingetragen."
+            r["error"] = "Weder Rechner noch Filter eingetragen."
         else:
             try:
                 r["hits"] = await client.count(cfg, q, frm, now)
@@ -87,7 +104,23 @@ async def diagnose(client, cfg: dict, now: datetime) -> dict:
             except Exception as exc:
                 r["error"] = str(exc)
         out["roles"][role] = r
-    # Vorschläge für iFIX: Absender im Application-Kanal, gezählt von Graylog.
+    # Vorschläge für iFIX: alle Rechner, die über Winlogbeat senden (Graylog
+    # setzt `source` auf den Winlogbeat-Hostnamen), dazu die Absender im
+    # Application-Kanal.
+    beats = f"_exists_:{field('winlog.event_id', p)}"
+    try:
+        out["hosts"] = [{"name": n, "hits": c} for n, c in await client.aggregate(
+            cfg, beats, frm, now, "source", HOSTS_SHOWN)]
+    except Exception:
+        try:
+            seen_h: dict[str, int] = {}
+            for m in await client.sample(cfg, beats, frm, now, SAMPLE):
+                if m.get("source"):
+                    seen_h[str(m["source"])] = seen_h.get(str(m["source"]), 0) + 1
+            out["hosts"] = [{"name": n, "hits": c, "sampled": True}
+                            for n, c in sorted(seen_h.items(), key=lambda kv: -kv[1])]
+        except Exception:
+            pass
     app = f"{field('winlog.channel', p)}:Application"
     try:
         out["providers"] = [{"name": n, "hits": c} for n, c in await client.aggregate(

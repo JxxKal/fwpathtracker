@@ -78,6 +78,10 @@ def test_role_queries_follow_the_field_prefix():
     cfg = {"roles": {"ifix": {"filter": "{p}winlog_provider_name:iFIX"}}}
     assert winlog.role_query(cfg, "ifix", "") == "winlog_provider_name:iFIX"
     assert winlog.prefix_of({"field_prefix": ""}, "winlogbeat_") == ""
+    dcs = {"roles": {"ad": {"hosts": ["dc01", " dc02 ", "dc01"]}, "ifix": {"hosts": ["scada1"]}}}
+    assert winlog.role_query(dcs, "ad", "") == \
+        '(winlog_channel:Security) AND source:("dc01" OR "dc02")'
+    assert winlog.role_query(dcs, "ifix", "") == 'source:("scada1")'
     assert winlog.prefix_of({}, None) == "winlogbeat_"
 
 
@@ -106,6 +110,8 @@ class FakeClient:
     async def aggregate(self, cfg, query, frm, to, field, limit=20):
         if self.fails:
             raise GraylogError("403")
+        if field == "source":
+            return [("SCADA01", 900), ("dc01", 80)]
         assert field == f"{self.prefix}winlog_provider_name"
         return [("iFIX", 42)]
 
@@ -116,8 +122,9 @@ async def test_diagnose_detects_prefix_counts_roles_and_suggests_providers(prefi
     assert out["version"] == "5.0.13" and out["winlogbeat"] and out["prefix"] == prefix
     assert out["roles"]["ad"]["hits"] == 1234
     assert out["roles"]["ad"]["computers"] == ["dc01", "dc02"]
-    assert out["roles"]["ifix"]["error"] == "Kein Filter eingetragen."
+    assert out["roles"]["ifix"]["error"] == "Weder Rechner noch Filter eingetragen."
     assert out["providers"] == [{"name": "iFIX", "hits": 42}]
+    assert out["hosts"][0] == {"name": "SCADA01", "hits": 900}
     assert out["aggregation"] == {"ok": True, "error": None}
 
 
@@ -125,6 +132,7 @@ async def test_diagnose_falls_back_to_a_sample_without_views_rights():
     out = await winlog.diagnose(FakeClient("", aggregate_fails=True), {}, NOW)
     assert out["aggregation"]["ok"] is False and "403" in out["aggregation"]["error"]
     assert out["providers"] == [{"name": "iFIX", "hits": 1, "sampled": True}]
+    assert out["hosts"] == [{"name": "dc01", "hits": 1, "sampled": True}]
 
 
 def test_webdrive_keeps_its_own_connection_and_falls_back_to_graylog():

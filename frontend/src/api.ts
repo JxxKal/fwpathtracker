@@ -972,6 +972,7 @@ export interface GraylogTestResult {
   streams: { id: string; title: string; disabled: boolean; removes_from_default: boolean }[];
   streams_error: string | null; prefix: string; winlogbeat: boolean;
   roles: Record<'ad' | 'ifix', GraylogRole>;
+  hosts: { name: string; hits: number; sampled?: boolean }[];
   providers: { name: string; hits: number; sampled?: boolean }[];
   aggregation: { ok: boolean; error: string | null };
 }
@@ -986,6 +987,7 @@ export async function graylogTest(): Promise<GraylogTestResult> {
         ad: { label: 'Active Directory', query: 'winlogbeat_winlog_channel:Security', hits: 1843211, error: null, computers: ['dc01', 'dc02'] },
         ifix: { label: 'iFIX (SCADA)', query: '', hits: null, error: 'Kein Filter eingetragen.', computers: [] },
       },
+      hosts: [{ name: 'SVO3020-OT.op-tech.com', hits: 120646 }, { name: 'SCADA01', hits: 8812 }, { name: 'SCADA02', hits: 7310 }],
       providers: [{ name: 'Microsoft-Windows-RestartManager', hits: 912 }, { name: 'iFIX', hits: 388 }, { name: 'MSSQLSERVER', hits: 120 }],
       aggregation: { ok: true, error: null } };
   }
