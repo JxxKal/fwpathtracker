@@ -180,14 +180,18 @@ Eine Woche AD-Logs sind Millionen Zeilen. Der heutige Client nutzt die klassisch
 Suche, die bei 10.000 Treffern je Abfrage endet. Für den Report wäre das der
 falsche Weg. Stattdessen:
 
-- **Aggregationen in Graylog rechnen lassen.** Mit `/api/search/aggregate`
-  (Graylog ≥ 5.2) entstehen Zählungen nach EventID × Tag, Top-Konten und
-  Top-Quellen, ohne eine einzige Rohzeile zu übertragen.
+- **Aggregationen in Graylog rechnen lassen.** Hier läuft **Graylog 5.0.13**.
+  Die einfache Aggregations-API (`/api/search/aggregate`) kam erst mit 5.2. Der
+  Weg ist deshalb die **Views-API**, mit der Graylog auch seine eigenen
+  Dashboard-Widgets rechnet: `POST /api/views/search/sync` mit einer Query
+  (Stream, Zeitraum, Filter) und einem `pivot`-Suchtyp (Gruppierung nach Werten
+  und/oder Zeit, Metrik `count`). So entstehen Zählungen nach EventID × Tag,
+  Top-Konten und Top-Quellen, ohne eine einzige Rohzeile zu übertragen.
+  Gekapselt in einer Funktion `aggregate(stream, query, group_by, interval)`.
+  Ein späteres Update auf ≥ 5.2 tauscht nur deren Innenleben.
 - **Rohzeilen nur für die wenigen Ereignisse, die genannt werden:** neue
   Konten, Änderungen an privilegierten Gruppen, Sperrungen. Das sind gezielte
   Suchen mit kleiner Trefferzahl.
-- **Graylog-Version klären** (Abschnitt 9). Davon hängt ab, ob die Aggregations-
-  API verfügbar ist oder der Umweg über die Views-API nötig wird.
 
 ### AD: welche Ereignisse
 
@@ -334,8 +338,9 @@ Entscheidung und kein Versäumnis.
 
 ## 9. Zu klären, bevor gebaut wird
 
-1. **Welche Graylog-Version läuft?** Entscheidet zwischen der Aggregations-API
-   (≥ 5.2) und der Views-API.
+1. ~~Welche Graylog-Version läuft?~~ **5.0.13** → Views-API (`/api/views/search/sync`
+   mit Pivot). Zu prüfen ist, ob der Reader-User Views-Suchen ausführen darf.
+   Bei Graylog genügt dafür normalerweise das Leserecht auf die Streams.
 2. **Welche Streams gibt es?** Beide Quellen kommen über Winlogbeat. Offen ist
    noch, ob AD und iFIX in getrennten Streams liegen und ob der Beats-Input
    Präfixe setzt. Eine Beispielnachricht je Stream genügt, notfalls aus dem
