@@ -206,14 +206,50 @@ def device_nets(inv: Inventory, device: str) -> tuple[set[str], list[ipaddress.I
     return ips, nets
 
 
+# „family:<id>" statt einer Service-ID: alle Services der Familie in einem Plan.
+FAMILY_PREFIX = "family:"
+
+
 def find_service(families: list[dict], services: list[dict], service: str) -> list[dict]:
-    """Die Familie mit genau diesem Service als einzigem — Eingabe für place()."""
+    """Die Familie mit genau diesem Service als einzigem — Eingabe für place().
+    Mit FAMILY_PREFIX die ganze Familie; merge_family() macht daraus nach
+    place() einen Service."""
+    if service.startswith(FAMILY_PREFIX):
+        fid = service[len(FAMILY_PREFIX):]
+        for fam in service_view._wanted(families, services, None):
+            if fam["id"] == fid:
+                if not fam["services"]:
+                    break
+                return [dict(fam, whole=True)]
+        raise ValueError(f"Servicefamilie '{fid}' gibt es im iTop nicht oder sie hat "
+                         "keine Services.")
     needle = service.strip().lower()
     for fam in service_view._wanted(families, services, None):
         for svc in fam["services"]:
             if svc["id"] == service or svc["name"].lower() == needle:
                 return [dict(fam, services=[svc])]
     raise ValueError(f"Service '{service}' gibt es im iTop nicht.")
+
+
+def merge_family(fams: list[dict]) -> list[dict]:
+    """Nach place(): alle Services einer ganzen Familie zu EINEM zusammenlegen —
+    Netze und IPs vereinigt, nicht platzierbare CIs mit Servicenamen. Danach
+    laufen Segmentplan und Switch-Physik unverändert. Einzelne Services bleiben."""
+    fam = fams[0]
+    if not fam.get("whole"):
+        return fams
+    nets: list[str] = []
+    ips: list[str] = []
+    unplaced: list[dict] = []
+    for s in fam["services"]:
+        nets += [n for n in s["networks"] if n not in nets]
+        ips += [i for i in s["ips"] if i not in ips]
+        unplaced += [dict(u, name=f"{u['name']} ({s['name']})") for u in s["unplaced"]]
+    svc = {"id": FAMILY_PREFIX + fam["id"], "name": f"{fam['name']} (alle Services)",
+           "family_id": fam["id"], "networks": nets, "ips": ips, "unplaced": unplaced,
+           "ci_count": sum(s["ci_count"] for s in fam["services"]),
+           "services": len(fam["services"])}
+    return [dict(fam, services=[svc])]
 
 
 def network_choices(inv: Inventory, prefixes: PrefixTable, nets: dict[str, dict],

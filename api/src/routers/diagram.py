@@ -76,7 +76,8 @@ class DiagramRequest(BaseModel):
     hide_not_in_itop: bool = False
     hide_not_in_service: bool = False
     # Segmentplan: ID oder Name EINES Service und die gewählten Netze (IDs aus
-    # /service-networks). Leer = Übersicht der Familie(n).
+    # /service-networks); „family:<id>" = alle Services der Familie in einem
+    # Plan. Leer = Übersicht der Familie(n).
     service: str | None = Field(default=None, max_length=200)
     networks: list[str] = Field(default_factory=list, max_length=200)
     # segments = Segmentplan (logisch, mehrere VLANs); switches = Switch-Physik
@@ -403,6 +404,7 @@ async def service_networks(request: Request, service: str,
         raise HTTPException(404, str(exc)) from exc
     nets, warnings = service_view.place(state.inventory, fams, data["links"], itop_hosts,
                                         itop_subnets)
+    fams = segments.merge_family(fams)
     svc = fams[0]["services"][0]
     return {"service": {"id": svc["id"], "name": svc["name"], "family": fams[0]["name"],
                         "cis": svc["ci_count"], "unplaced": svc["unplaced"]},
@@ -587,6 +589,7 @@ async def _segments(body: DiagramRequest, request: Request, user: dict) -> dict:
         raise HTTPException(404, str(exc)) from exc
     nets, warnings = service_view.place(state.inventory, fams, data["links"], itop_hosts,
                                         itop_subnets)
+    fams = segments.merge_family(fams)
 
     async def addresses(cidrs: list[str]) -> dict[str, dict]:
         wanted = [ipaddress.IPv4Network(c) for c in cidrs]

@@ -262,6 +262,7 @@ export const de = {
     noFamilies: 'Keine Servicefamilien mit Services im iTop sichtbar.',
     service: 'Service',
     serviceAll: '— Übersicht aller Services —',
+    serviceFamilyPlan: '— Alle Services: Segmentplan / Switch-Physik —',
     serviceNeedsFamily: 'Für den Segmentplan zuerst eine Servicefamilie wählen.',
     segments: 'VLANs für den Segmentplan',
     serviceViews: { segments: 'Segmentplan', switches: 'Switch-Physik' },

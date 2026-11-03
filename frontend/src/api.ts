@@ -367,7 +367,8 @@ export async function diagramServiceNetworks(service: string): Promise<ServiceNe
       id: `net:${fw}/${cidr}`, cidr, vlan, name: 'Backup', interface: `port5.${vlan}`,
       fw_id: fw, site, enabled: true, cis });
     return {
-      service: { id: service, name: 'Backup', family: 'Global Tier-0 BU Germany', cis: 9,
+      service: { id: service, name: service.startsWith('family:') ? 'Global Tier-0 BU Germany (alle Services)' : 'Backup',
+        family: 'Global Tier-0 BU Germany', cis: 9,
         unplaced: [{ name: 'bk-alt', reason: 'ohne Management-IP' }] },
       networks: [
         net('Hamburg', 'fw-b/prot', 140, '10.2.40.0/24', 3),

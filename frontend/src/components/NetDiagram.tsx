@@ -177,6 +177,7 @@ export default function NetDiagram() {
             <select className="fwpt-input w-64 disabled:opacity-40" value={service} disabled={!family}
               onChange={(e) => setService(e.target.value)}>
               <option value="">{de.diagram.serviceAll}</option>
+              {services.length > 1 && <option value={`family:${family}`}>{de.diagram.serviceFamilyPlan}</option>}
               {services.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </label>

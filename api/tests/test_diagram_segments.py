@@ -152,3 +152,30 @@ async def test_hiding_foreign_hosts(inventory, prefixes):
     m = await _build(inventory, prefixes)
     xml = segments.render(m, hide_not_in_service=True, hide_not_in_itop=True)
     assert "fremd-d" not in xml and "10.4.5.99" not in xml and "bk-d" in xml
+
+
+async def test_whole_family_becomes_one_service(inventory, prefixes):
+    """„Übersicht aller Systeme" einer Familie: alle Services in EINEM Segmentplan."""
+    svcs = SERVICES + [{"id": "12", "name": "Monitoring", "family_id": "1", "family_name": "",
+                        "description": "", "status": ""}]
+    links = LINKS + [{"service_id": "12", "ci_id": "4", "ci_name": "fremd-d"},
+                     {"service_id": "12", "ci_id": "1", "ci_name": "bk-a"},
+                     {"service_id": "12", "ci_id": "99", "ci_name": "ohne-ip"}]
+    fams = segments.find_service(FAMILIES, svcs, "family:1")
+    nets, _ = services.place(inventory, fams, links, ITOP_HOSTS, [])
+    fams = segments.merge_family(fams)
+    svc = fams[0]["services"][0]
+    assert len(fams[0]["services"]) == 1 and svc["id"] == "family:1"
+    assert svc["name"] == "Infrastruktur (alle Services)" and svc["services"] == 2
+    assert len(svc["networks"]) == 3 and len(svc["ips"]) == 4       # bk-a nur einmal
+    assert svc["ci_count"] == 6
+    assert svc["unplaced"] == [{"name": "ohne-ip (Monitoring)", "reason": "ohne Management-IP"}]
+    mdl = await segments.build(inventory, prefixes, family=fams[0], nets=nets, selected=[],
+                               itop_hosts=ITOP_HOSTS, arp=Arp())
+    # fremd-d hängt jetzt an einem Service der Familie — nicht mehr „fremd".
+    assert mdl["stats"]["hosts_not_in_service"] == 0
+    with pytest.raises(ValueError):
+        segments.find_service(FAMILIES, svcs, "family:9")
+    # Einzelne Services bleiben unberührt.
+    one = segments.find_service(FAMILIES, svcs, "Backup")
+    assert segments.merge_family(one) is one
