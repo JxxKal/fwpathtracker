@@ -174,8 +174,19 @@ async def test_whole_family_becomes_one_service(inventory, prefixes):
                                itop_hosts=ITOP_HOSTS, arp=Arp())
     # fremd-d hängt jetzt an einem Service der Familie — nicht mehr „fremd".
     assert mdl["stats"]["hosts_not_in_service"] == 0
+    # Jeder Host trägt seine Services mit Farbe — sichtbar unter dem Symbol.
+    hosts = {h["ip"]: h for site in mdl["sites"] for n in site["segments"] for h in n["hosts"]}
+    assert [n for n, _ in hosts["10.1.8.10"]["service_tags"]] == ["Backup", "Monitoring"]
+    assert [n for n, _ in hosts["10.4.5.20"]["service_tags"]] == ["Monitoring"]
+    assert hosts["10.4.5.99"]["service_tags"] == []                 # nur aus dem ARP
+    xml = segments.render(mdl)
+    assert "● Backup +1" in xml and "● Monitoring" in xml
+    assert "CI von: Backup, Monitoring" in xml
     with pytest.raises(ValueError):
         segments.find_service(FAMILIES, svcs, "family:9")
     # Einzelne Services bleiben unberührt.
     one = segments.find_service(FAMILIES, svcs, "Backup")
     assert segments.merge_family(one) is one
+    single = await _build(inventory, prefixes)
+    assert "service_tags" not in single["sites"][0]["segments"][0]["hosts"][0]
+    assert "Farbe unter dem Host" not in segments.render(single)

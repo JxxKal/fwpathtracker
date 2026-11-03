@@ -265,6 +265,9 @@ def _host_tooltip(h: dict, service_ips: set[str]) -> str:
         return "NICHT IM iTOP – nur bekannt aus " + ", ".join(h.get("sources") or ["?"]) + "\n" + tip
     if _foreign(h, service_ips):
         return "Im iTop, aber NICHT diesem Service zugeordnet\n" + tip
+    tags = [n for n, _ in h.get("service_tags") or []]
+    if tags:
+        return "CI von: " + ", ".join(tags) + "\n" + tip
     return "CI dieses Service\n" + tip
 
 

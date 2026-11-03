@@ -208,6 +208,10 @@ def device_nets(inv: Inventory, device: str) -> tuple[set[str], list[ipaddress.I
 
 # „family:<id>" statt einer Service-ID: alle Services der Familie in einem Plan.
 FAMILY_PREFIX = "family:"
+# Kennfarbe je Service im Familienplan — dunkel genug für Schrift auf Weiß,
+# untereinander unterscheidbar; ab dem 13. Service wiederholt sie sich.
+SERVICE_COLORS = ["#1f6feb", "#b35c00", "#7d3cbd", "#0a7d6e", "#c2185b", "#5a6b00",
+                  "#0b5394", "#8e5b3e", "#00838f", "#6a1b9a", "#ad1457", "#33691e"]
 
 
 def find_service(families: list[dict], services: list[dict], service: str) -> list[dict]:
@@ -245,10 +249,19 @@ def merge_family(fams: list[dict]) -> list[dict]:
         nets += [n for n in s["networks"] if n not in nets]
         ips += [i for i in s["ips"] if i not in ips]
         unplaced += [dict(u, name=f"{u['name']} ({s['name']})") for u in s["unplaced"]]
+    # Welcher Host zu welchem Service gehört — sonst ist im gemeinsamen Plan
+    # nicht mehr zu sehen, wofür er da ist.
+    colors = {s["name"]: SERVICE_COLORS[i % len(SERVICE_COLORS)]
+              for i, s in enumerate(sorted(fam["services"], key=lambda s: s["name"].lower()))}
+    ip_services: dict[str, list[str]] = {}
+    for s in fam["services"]:
+        for ip in s["ips"]:
+            if s["name"] not in ip_services.setdefault(ip, []):
+                ip_services[ip].append(s["name"])
     svc = {"id": FAMILY_PREFIX + fam["id"], "name": f"{fam['name']} (alle Services)",
            "family_id": fam["id"], "networks": nets, "ips": ips, "unplaced": unplaced,
            "ci_count": sum(s["ci_count"] for s in fam["services"]),
-           "services": len(fam["services"])}
+           "services": len(fam["services"]), "colors": colors, "ip_services": ip_services}
     return [dict(fam, services=[svc])]
 
 
@@ -298,9 +311,13 @@ async def build(inv: Inventory, prefixes: PrefixTable, *, family: dict, nets: di
             faz_hosts, arp_max_age_s)
     resolved = await diagram_model._resolve_names(chosen, dns, [diagram_model.DNS_MAX])
     ips = set(svc["ips"])
+    tags, colors = svc.get("ip_services"), svc.get("colors") or {}
     for net in chosen:
         for h in net["hosts"]:
             h["in_itop"] = bool(service_view.ITOP_SOURCES & set(h.get("sources") or []))
+            if tags is not None:
+                h["service_tags"] = [(n, colors.get(n, "#555555"))
+                                     for n in sorted(tags.get(h["ip"], []), key=str.lower)]
         net["vlan_sort"] = (net["vlan"] is None, net["vlan"] or 0, net["cidr"])
 
     # Standort → Firewalls → VDOM-Kette.
@@ -420,6 +437,23 @@ LEGEND_ZABBIX = (f"<span style='color:{zabbix_status.OK_COLOR}'>●</span>"
                  "Problem (Farbe = Schwere), nicht erreichbar; kein Punkt = nicht überwacht")
 
 
+def service_tag(h: dict, width: int = 22) -> str:
+    """Familienplan: farbige Kennung der Services, an denen der Host hängt."""
+    tags = h.get("service_tags") or []
+    if not tags:
+        return ""
+    first, color = tags[0]
+    more = f" +{len(tags) - 1}" if len(tags) > 1 else ""
+    name = first if len(first) <= width else first[:width - 1] + "…"
+    return f"<span style='color:{color};font-weight:bold'>● {esc(name)}{more}</span>"
+
+
+def service_legend(svc: dict) -> list[str]:
+    """Legendenzeilen Farbe → Service (nur im Familienplan)."""
+    return [f"<span style='color:{c};font-weight:bold'>● {esc(n)}</span>"
+            for n, c in (svc.get("colors") or {}).items()]
+
+
 def _host_cell(h: dict, ips: set[str]) -> tuple[str, str]:
     stencil, paint = drawio.SHAPES[drawio.host_shape(h)]
     style = STYLE["host"].format(stencil=stencil, paint=paint)
@@ -430,7 +464,8 @@ def _host_cell(h: dict, ips: set[str]) -> tuple[str, str]:
         style += f"fontColor={RED};fontStyle=1;"
     name = h.get("name") or ""
     label = (f"<b>{esc(name)}</b><br>{esc(h['ip'])}" if name else esc(h["ip"]))
-    return label, style
+    tag = service_tag(h)
+    return (label + f"<br>{tag}" if tag else label), style
 
 
 def _visible_hosts(net: dict, ips: set[str], hide_not_in_itop: bool,
@@ -634,6 +669,11 @@ def render(mdl: dict, title_block: dict | None = None, hide_not_in_itop: bool = 
              (f"<span style='color:{RED}'>□ rot umrandet</span> = nicht im iTop geführt")
              if not hide_not_in_itop else "ausgeblendet: Hosts, die nicht im iTop stehen"]
     legend_h = LEGEND_H
+    tags = service_legend(svc)
+    if tags:
+        lines.append("Farbe unter dem Host = Service, an dem er hängt (+n = weitere):")
+        lines += tags
+        legend_h += 14 * (len(tags) + 1)
     if mdl.get("zabbix"):
         lines.append(LEGEND_ZABBIX)
         legend_h += 26

@@ -535,7 +535,9 @@ def _row_label(r: dict, ips: set[str]) -> str:
     text = f"<b>{esc(short_port(r['port']))}</b> · {via}" + (f"{name} " if name else "") \
         + esc(h["ip"])
     color = _color(h, ips)
-    return f"<span style='{color}'>{text}</span>" if color else text
+    tag = segments.service_tag(h, 18)
+    return (f"<span style='{color}'>{text}</span>" if color else text) \
+        + (f" {tag}" if tag else "")
 
 
 def _row_tip(r: dict, ips: set[str]) -> str:
@@ -589,7 +591,9 @@ def _draw_hosts(doc: Doc, bid: str, sw: dict, ips: set[str]) -> None:
             segments.status_dot(doc, h.get("zabbix"), x0 + 26, vy, 7, bid)
             label = esc(h.get("name") or h["ip"])
             color = _color(h, ips)
-            doc.vertex(f"<span style='{color}'>{label}</span>" if color else label,
+            tag = segments.service_tag(h, 14)
+            doc.vertex((f"<span style='{color}'>{label}</span>" if color else label)
+                       + (f" {tag}" if tag else ""),
                        STYLE["vm"], x0 + 33, vy, w - 33, VM_ROW, parent=bid,
                        tooltip=_row_tip(r, ips))
             vy += VM_ROW
@@ -728,7 +732,9 @@ def _draw_page(doc: Doc, model: dict, title_block: dict | None) -> None:
 
     # Hosts ohne Switchport und Legende rechts.
     lx = X0 + width + 60
-    below = Y0 + (206 if model.get("zabbix") else 180)
+    tags = segments.service_legend(model["service"])
+    tags_h = 14 * (len(tags) + 1) if tags else 0
+    below = Y0 + (206 if model.get("zabbix") else 180) + tags_h
     if model["unplaced"]:
         lines = [f"<b>{len(model['unplaced'])} Hosts ohne Access-Port</b>"]
         lines += [(f"{esc(u['host'].get('name') or '')} " if u["host"].get("name") else "")
@@ -753,7 +759,10 @@ def _draw_page(doc: Doc, model: dict, title_block: dict | None) -> None:
         "gestrichelter Kasten = Transit-Switch ohne eigene Hosts",
         f"<span style='color:{segments.RED}'>rot</span> = nicht im iTop bzw. nicht am Service",
     ] + ([segments.LEGEND_ZABBIX] if model.get("zabbix") else []))
-    doc.vertex(legend, segments.STYLE["legend"], lx, Y0, 360, 176 if model.get("zabbix") else 150)
+    if tags:
+        legend += "<br>" + "<br>".join(["● Farbe hinter dem Host = sein Service:"] + tags)
+    doc.vertex(legend, segments.STYLE["legend"], lx, Y0, 360,
+               (176 if model.get("zabbix") else 150) + tags_h)
     if title_block:
         tb_y = below + (30 + (min(len(model["unplaced"]), 40) + 3) * 12 + 20
                            if model["unplaced"] else 0)
