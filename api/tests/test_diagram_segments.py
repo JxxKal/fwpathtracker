@@ -180,8 +180,13 @@ async def test_whole_family_becomes_one_service(inventory, prefixes):
     assert [n for n, _ in hosts["10.4.5.20"]["service_tags"]] == ["Monitoring"]
     assert hosts["10.4.5.99"]["service_tags"] == []                 # nur aus dem ARP
     xml = segments.render(mdl)
-    assert "● Backup +1" in xml and "● Monitoring" in xml
     assert "CI von: Backup, Monitoring" in xml
+    # Je Segment ein gestrichelter Kasten pro Service(-Kombination), mit Namen.
+    groups = segments._groups([hosts[i] for i in ("10.1.8.10", "10.4.5.20", "10.4.5.99")])
+    assert [g[0] for g in groups] == ["Monitoring", "Backup + Monitoring",
+                                      segments.NO_SERVICE]
+    for name in ("Service Backup + Monitoring", "Service Monitoring", "Service Backup"):
+        assert f'tooltip="{name}"' in xml
     with pytest.raises(ValueError):
         segments.find_service(FAMILIES, svcs, "family:9")
     # Einzelne Services bleiben unberührt.

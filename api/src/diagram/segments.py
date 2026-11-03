@@ -400,6 +400,10 @@ STYLE = {
     "stub": f"endArrow=none;html=1;strokeColor={GREEN};strokeWidth=2;",
     "host": "shape={stencil};html=1;aspect=fixed;{paint}verticalLabelPosition=bottom;"
             f"verticalAlign=top;fontSize=9;whiteSpace=wrap;labelWidth={SLOT_W - 8};",
+    "group": "rounded=1;arcSize=4;html=1;fillColor=none;strokeColor={color};strokeWidth=2;"
+             "dashed=1;dashPattern=6 3;",
+    "group-name": "text;html=1;fontColor={color};fontSize=10;align=left;verticalAlign=middle;"
+                  "labelBackgroundColor=#ffffff;whiteSpace=nowrap;overflow=hidden;",
     "outline": f"rounded=1;arcSize=10;html=1;fillColor=none;strokeColor={RED};strokeWidth=2;"
                "dashed=1;",
     "more": "text;html=1;fontSize=10;fontStyle=2;align=left;verticalAlign=middle;",
@@ -454,7 +458,7 @@ def service_legend(svc: dict) -> list[str]:
             for n, c in (svc.get("colors") or {}).items()]
 
 
-def _host_cell(h: dict, ips: set[str]) -> tuple[str, str]:
+def _host_cell(h: dict, ips: set[str], tagged: bool = True) -> tuple[str, str]:
     stencil, paint = drawio.SHAPES[drawio.host_shape(h)]
     style = STYLE["host"].format(stencil=stencil, paint=paint)
     if not h.get("in_itop"):
@@ -464,7 +468,7 @@ def _host_cell(h: dict, ips: set[str]) -> tuple[str, str]:
         style += f"fontColor={RED};fontStyle=1;"
     name = h.get("name") or ""
     label = (f"<b>{esc(name)}</b><br>{esc(h['ip'])}" if name else esc(h["ip"]))
-    tag = service_tag(h)
+    tag = service_tag(h) if tagged else ""
     return (label + f"<br>{tag}" if tag else label), style
 
 
@@ -475,10 +479,73 @@ def _visible_hosts(net: dict, ips: set[str], hide_not_in_itop: bool,
             and not (hide_not_in_service and service_view._foreign(h, ips))]
 
 
-def _seg_height(n_hosts: int) -> float:
-    shown = min(n_hosts, HOST_MAX) + (1 if n_hosts > HOST_MAX else 0)
-    rows = math.ceil(shown / HOSTS_PER_ROW)
-    return 10 + BAR_H + (STUB + rows * ROW_H if rows else 12)
+GROUP_HEAD = 18                   # Kopfzeile des Service-Kastens (Name)
+GROUP_PAD = 8                     # Abstand Kasten ↔ nächste Kastenreihe
+NO_SERVICE = "ohne Service"
+
+
+def _groups(hosts: list[dict]) -> list[tuple[str, str, list[dict]]]:
+    """Familienplan: Hosts nach ihren Services bündeln — (Name, Farbe, Hosts).
+    Hosts an mehreren Services bilden einen eigenen Kasten „A + B"."""
+    by: dict[tuple, list[dict]] = {}
+    for h in hosts:
+        by.setdefault(tuple(h.get("service_tags") or ()), []).append(h)
+    out = [(" + ".join(n for n, _ in key) if key else NO_SERVICE,
+            key[0][1] if len(key) == 1 else ("#555555" if key else "#999999"), members)
+           for key, members in by.items()]
+    out.sort(key=lambda g: (g[0] == NO_SERVICE, " + " in g[0], g[0].lower()))
+    return out
+
+
+def _layout(hosts: list[dict]) -> dict:
+    """Wo jeder Host unter der Leiste steht (relativ zum Leistenanfang links,
+    unterhalb der Stichleitung). Im Familienplan in Service-Kästen, die wie
+    Regalbretter von links nach rechts gepackt werden."""
+    shown = hosts[:HOST_MAX]
+    items: list[tuple[dict, float, float, bool]] = []      # Host, x, y, an der Leiste
+    boxes: list[tuple[str, str, float, float, float, float]] = []
+    if not any("service_tags" in h for h in shown):
+        for k, h in enumerate(shown):
+            r, c = divmod(k, HOSTS_PER_ROW)
+            items.append((h, c * SLOT_W, r * ROW_H, r == 0))
+        rows = math.ceil(len(shown) / HOSTS_PER_ROW)
+        more_at = divmod(len(shown), HOSTS_PER_ROW)
+        return {"items": items, "boxes": boxes, "h": rows * ROW_H,
+                "more": (more_at[1] * SLOT_W, more_at[0] * ROW_H)}
+    # Erst verteilen (jeder Kasten ins erste Brett, in das er noch passt), dann
+    # die Höhen — so füllen kleine Kästen die Lücken neben großen.
+    shelves: list[list[tuple[str, str, list[dict], int]]] = []
+    free: list[int] = []
+    for name, color, members in _groups(shown):
+        w = min(len(members), HOSTS_PER_ROW)
+        i = next((i for i, f in enumerate(free) if f >= w), None)
+        if i is None:
+            shelves.append([])
+            free.append(HOSTS_PER_ROW)
+            i = len(shelves) - 1
+        shelves[i].append((name, color, members, HOSTS_PER_ROW - free[i]))
+        free[i] -= w
+    y = 0.0
+    for n, shelf in enumerate(shelves):
+        shelf_h = 0.0
+        for name, color, members, col in shelf:
+            w = min(len(members), HOSTS_PER_ROW)
+            bh = GROUP_HEAD + math.ceil(len(members) / HOSTS_PER_ROW) * ROW_H
+            boxes.append((name, color, col * SLOT_W + 3, y, w * SLOT_W - 6, bh))
+            for k, h in enumerate(members):
+                r, c = divmod(k, HOSTS_PER_ROW)
+                items.append((h, (col + c) * SLOT_W, y + GROUP_HEAD + r * ROW_H,
+                              n == 0 and r == 0))
+            shelf_h = max(shelf_h, bh)
+        y += shelf_h + (GROUP_PAD if n < len(shelves) - 1 else 0)
+    return {"items": items, "boxes": boxes, "h": y, "more": (0, y + 4)}
+
+
+def _seg_height(hosts: list[dict]) -> float:
+    if not hosts:
+        return 10 + BAR_H + 12
+    lay = _layout(hosts)
+    return 10 + BAR_H + STUB + lay["h"] + (30 if len(hosts) > HOST_MAX else 0)
 
 
 def _fw_size(fw: dict) -> tuple[float, float]:
@@ -508,8 +575,7 @@ class _Site:
         self.site = site
         self.down = facing_down          # Firewalls unten (obere Reihe) oder oben
         self.hosts = [_visible_hosts(n, ips, hide_itop, hide_svc) for n in site["segments"]]
-        self.seg_h = [_seg_height(len(h))
-                      for h, n in zip(self.hosts, site["segments"])]
+        self.seg_h = [_seg_height(h) for h in self.hosts]
         n = len(site["segments"])
         self.lane_w = 24 + 10 * n
         self.fw_sizes = [_fw_size(fw) for fw in site["firewalls"]]
@@ -585,29 +651,35 @@ def _draw_site(doc: Doc, s: _Site, x: float, y: float, ips: set[str]) -> list[tu
                          s.lane_w, bar_y, BAR_W, BAR_H, parent=box,
                          tooltip=drawio._net_tooltip(dict(net, host_count=len(hosts)))
                          + f"\nFirewall: {net['fw_id']}")
-        for k, host in enumerate(hosts[:HOST_MAX]):
-            r, c = divmod(k, HOSTS_PER_ROW)
-            hx = s.lane_w + c * SLOT_W + (SLOT_W - HOST_ICON) / 2
-            hy = bar_y + BAR_H + STUB + r * ROW_H
+        lay = _layout(hosts)
+        top = bar_y + BAR_H + STUB
+        for name, color, bx, by, bw, bh in lay["boxes"]:
+            doc.vertex("", STYLE["group"].format(color=color), s.lane_w + bx, top + by, bw, bh,
+                       parent=box, tooltip=f"Service {name}")
+        pad = GROUP_HEAD / 2 if lay["boxes"] else 0
+        for host, ox, oy, at_bar in lay["items"]:
+            hx = s.lane_w + ox + (SLOT_W - HOST_ICON) / 2
+            hy = top + oy + (6 if lay["boxes"] else 0)
             tip = service_view._host_tooltip(host, ips)
             if not host.get("in_itop"):
-                doc.vertex("", STYLE["outline"], s.lane_w + c * SLOT_W + 4, hy - 4,
-                           SLOT_W - 8,
-                           ROW_H - 8, parent=box, tooltip=tip)
-            label, style = _host_cell(host, ips)
+                doc.vertex("", STYLE["outline"], s.lane_w + ox + 8, hy - 4,
+                           SLOT_W - 16, ROW_H - 8 - pad, parent=box, tooltip=tip)
+            label, style = _host_cell(host, ips, tagged=not lay["boxes"])
             hid = doc.vertex(label, style, hx, hy, HOST_ICON, HOST_ICON, parent=box, tooltip=tip)
             status_dot(doc, host.get("zabbix"), hx + HOST_ICON - 6, hy - 4, 10, box)
-            if r == 0:
+            if at_bar:
                 doc.edge(bar, hid, "", STYLE["stub"]
-                         + f"exitX={(c * SLOT_W + SLOT_W / 2) / BAR_W:.3f};exitY=1;"
+                         + f"exitX={(ox + SLOT_W / 2) / BAR_W:.3f};exitY=1;"
                          "entryX=0.5;entryY=0;", parent=box)
+        # Servicename zuletzt, mit weißem Grund über den Stichleitungen.
+        for name, color, bx, by, bw, _bh in lay["boxes"]:
+            doc.vertex(f"<b>{esc(name)}</b>", STYLE["group-name"].format(color=color),
+                       s.lane_w + bx + 6, top + by - 1, bw - 12, GROUP_HEAD, parent=box,
+                       tooltip=f"Service {name}")
         if len(hosts) > HOST_MAX:
-            k = HOST_MAX
-            r, c = divmod(k, HOSTS_PER_ROW)
+            mx, my = lay["more"]
             doc.vertex(esc(f"… +{len(hosts) - HOST_MAX} weitere"), STYLE["more"],
-                       s.lane_w + c * SLOT_W + 8, bar_y + BAR_H + STUB + r * ROW_H,
-                       SLOT_W * 2, 30,
-                       parent=box)
+                       s.lane_w + mx + 8, top + my, SLOT_W * 2, 30, parent=box)
         # Leitung links an der Leiste vorbei zur Firewall. Jede Leitung hat
         # ihre eigene Spur, damit sie sich nicht decken.
         pid, pcx, pedge = pills[(net["device"], net["vdom"])]
@@ -671,7 +743,7 @@ def render(mdl: dict, title_block: dict | None = None, hide_not_in_itop: bool = 
     legend_h = LEGEND_H
     tags = service_legend(svc)
     if tags:
-        lines.append("Farbe unter dem Host = Service, an dem er hängt (+n = weitere):")
+        lines.append("gestrichelter Kasten um Hosts = Service, an dem sie hängen:")
         lines += tags
         legend_h += 14 * (len(tags) + 1)
     if mdl.get("zabbix"):
