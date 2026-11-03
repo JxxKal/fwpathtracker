@@ -263,6 +263,8 @@ export const de = {
     service: 'Service',
     serviceAll: '— Übersicht aller Services —',
     serviceFamilyPlan: '— Alle Services: Segmentplan / Switch-Physik —',
+    serviceOverview: 'Übersicht',
+    familyPlanHint: 'Segmentplan und Switch-Physik über alle Services der Familie',
     serviceNeedsFamily: 'Für den Segmentplan zuerst eine Servicefamilie wählen.',
     segments: 'VLANs für den Segmentplan',
     serviceViews: { segments: 'Segmentplan', switches: 'Switch-Physik' },

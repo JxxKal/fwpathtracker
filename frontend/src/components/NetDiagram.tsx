@@ -58,6 +58,9 @@ export default function NetDiagram() {
   const [svcMode, setSvcMode] = useState<ServiceView>('segments');
   const phys = svcMode === 'switches';
   const segView = svcView && !!service;
+  // Segmentplan über ALLE Services der Familie („family:<id>"), umschaltbar
+  // direkt aus der Übersicht.
+  const familyPlan = service.startsWith('family:');
   const [res, setRes] = useState<DiagramResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -292,9 +295,29 @@ export default function NetDiagram() {
           <Play size={14} /> {busy ? de.diagram.building : de.diagram.build}
         </button>
       </div>
+      {svcView && family && !service && services.length > 1 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="rounded-md border border-cyan-600 bg-cyan-950/60 px-2.5 py-1 text-xs text-cyan-200">
+            {de.diagram.serviceOverview}</span>
+          {(['segments', 'switches'] as ServiceView[]).map((m) => (
+            <button key={m} type="button"
+              onClick={() => { setSvcMode(m); setService(`family:${family}`); }}
+              className="rounded-md border border-slate-700 px-2.5 py-1 text-xs text-slate-400 hover:text-slate-200">
+              {de.diagram.serviceViews[m]}
+            </button>
+          ))}
+          <span className="text-[11px] text-slate-500">{de.diagram.familyPlanHint}</span>
+        </div>
+      )}
       {segView && (
         <div className="space-y-2 rounded-md border border-slate-800 bg-slate-950/40 p-3">
           <div className="flex flex-wrap gap-1.5">
+            {familyPlan && (
+              <button type="button" onClick={() => setService('')}
+                className="rounded-md border border-slate-700 px-2.5 py-1 text-xs text-slate-400 hover:text-slate-200">
+                {de.diagram.serviceOverview}
+              </button>
+            )}
             {(['segments', 'switches'] as ServiceView[]).map((m) => (
               <button key={m} type="button" onClick={() => switchMode(m)}
                 className={`rounded-md border px-2.5 py-1 text-xs ${svcMode === m
