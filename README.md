@@ -246,6 +246,20 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   über JSON-RPC mit API-Token (Zabbix 7: `Authorization: Bearer`), optional
   auf Host-Gruppen beschränkt; ist Zabbix nicht erreichbar, entsteht der Plan
   ohne Status.
+  **Windows-Inventar** (*Network Tools → Bestand → Windows-Inventar*,
+  *Einstellungen → Windows-Inventar*, nur Admins): liest die CSV-Dateien des
+  Collector-Skripts (`<HOST>_<NN>_<Art>.csv`: System, Dienste, Aufgaben,
+  lokale Gruppen, Freigaben, lauschende Ports, Anmelderechte, Software,
+  Features, Zertifikate, lokale Benutzer) nur lesend aus einer SMB-Freigabe
+  (`\\server\freigabe`, `smbprotocol`, NTLM) oder einem lokalen Verzeichnis.
+  Eingelesen wird regelmäßig (Default stündlich) und nur, was sich an Größe
+  oder Zeitstempel geändert hat; jeder abweichende Inhalt landet zusätzlich
+  in `win_inventory_history` — die Grundlage für „was hat sich geändert".
+  Hinweise je Host wie im Bechtle-Dashboard: Betriebssystem ohne Support
+  (2008/2012, Windows 10 ohne LTSC), Zertifikate abgelaufen oder < 30/60 Tage,
+  Platte < 10/30 % frei; Hosts ohne neue Dateien seit `stale_days` gelten als
+  veraltet. Da jeder Domänencomputer in die Freigabe schreiben darf, sind die
+  Daten *vom Host gemeldet*, kein Beweis.
   **Physisch** zeichnet, wie die Netzwerkkomponenten untereinander hängen:
   Knoten und Kanten aus den **LLDP**-Nachbarschaften in LibreNMS, mit den Ports
   an beiden Enden, Ebenen per Breitensuche vom bestvernetzten Gerät (Core oben,
@@ -645,7 +659,7 @@ internen Servicenamen (`db`, `api`, `frontend`) ab.
 
 **Fachliche Config** liegt in `system_config` (JSONB, per Web-UI) — Keys:
 `fmg`, `itop`, `dns`, `sites`, `tracker`, `saml`, `checks`, `site_supernets`,
-`librenms`, `faz`, `zabbix`, `graylog`, `webdrive`, `report`.
+`librenms`, `faz`, `zabbix`, `graylog`, `webdrive`, `report`, `wininv`.
 `GET /api/config/*` maskiert Secrets (`•••`), `PATCH` merged den Sentinel zurück.
 
 ---

@@ -1380,3 +1380,74 @@ export async function reportDelete(id: number): Promise<{ ok: boolean }> {
   if (isDemoMode()) return { ok: true };
   return request(`/api/report/${id}`, { method: 'DELETE' });
 }
+
+// ── Windows-Inventar (CSV des Collector-Skripts aus der SMB-Freigabe) ─────────
+export interface WinInvRisk { level: 'red' | 'orange' | 'info'; kind: string; text: string }
+export interface WinInvHost {
+  hostname: string; domain: string | null; os: string | null; ips: string[];
+  cpu: number | null; ram_gb: number | null;
+  disks: { drive: string; free_gb: number | null; total_gb: number | null }[];
+  kinds: Record<string, number>; admins: string[]; ports: number[];
+  file_time: string; stale: boolean; risks: WinInvRisk[];
+}
+export interface WinInvHostDetail extends WinInvHost {
+  data: Record<string, Record<string, string>[]>;
+  files: Record<string, { file_time: string; changed_at: string }>;
+}
+export interface WinInvRun {
+  files?: number; hosts?: number; read?: number; changed?: number; unchanged?: number;
+  skipped?: number; foreign?: number; errors?: string[]; started?: string; finished?: string;
+  error?: string;
+}
+export interface WinInvTest {
+  files: number; foreign: number; hosts: number; kinds: Record<string, number>;
+  newest: string | null; oldest: string | null;
+  sample: { hostname: string; os: string | null; ips: string[] } | null;
+}
+
+function demoWinHost(name: string, os: string, ip: string, risks: WinInvRisk[] = []): WinInvHost {
+  return { hostname: name, domain: 'op-tech.com', os, ips: [ip], cpu: 4, ram_gb: 16,
+    disks: [{ drive: 'C:', free_gb: 40, total_gb: 100 }],
+    kinds: { system: 1, services: 210, tasks: 150, groups: 24, shares: 4, ports: 18, secpol: 7,
+      software: 42, users: 5 },
+    admins: ['OP-TECH\\Domain Admins', `${name}\\Administrator`, 'OP-TECH\\ResAuth.L2.LocalAdminRights'],
+    ports: [135, 139, 445, 3389, 5985, 10050], file_time: '2026-11-03T22:00:00Z', stale: false, risks };
+}
+const DEMO_WIN_HOSTS: WinInvHost[] = [
+  demoWinHost('SVO3020-OT', 'Microsoft Windows Server 2022 Standard', '10.180.17.131'),
+  demoWinHost('SVO3044-OT', 'Microsoft Windows Server 2008 R2 Enterprise', '10.180.17.145',
+    [{ level: 'red', kind: 'os', text: 'Betriebssystem ohne Support: Microsoft Windows Server 2008 R2 Enterprise' },
+     { level: 'red', kind: 'cert', text: 'Zertifikat abgelaufen (2025-03-02): svo3044-ot.op-tech.com' }]),
+  { ...demoWinHost('BARRC01', 'Microsoft Windows 10 Enterprise LTSC', '10.124.47.200',
+    [{ level: 'orange', kind: 'disk', text: 'C: wird knapp: 12.9 von 58 GB frei' }]), stale: true,
+    file_time: '2026-10-28T22:00:00Z' },
+];
+
+export async function winInvTest(): Promise<WinInvTest> {
+  if (isDemoMode()) {
+    return { files: 1582, foreign: 0, hosts: 163, kinds: { system: 163, services: 163, software: 162 },
+      newest: '2026-11-03T22:00:00Z', oldest: '2026-11-02T22:00:00Z',
+      sample: { hostname: 'BARRC01', os: 'Microsoft Windows 10 Enterprise LTSC', ips: ['10.124.47.200'] } };
+  }
+  return request('/api/wininv/test', { method: 'POST' });
+}
+export async function winInvImport(): Promise<WinInvRun> {
+  if (isDemoMode()) return { files: 1582, hosts: 163, read: 12, changed: 9, unchanged: 3, skipped: 1570, errors: [] };
+  return request('/api/wininv/import', { method: 'POST' });
+}
+export async function winInvHosts(): Promise<{ hosts: WinInvHost[]; last: WinInvRun | null }> {
+  if (isDemoMode()) return { hosts: DEMO_WIN_HOSTS, last: { finished: '2026-11-04T06:00:00Z', changed: 9 } };
+  return request('/api/wininv/hosts');
+}
+export async function winInvHost(name: string): Promise<WinInvHostDetail> {
+  if (isDemoMode()) {
+    const h = DEMO_WIN_HOSTS.find((x) => x.hostname === name) ?? DEMO_WIN_HOSTS[0];
+    return { ...h, files: {}, data: {
+      groups: h.admins.map((m) => ({ GroupName: 'Administratoren', MemberName: m, Source: 'ActiveDirectory' })),
+      ports: h.ports.map((p) => ({ Port: String(p) })),
+      software: [{ DisplayName: 'baramundi Management Agent', DisplayVersion: '23.1.172.0', Publisher: 'baramundi software AG' }],
+      tasks: [{ TaskName: 'GASNO-Fix-Download', TaskPath: '\\', Run_As_User: 'svc.ifixscript', Action: 'D:\\Skripte\\TASK.cmd' }],
+    } };
+  }
+  return request(`/api/wininv/hosts/${encodeURIComponent(name)}`);
+}

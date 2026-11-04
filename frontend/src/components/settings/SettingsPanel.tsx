@@ -18,6 +18,7 @@ import SslPanel from './SslPanel';
 import TitleBlockPanel from './TitleBlockPanel';
 import UsersPanel from './UsersPanel';
 import WebdrivePanel from './WebdrivePanel';
+import WinInvPanel from './WinInvPanel';
 import ZabbixPanel from './ZabbixPanel';
 
 // Zwölf Panels untereinander waren eine Scrollstrecke. Dieselbe Seitenleiste
@@ -35,6 +36,7 @@ const PANELS: Record<string, () => JSX.Element> = {
   zabbix: () => <ZabbixPanel />,
   graylog: () => <GraylogPanel />,
   webdrive: () => <WebdrivePanel />,
+  wininv: () => <WinInvPanel />,
   dns: () => <DnsPanel />,
   drawio: () => <DrawioPanel />,
   report: () => <ReportPanel />,
@@ -58,6 +60,7 @@ const GROUPS: NavGroup[] = [
       { id: 'zabbix', label: de.settingsNav.zabbix },
       { id: 'graylog', label: de.settingsNav.graylog },
       { id: 'webdrive', label: de.settingsNav.webdrive },
+      { id: 'wininv', label: de.settingsNav.wininv },
       { id: 'dns', label: de.settingsNav.dns },
     ],
   },

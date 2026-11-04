@@ -10,3 +10,4 @@ cryptography==43.*        # SSL-Cert-Generierung/-Parsing (ssl.py)
 python-multipart==0.0.*   # File-Uploads + SAML-ACS-Formdaten
 python3-saml==1.16.*      # SAML 2.0 SSO (onelogin)
 tzdata>=2025.1            # Zeitzone der FAZ-Logsuche (slim-Image hat keine)
+smbprotocol==1.15.*      # Windows-Inventar: CSVs aus der SMB-Freigabe lesen

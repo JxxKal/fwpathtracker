@@ -44,6 +44,9 @@ from report.store import ReportStore
 from graylog.config import migrate as migrate_graylog, webdrive_config
 from webdrive.poller import WebdrivePoller
 from webdrive.store import WebdriveStore
+from routers import wininv as wininv_router
+from wininv.service import WinInventory
+from wininv.store import WinInvStore
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -185,6 +188,28 @@ async def _periodic_webdrive_poll(app: FastAPI) -> None:
 
 
 REPORT_LOCK = 0x4133385752    # pg_advisory_lock-Schlüssel: „A38WR"
+WININV_LOCK = 0x4133385749    # „A38WI"
+
+
+async def _periodic_wininv(app: FastAPI) -> None:
+    """Windows-Inventar aus der Freigabe einlesen (interval_min, mindestens 15).
+    Nur geänderte Dateien werden gelesen; mehrere Worker importieren nur einmal."""
+    await asyncio.sleep(90)
+    while True:
+        cfg = await read_config("wininv")
+        interval = max(int(cfg.get("interval_min") or 60), 15) * 60
+        if cfg.get("enabled") and cfg.get("path"):
+            try:
+                async with database.get_pool().acquire() as conn:
+                    if await conn.fetchval("SELECT pg_try_advisory_lock($1)", WININV_LOCK):
+                        try:
+                            await app.state.wininv.run(cfg)
+                            await app.state.wininv_store.purge(int(cfg.get("history_days") or 400))
+                        finally:
+                            await conn.execute("SELECT pg_advisory_unlock($1)", WININV_LOCK)
+            except Exception as exc:
+                log.warning("Windows-Inventar: Import fehlgeschlagen: %s", exc)
+        await asyncio.sleep(interval)
 
 
 async def _periodic_report(app: FastAPI) -> None:
@@ -237,6 +262,8 @@ async def lifespan(app: FastAPI):
     app.state.set_inventory = lambda inv: _rebuild_state(app, inv)
     app.state.graylog = GraylogClient()
     app.state.report_store = ReportStore(pool)
+    app.state.wininv_store = WinInvStore(pool)
+    app.state.wininv = WinInventory(app.state.wininv_store)
     try:
         await migrate_graylog()
     except Exception as exc:  # Start nie daran scheitern lassen
@@ -249,6 +276,7 @@ async def lifespan(app: FastAPI):
     dns_task = asyncio.create_task(_periodic_dns_purge(app))
     webdrive_task = asyncio.create_task(_periodic_webdrive_poll(app))
     report_task = asyncio.create_task(_periodic_report(app))
+    wininv_task = asyncio.create_task(_periodic_wininv(app))
     try:
         yield
     finally:
@@ -258,6 +286,7 @@ async def lifespan(app: FastAPI):
         dns_task.cancel()
         webdrive_task.cancel()
         report_task.cancel()
+        wininv_task.cancel()
         await database.close_pool()
 
 
@@ -274,6 +303,7 @@ app.include_router(faz_insight.router)  # Flow-Historie, Denies, Bestandsabgleic
 app.include_router(zabbix_admin.router)  # Betriebszustand (Zabbix 7)
 app.include_router(graylog_admin.router)  # Graylog als Quelle (Webdrive, AD, iFIX)
 app.include_router(report.router)  # Wochenreport „Stephan fragt, A38 antwortet"
+app.include_router(wininv_router.router)  # Windows-Inventar (CSV aus SMB-Freigabe)
 app.include_router(dns_admin.router)  # Stand des Reverse-DNS-Caches
 app.include_router(search.router)
 app.include_router(locate.router)  # Switchport-Suche + Netzwerkport-Check (LibreNMS-FDB)

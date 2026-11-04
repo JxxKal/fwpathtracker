@@ -15,6 +15,7 @@ import Reconcile from './Reconcile';
 import SwitchView from './SwitchView';
 import VlanList from './VlanList';
 import WeeklyReport from './report/WeeklyReport';
+import WinInventory from './wininv/WinInventory';
 
 // Werkzeugkasten: links die Liste nach Aufgabe gruppiert, rechts EIN Werkzeug
 // über die volle Breite. Vorher lagen alle acht nebeneinander auf der
@@ -23,7 +24,7 @@ import WeeklyReport from './report/WeeklyReport';
 
 export type ToolId =
   | 'netz' | 'switchport' | 'ports' | 'switchview' | 'vlans' | 'netzplan' | 'abgleich' | 'subnetz'
-  | 'freieip' | 'ipcalc' | 'wochenreport';
+  | 'freieip' | 'ipcalc' | 'wochenreport' | 'windows';
 
 // `label` ist der kurze Name in der Seitenleiste, nicht der Titel der Karte:
 // „Martin Lehmann, wo hängt das Gerät?" ist ein guter Kartentitel und eine
@@ -49,6 +50,7 @@ export const TOOL_GROUPS: Group[] = [
       { id: 'vlans', label: de.tools.navVlans, hint: de.tools.hintVlans, render: () => <VlanList /> },
       { id: 'netzplan', label: de.tools.navDiagram, hint: de.tools.hintDiagram, render: () => <NetDiagram /> },
       { id: 'abgleich', label: de.tools.navReconcile, hint: de.tools.hintReconcile, render: () => <Reconcile /> },
+      { id: 'windows', label: de.tools.navWinInv, hint: de.tools.hintWinInv, render: () => <WinInventory /> },
     ],
   },
   {
