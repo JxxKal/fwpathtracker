@@ -85,6 +85,8 @@ class TraceResult(BaseModel):
     hops: list[Hop] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     vip: dict | None = None
+    # Windows-Inventar des Ziels: lauscht es auf dem Port? (nur TCP, vom Host gemeldet)
+    dst_windows: dict | None = None
     duration_ms: int = 0
     inventory_synced_at: str | None = None
 
@@ -124,6 +126,9 @@ class PortTraceResult(BaseModel):
     udp: list[list[int]] = Field(default_factory=list)
     limits: dict[str, list[PortLimit]] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
+    # Windows-Inventar des Ziels: lauschende TCP-Ports, getrennt nach „Firewall
+    # lässt durch" und „gesperrt".
+    dst_windows: dict | None = None
     duration_ms: int = 0
     inventory_synced_at: str | None = None
 

@@ -193,6 +193,9 @@ def _host_tooltip(h: dict) -> str:
     if lnms:
         rows.append(("LibreNMS", " ".join(str(v) for v in (lnms.get("hostname"), lnms.get("hardware")) if v)))
     tip = "\n".join(f"{k}: {v}" for k, v in rows if v not in (None, ""))
+    if h.get("windows"):
+        from wininv.service import tooltip as win_tooltip
+        tip += "\n" + win_tooltip(h["windows"])
     return tip + ("\n" + zabbix_status.tooltip(h["zabbix"]) if h.get("zabbix") else "")
 
 

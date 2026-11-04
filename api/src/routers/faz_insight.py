@@ -277,10 +277,17 @@ async def reconcile_network(
         except Exception as exc:
             warnings.append(f"LibreNMS nicht abrufbar: {exc}")
 
+    win_index = None
+    try:
+        win_index = await state.wininv.index(await read_config("wininv"))
+    except Exception as exc:
+        warnings.append(f"Windows-Inventar nicht lesbar: {exc}")
+
     known = sorted({h["ip"] for h in itop_hosts if _in(net, h.get("ip"))}
                    | {ip for ip in itop_addresses if _in(net, ip)}
                    | {b["ip"] for b in arp_rows}
-                   | {f["ip"] for f in faz_hosts or []})
+                   | {f["ip"] for f in faz_hosts or []}
+                   | {ip for ip in (win_index or {}).get("by_ip", {}) if _in(net, ip)})
     dns_names = await _dns(state, known) if dns else {}
     if dns and len(known) > DNS_BUDGET:
         warnings.append(f"DNS nur für die ersten {DNS_BUDGET} von {len(known)} Adressen gefragt.")
@@ -289,7 +296,7 @@ async def reconcile_network(
                     arp_rows=arp_rows, faz_hosts=faz_hosts, dns_names=dns_names,
                     librenms_devices=librenms_devices,
                     fmg_names=_fmg_names(state.inventory, net),
-                    firewall_ips=_firewall_ips(state.inventory, net),
+                    firewall_ips=_firewall_ips(state.inventory, net), win_index=win_index,
                     active_days=active_days, stale_days=stale_days)
     if not out["observed"]:
         warnings.append("In diesem Netz liegt keine ARP-Beobachtung vor — „verwaist im iTop“ "

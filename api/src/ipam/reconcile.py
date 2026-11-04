@@ -70,11 +70,14 @@ def reconcile(cidr: str, *, itop_hosts: list[dict], itop_addresses: dict[str, di
               arp_rows: list[dict], faz_hosts: list[dict] | None,
               dns_names: dict[str, str | None], librenms_devices: dict[str, dict],
               fmg_names: dict[str, str], firewall_ips: dict[str, str] | None = None,
+              win_index: dict | None = None,
               active_days: int = 7, stale_days: int = 30,
               now: datetime | None = None) -> dict:
     """firewall_ips: Interface-IPs der FortiGates (ip → „gerät/interface"). Sie
     stehen in keiner ARP-Tabelle — die Firewall sieht sich nicht selbst — und
-    wären sonst jedes Mal „verwaist"."""
+    wären sonst jedes Mal „verwaist".
+    win_index: Windows-Inventar (wininv.service.build_index) — vom Host selbst
+    gemeldeter Name, OS und Stand; zählt als „gesehen" zum Dateizeitpunkt."""
     net = ipaddress.IPv4Network(cidr, strict=False)
     now = now or datetime.now(timezone.utc)
     active_s, stale_s = active_days * 86400, stale_days * 86400
@@ -143,6 +146,16 @@ def reconcile(cidr: str, *, itop_hosts: list[dict], itop_addresses: dict[str, di
         r["kind"] = r["kind"] or "switch"
         if "librenms" not in r["sources"]:
             r["sources"].append("librenms")
+    for ip, h in (win_index or {}).get("by_ip", {}).items():
+        if not _in(net, ip):
+            continue
+        r = slot(ip)
+        r["names"]["windows"] = h["hostname"]
+        r["os"] = r["os"] or h.get("os")
+        r["windows"] = {"hostname": h["hostname"], "os": h.get("os"),
+                        "file_time": h.get("file_time"), "stale": h.get("stale")}
+        seen(r, _ts(h.get("file_time")))
+        r["sources"].append("wininv")
     if net.prefixlen <= 30:
         rows.pop(str(net.network_address), None)
         rows.pop(str(net.broadcast_address), None)
@@ -172,8 +185,8 @@ def reconcile(cidr: str, *, itop_hosts: list[dict], itop_addresses: dict[str, di
     observed = any(r["macs"] for r in rows.values())
     for r in rows.values():
         _findings(r, active_s, stale_s, observed, now)
-        r["display_name"] = next((r["names"][k] for k in ("itop", "itop_ip", "dns", "faz",
-                                                          "librenms", "fmg", "firewall")
+        r["display_name"] = next((r["names"][k] for k in ("itop", "itop_ip", "windows", "dns",
+                                                          "faz", "librenms", "fmg", "firewall")
                                   if r["names"].get(k)), None)
 
     out = sorted(rows.values(), key=lambda r: ipaddress.IPv4Address(r["ip"]))
@@ -187,7 +200,7 @@ def reconcile(cidr: str, *, itop_hosts: list[dict], itop_addresses: dict[str, di
                   "in_itop": sum(1 for r in out if _in_itop(r)),
                   "active": sum(1 for r in out if _active(r, active_s)),
                   "with_findings": sum(1 for r in out if r["findings"])},
-        "observed": observed, "faz": faz_hosts is not None,
+        "observed": observed, "faz": faz_hosts is not None, "windows": win_index is not None,
         "active_days": active_days, "stale_days": stale_days,
     }
 
@@ -241,13 +254,13 @@ def _findings(r: dict, active_s: int, stale_s: int, observed: bool, now: datetim
     ref = shorts.get("itop") or shorts.get("itop_ip")
     if ref:
         other = {k: v for k, v in shorts.items()
-                 if k in ("dns", "faz") and v != ref}
+                 if k in ("dns", "faz", "windows") and v != ref}
         if other:
             _add(r, "name_mismatch", "Name weicht vom iTop ab: " + ", ".join(
                 f"{_SRC_LABEL[k]} „{r['names'][k]}“" for k in other))
 
 
-_SRC_LABEL = {"dns": "DNS", "faz": "FortiAnalyzer"}
+_SRC_LABEL = {"dns": "DNS", "faz": "FortiAnalyzer", "windows": "Windows-Inventar"}
 
 
 def _conflict_hint(macs: list[dict]) -> str:

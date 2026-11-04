@@ -129,3 +129,30 @@ async def test_import_reads_only_what_changed(tmp_path):
     assert h["admins"] == ["CORP\\Domain Admins"] and h["ports"] == [445, 3389]
     assert h["kinds"]["software"] == 2
     assert {r["kind"] for r in h["risks"]} == {"os", "cert", "disk"}
+
+
+async def test_trace_looks_up_the_destination_in_the_inventory():
+    from routers import trace
+
+    class Svc:
+        async def index(self, cfg):
+            return service.build_index([
+                {"hostname": "SRV1", "kind": "system", "file_mtime": datetime.now(timezone.utc),
+                 "rows": [{"OS": "Windows Server 2022", "IPs": "10.1.2.3"}]},
+                {"hostname": "SRV1", "kind": "ports", "file_mtime": datetime.now(timezone.utc),
+                 "rows": [{"Port": "443"}]}], 3)
+
+    class State:
+        wininv = Svc()
+
+    async def cfg(key):
+        return {"path": "x"}
+
+    trace.read_config, orig = cfg, trace.read_config
+    try:
+        w = await trace._dst_windows(State(), "10.1.2.3")
+        assert w["hostname"] == "SRV1" and w["ports"] == [443] and w["stale"] is False
+        assert await trace._dst_windows(State(), "10.9.9.9") is None
+        assert await trace._dst_windows(object(), "10.1.2.3") is None   # ohne Inventar
+    finally:
+        trace.read_config = orig

@@ -259,7 +259,13 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   (2008/2012, Windows 10 ohne LTSC), Zertifikate abgelaufen oder < 30/60 Tage,
   Platte < 10/30 % frei; Hosts ohne neue Dateien seit `stale_days` gelten als
   veraltet. Da jeder Domänencomputer in die Freigabe schreiben darf, sind die
-  Daten *vom Host gemeldet*, kein Beweis.
+  Daten *vom Host gemeldet*, kein Beweis. Verdrahtet in: **Bestandsabgleich**
+  (Quelle „Windows": Name, OS, Stand zählt als gesehen, Namensabweichung zum
+  iTop), **Netzplan-Tooltips** (OS, lauschende Ports), **Pfadanalyse** (lauscht
+  das Ziel auf dem TCP-Port? — Hinweis bei „Firewall offen, Dienst hört nicht"
+  und umgekehrt), **Alle Ports** (lauschende Ports getrennt nach erreichbar und
+  gesperrt) und **Wochenschau** (Kapitel „Was hat sich auf den
+  Windows-Rechnern geändert?").
   **Physisch** zeichnet, wie die Netzwerkkomponenten untereinander hängen:
   Knoten und Kanten aus den **LLDP**-Nachbarschaften in LibreNMS, mit den Ports
   an beiden Enden, Ebenen per Breitensuche vom bestvernetzten Gerät (Core oben,

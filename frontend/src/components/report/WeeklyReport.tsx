@@ -7,7 +7,7 @@ import {
 } from '../../api';
 import { de } from '../../i18n/de';
 
-// „Stephan fragt, A38 antwortet": links die Berichte, rechts einer davon.
+// „Die Wochenschau, Stephan fragt, A38 antwortet": links die Berichte, rechts einer davon.
 // Die Ansicht ist zugleich die Druckvorlage — Drucken/PDF nimmt dieselbe Seite.
 
 const STATUS: Record<ReportStatus, { label: string; cls: string }> = {
@@ -138,7 +138,7 @@ function ReportView({ data, item, onDelete }: { data: ReportData; item: ReportLi
         <div className="flex flex-wrap items-end justify-between gap-3 border-b border-slate-800 pb-3">
           <div>
             <p className="text-xs uppercase tracking-widest text-cyan-400">{data.period.kw}</p>
-            <h1 className="text-2xl font-semibold text-slate-100">{data.title}</h1>
+            <h1 className="text-2xl font-semibold text-slate-100">{de.report.name}</h1>
             <p className="text-sm text-slate-400">{data.period.from} – {data.period.to}</p>
           </div>
           <div className="flex items-center gap-2 text-xs text-slate-500">

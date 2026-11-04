@@ -19,6 +19,7 @@ from netguard import guard_egress_url
 from resolver import dns_source
 from resolver.dns_cache import build_reverse
 from routers.config import read_config
+from wininv import service as wininv_service
 from zabbix import status as zabbix_status
 
 log = logging.getLogger("routers.diagram")
@@ -496,6 +497,7 @@ async def _services(body: DiagramRequest, request: Request, user: dict) -> dict:
     if reverse is not None:
         await reverse.flush()
     warnings += mdl["warnings"]
+    await _windows(state, (h for n in mdl["networks"].values() for h in n["hosts"]), warnings)
     zbx = await _zabbix(body, state, warnings)
     if zbx is not None:
         counts = zabbix_status.annotate(zbx, (h for n in mdl["networks"].values()
@@ -532,6 +534,23 @@ async def _services(body: DiagramRequest, request: Request, user: dict) -> dict:
     return {"filename": f"A38_Netzplan_{stem}.drawio", "xml": service_view.render(
             mdl, tb, body.show_firewalls, body.hide_not_in_itop, body.hide_not_in_service),
             "stats": st, "hosts_mode": "all", "warnings": warnings}
+
+
+async def _windows(state, hosts, warnings: list[str]) -> int:
+    """Hosts mit ihrem Eintrag im Windows-Inventar (OS, lauschende Ports) für
+    den Tooltip. Ohne Inventar oder bei einem Fehler: nichts, der Plan entsteht."""
+    try:
+        idx = await state.wininv.index(await read_config("wininv"))
+    except Exception as exc:
+        warnings.append(f"Windows-Inventar nicht lesbar: {exc}")
+        return 0
+    n = 0
+    for h in hosts:
+        w = wininv_service.lookup(idx, h.get("ip"))
+        if w:
+            h["windows"] = w
+            n += 1
+    return n
 
 
 async def _zabbix(body: DiagramRequest, state, warnings: list[str]) -> dict | None:
@@ -623,6 +642,8 @@ async def _segments(body: DiagramRequest, request: Request, user: dict) -> dict:
     if reverse is not None:
         await reverse.flush()
     warnings += mdl["warnings"]
+    await _windows(state, (h for site in mdl["sites"] for net in site["segments"]
+                            for h in net["hosts"]), warnings)
     zbx = await _zabbix(body, state, warnings)
     if zbx is not None:
         mdl["zabbix"] = True
@@ -819,6 +840,9 @@ async def build(body: DiagramRequest, request: Request,
         if reverse.stats["cached"]:
             warnings.append(f"{reverse.stats['cached']} Namen kamen aus dem DNS-Cache, "
                             f"{reverse.stats['asked']} wurden neu erfragt.")
+    if wants_hosts:
+        await _windows(state, (h for vd in mdl["vdoms"] for n in vd["networks"]
+                               for h in n.get("hosts") or []), warnings)
     zbx = await _zabbix(body, state, warnings) if wants_hosts else None
     if zbx is not None:
         counts = zabbix_status.annotate(zbx, (h for vd in mdl["vdoms"] for n in vd["networks"]

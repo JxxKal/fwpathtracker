@@ -133,8 +133,15 @@ export interface TraceResult {
   hops: Hop[];
   warnings: string[];
   vip: { name: string; extip: string; mappedip: string | null } | null;
+  dst_windows?: DstWindows | null;
   duration_ms: number;
   inventory_synced_at: string | null;
+}
+
+/** Ziel laut Windows-Inventar (vom Host gemeldet, nur TCP). */
+export interface DstWindows {
+  hostname: string; os: string | null; ports: number[] | null; ports_time: string | null;
+  stale: boolean | null; listening?: boolean; open?: number[]; blocked?: number[];
 }
 
 // ── Deep-Tracker (alle Ports) ────────────────────────────────────────────────
@@ -171,6 +178,7 @@ export interface PortTraceResult {
   udp: PortRange[];
   limits: { tcp?: PortLimit[]; udp?: PortLimit[] };
   warnings: string[];
+  dst_windows?: DstWindows | null;
   duration_ms: number;
   inventory_synced_at: string | null;
 }

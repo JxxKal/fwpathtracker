@@ -60,6 +60,37 @@ class WinInvStore:
                     else await conn.fetch(sql))
         return [dict(r) for r in rows]
 
+    async def current_kinds(self, kinds: list[str]) -> list[dict]:
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT hostname, kind, file_mtime, changed_at, checked_at, rows "
+                "FROM win_inventory WHERE kind = ANY($1::text[])", kinds)
+        return [dict(r) for r in rows]
+
+    async def window(self, frm: datetime, to: datetime) -> dict:
+        """Alle Stände mit Beginn im Zeitraum, je (Host, Art) zusätzlich der
+        letzte davor als Vergleichsbasis — und wann der Verlauf überhaupt
+        beginnt."""
+        async with self._pool.acquire() as conn:
+            start = await conn.fetchval("SELECT min(valid_from) FROM win_inventory_history")
+            inside = await conn.fetch(
+                "SELECT hostname, kind, valid_from, rows FROM win_inventory_history "
+                "WHERE valid_from >= $1 AND valid_from < $2 ORDER BY valid_from", frm, to)
+            base = await conn.fetch(
+                """SELECT DISTINCT ON (h.hostname, h.kind) h.hostname, h.kind, h.valid_from,
+                          h.rows
+                   FROM win_inventory_history h
+                   JOIN (SELECT DISTINCT hostname, kind FROM win_inventory_history
+                         WHERE valid_from >= $1 AND valid_from < $2) c
+                     ON c.hostname = h.hostname AND c.kind = h.kind
+                   WHERE h.valid_from < $1
+                   ORDER BY h.hostname, h.kind, h.valid_from DESC""", frm, to)
+            newest = await conn.fetch(
+                "SELECT hostname, max(file_mtime) AS newest FROM win_inventory GROUP BY hostname")
+        return {"history_start": start, "inside": [dict(r) for r in inside],
+                "base": [dict(r) for r in base],
+                "newest": {r["hostname"]: r["newest"] for r in newest}}
+
     async def history(self, host: str, kind: str | None = None, limit: int = 30) -> list[dict]:
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(

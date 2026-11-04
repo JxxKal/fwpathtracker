@@ -1,4 +1,4 @@
-# „Stephan fragt, A38 antwortet" — der Wochenreport
+# „Die Wochenschau, Stephan fragt, A38 antwortet" — der Wochenreport
 
 Planung für einen automatisch erzeugten Wochenbericht über die Änderungen in der
 Infrastruktur, aufbereitet zum Lesen und als PDF exportierbar.
@@ -388,6 +388,7 @@ Entscheidung und kein Versäumnis.
 | 10 | FMG-Diff aus der Zeitmaschine im Firewall-Kapitel | fachlicher Inhalt der Änderungen |
 | 11 | draw.io-Ausschnitte (Verkabelung, dann Vorher und Nachher) | die Lage, nicht nur die Menge |
 | 12 | ✅ iFIX-Kapitel: Knotenzustand sofort mit Schritt 6 (gleicher Winlogbeat-Parser), iFIX-Meldungen nach Klärung von Frage 3 | OT im selben Bericht |
+| 13 | ✅ Windows-Kapitel aus dem Windows-Inventar: Vergleich der Nachtstände (lokale Admins, Konten, Dienste/Aufgaben mit Domänenkonto, lauschende Ports, Freigaben, Anmelderechte, Software), Rechner ohne neue Daten | was sich auf den Rechnern selbst getan hat |
 
 Schritt 3 kommt vor dem PDF: Was der Bericht aussagt, ist wichtiger als wie er
 gedruckt aussieht. Kapitel 7 steht hinter den Einzelkapiteln, weil es aus ihnen

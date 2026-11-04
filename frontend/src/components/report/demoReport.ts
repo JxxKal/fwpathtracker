@@ -6,7 +6,7 @@ const DAYS = ['Fr 16.10.', 'Sa 17.10.', 'So 18.10.', 'Mo 19.10.', 'Di 20.10.', '
   'Do 22.10.', 'Fr 23.10.'].map((label, i) => ({ date: `2026-10-${16 + i}`, label }));
 
 const DATA: ReportData = {
-  version: 1, title: 'Stephan fragt, A38 antwortet',
+  version: 1, title: 'Die Wochenschau, Stephan fragt, A38 antwortet',
   period: { start: '2026-10-16T04:30:00+00:00', end: '2026-10-23T04:30:00+00:00',
     kw: 'KW 43/2026', kw_key: '2026-W43', from: '16.10.2026 06:30', to: '23.10.2026 06:30' },
   days: DAYS,

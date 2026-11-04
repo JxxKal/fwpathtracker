@@ -9,20 +9,21 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 
-from report import chapters as ch, period, winlog_chapters as wch
+from report import chapters as ch, period, wininv_chapter as wiv, winlog_chapters as wch
 
 log = logging.getLogger("report.build")
 
-TITLE = "Stephan fragt, A38 antwortet"
+TITLE = "Die Wochenschau, Stephan fragt, A38 antwortet"
 VERSION = 1
 CHAPTER_TIMEOUT_S = 240
 # Kacheln der Titelseite, in dieser Reihenfolge (Schlüssel aus den Kapiteln).
 TILES = ["fw_changes", "fw_off_hours", "zbx_problems", "zbx_high", "hosts_new",
-         "hosts_unmanaged", "ad_changes", "ad_lockouts", "ifix_msgs", "ifix_reboots",
-         "lnms_port_down", "wd_errors"]
+         "hosts_unmanaged", "ad_changes", "ad_lockouts", "win_admins", "win_changes",
+         "ifix_msgs", "ifix_reboots", "lnms_port_down", "wd_errors"]
 # Kurze Zeilennamen für die Heatmap Tag × Quelle.
 HEAT_LABEL = {"firewall": "Firewall-Änderungen", "hosts": "Neue Hosts", "zabbix": "Zabbix",
-              "librenms": "LibreNMS", "ad": "Active Directory", "ifix": "iFIX",
+              "librenms": "LibreNMS", "ad": "Active Directory", "windows": "Windows-Rechner",
+              "ifix": "iFIX",
               "webdrive": "Webdrive"}
 NEAR = timedelta(minutes=60)
 
@@ -100,6 +101,7 @@ async def build(state, read_config, start: datetime, end: datetime, cfg: dict,
         (ch.librenms(state, ctx, read_config), "librenms", ch.Q_LIBRENMS, "LibreNMS"),
         (ch.zabbix(state, ctx, read_config), "zabbix", ch.Q_ZABBIX, "Zabbix"),
         (wch.ad(state, ctx, read_config), "ad", wch.Q_AD, "Graylog"),
+        (wiv.windows(state, ctx, read_config), "windows", wiv.Q_WINDOWS, wiv.SOURCE),
         (wch.ifix(state, ctx, read_config), "ifix", wch.Q_IFIX, "Graylog"),
         (ch.webdrive(state, ctx, read_config), "webdrive", ch.Q_WEBDRIVE, "Webdrive"),
     ]

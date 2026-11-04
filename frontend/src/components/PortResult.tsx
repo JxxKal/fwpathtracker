@@ -136,6 +136,28 @@ export default function PortResult({ result }: { result: PortTraceResult }) {
         </div>
       </div>
 
+      {result.dst_windows && result.dst_windows.ports && (
+        <div className="fwpt-card space-y-1.5">
+          <h3 className="text-xs font-medium uppercase text-slate-500">
+            {de.ports.windows(result.dst_windows.hostname)}
+            {result.dst_windows.stale && <span className="ml-2 normal-case text-amber-400">{de.drawer.windowsStale}</span>}
+          </h3>
+          <p className="text-xs text-slate-400">{de.ports.windowsHint}</p>
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="text-slate-400">{de.ports.windowsOpen}</span>
+            {(result.dst_windows.open ?? []).length
+              ? result.dst_windows.open!.map((p) => <span key={p} className="rounded border border-emerald-800 bg-emerald-950/50 px-1.5 py-0.5 font-mono text-emerald-300">{p}</span>)
+              : <span className="text-slate-500">—</span>}
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="text-slate-400">{de.ports.windowsBlocked}</span>
+            {(result.dst_windows.blocked ?? []).length
+              ? result.dst_windows.blocked!.map((p) => <span key={p} className="rounded border border-slate-700 px-1.5 py-0.5 font-mono text-slate-400">{p}</span>)
+              : <span className="text-slate-500">—</span>}
+          </div>
+        </div>
+      )}
+
       {/* Blockade je Bereich (wo stirbt was) */}
       {hasLimits && (
         <div className="fwpt-card space-y-1.5">

@@ -1241,6 +1241,7 @@ export interface ReconcileRow {
     seen_by?: string | null; seen_count?: number | null; other_ips?: string[];
     vendor?: { label: string; kind: 'shared' | 'virtual' | 'device' } | null }[];
   last_seen: string | null; age_s: number | null; os: string | null; sources: string[];
+  windows?: { hostname: string; os: string | null; file_time: string | null; stale: boolean | null };
   findings: { code: ReconcileCode; severity: 'error' | 'warn' | 'info'; text: string }[];
 }
 
@@ -1324,7 +1325,7 @@ function demoReconcile(q: string, activeDays: number, staleDays: number): Reconc
     dns: true, active_days: activeDays, stale_days: staleDays, warnings: [] };
 }
 
-// ── Wochenreport „Stephan fragt, A38 antwortet" ───────────────────────────────
+// ── Wochenschau „Die Wochenschau, Stephan fragt, A38 antwortet" ───────────────
 
 export type ReportStatus = 'ok' | 'partial' | 'error' | 'off' | 'failed';
 export interface ReportKpi { key: string; label: string; value: number; prev?: number | null }

@@ -181,6 +181,21 @@ export default function ResultDrawer({ result, onClose }: Props) {
 
       {result.hops.map((hop) => <HopBlock key={hop.index} hop={hop} />)}
 
+      {result.dst_windows && (
+        <section className="mb-4 rounded-md border border-slate-800 bg-slate-950/40 p-2 text-xs">
+          <h3 className="mb-1 font-medium uppercase text-slate-500">{de.drawer.windows}</h3>
+          <p className="text-slate-300">
+            <b>{result.dst_windows.hostname}</b>{result.dst_windows.os ? ` · ${result.dst_windows.os}` : ''}
+            {result.dst_windows.stale && <span className="text-amber-400"> · {de.drawer.windowsStale}</span>}
+          </p>
+          {result.dst_windows.listening !== undefined && (
+            <p className={result.dst_windows.listening ? 'text-emerald-400' : 'text-amber-400'}>
+              {de.drawer.windowsListens(result.dst_port ?? 0, result.dst_windows.listening)}
+            </p>
+          )}
+        </section>
+      )}
+
       {result.warnings.length > 0 && (
         <section className="mb-4">
           <h3 className="mb-1 text-xs font-medium uppercase text-slate-500">{de.drawer.warnings}</h3>

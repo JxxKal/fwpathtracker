@@ -302,7 +302,7 @@ app.include_router(faz_admin.router)  # FortiAnalyzer (Asset Identity Center)
 app.include_router(faz_insight.router)  # Flow-Historie, Denies, Bestandsabgleich
 app.include_router(zabbix_admin.router)  # Betriebszustand (Zabbix 7)
 app.include_router(graylog_admin.router)  # Graylog als Quelle (Webdrive, AD, iFIX)
-app.include_router(report.router)  # Wochenreport „Stephan fragt, A38 antwortet"
+app.include_router(report.router)  # Wochenschau „Die Wochenschau, Stephan fragt, A38 antwortet"
 app.include_router(wininv_router.router)  # Windows-Inventar (CSV aus SMB-Freigabe)
 app.include_router(dns_admin.router)  # Stand des Reverse-DNS-Caches
 app.include_router(search.router)

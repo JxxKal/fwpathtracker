@@ -125,3 +125,29 @@ def test_conflict_with_macs_at_several_ips_hints_at_cluster():
     _, rows = _run(arp_rows=rows_in)
     text = rows["10.1.1.50"]["findings"][-1]["text"]
     assert "Cluster- oder Failover-IP" in text and "10.1.1.51" in text
+
+
+def test_windows_inventory_names_the_host_and_counts_as_seen():
+    from wininv.service import build_index, lookup, tooltip
+    t = NOW - timedelta(days=1)
+    idx = build_index([
+        {"hostname": "SRV7", "kind": "system", "file_mtime": t,
+         "rows": [{"OS": "Microsoft Windows Server 2022 Standard",
+                   "IPs": "169.254.1.1, 10.1.1.30"}]},
+        {"hostname": "SRV7", "kind": "ports", "file_mtime": t,
+         "rows": [{"Port": "3389"}, {"Port": "445"}]},
+        {"hostname": "WEB1", "kind": "system", "file_mtime": t,
+         "rows": [{"OS": "Windows Server 2019", "IPs": "10.1.1.40"}]},
+    ], stale_days=3, now=NOW)
+    assert lookup(idx, "10.1.1.30")["ports"] == [445, 3389]
+    assert lookup(idx, name="srv7.corp.local")["hostname"] == "SRV7"
+    assert "lauscht: 445, 3389" in tooltip(lookup(idx, "10.1.1.30"))
+    out, rows = _run(win_index=idx,
+                     itop_hosts=[{"ip": "10.1.1.40", "name": "web-alt", "kind": "Server"}])
+    r = rows["10.1.1.30"]
+    assert r["display_name"] == "SRV7" and "wininv" in r["sources"]
+    assert r["os"] == "Microsoft Windows Server 2022 Standard"
+    assert codes(r) == ["not_in_itop"]                  # meldet sich, steht nicht im iTop
+    assert "169.254.1.1" not in rows
+    assert codes(rows["10.1.1.40"]) == ["name_mismatch"]
+    assert "Windows-Inventar „WEB1“" in rows["10.1.1.40"]["findings"][0]["text"]

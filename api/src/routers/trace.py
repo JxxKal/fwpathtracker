@@ -1,7 +1,9 @@
 """Trace-API: Pfad-Trace ausführen + Verlauf."""
 from __future__ import annotations
 
+import logging
 import time
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -15,6 +17,9 @@ from fmg.factory import build_fmg_client
 from resolver.chain import is_ipv6
 from routers.config import read_config
 from suggest.builder import build_suggestion
+from wininv import service as wininv_service
+
+log = logging.getLogger("trace")
 
 router = APIRouter(prefix="/api", tags=["trace"])
 
@@ -132,8 +137,25 @@ async def _execute_trace(state, body: "TraceRequest", *, fmg_cfg: dict,
                 hop.suggestion["fmg_url"] = _fmg_policy_url(
                     fmg_cfg, hop.suggestion["adom"], hop.suggestion.get("package"))
 
+    verdict = aggregate_verdict(hops)
+    dst_windows = await _dst_windows(state, dst_ep["ip"])
+    if dst_windows and proto == "tcp" and body.dst_port is not None \
+            and dst_windows["ports"] is not None:
+        listens = body.dst_port in dst_windows["ports"]
+        dst_windows["listening"] = listens
+        when = _when(dst_windows.get("ports_time"))
+        if verdict == "ALLOW" and not listens:
+            warnings.append(
+                f"Die Firewalls lassen TCP/{body.dst_port} durch, aber laut Windows-Inventar "
+                f"lauscht {dst_windows['hostname']} nicht darauf (Stand {when}) — dann "
+                "läuft der Dienst nicht oder hört auf einem anderen Port.")
+        elif verdict == "DENY" and listens:
+            warnings.append(
+                f"{dst_windows['hostname']} lauscht auf TCP/{body.dst_port} (Windows-Inventar, "
+                f"Stand {when}) — der Dienst läuft, es fehlt nur die Freigabe.")
+
     result = TraceResult(
-        verdict=aggregate_verdict(hops),
+        verdict=verdict, dst_windows=dst_windows,
         src=Endpoint(**src_ep), dst=Endpoint(**dst_ep),
         protocol=proto, dst_port=body.dst_port, src_port=body.src_port,
         icmp_type=body.icmp_type, icmp_code=body.icmp_code,
@@ -142,6 +164,30 @@ async def _execute_trace(state, body: "TraceRequest", *, fmg_cfg: dict,
         inventory_synced_at=inv.synced_at,
     )
     return result
+
+
+async def _dst_windows(state, ip: str) -> dict | None:
+    """Eintrag des Ziels im Windows-Inventar — None, wenn es keinen gibt oder
+    das Inventar nicht lesbar ist (die Analyse hängt nie davon ab)."""
+    try:
+        idx = await state.wininv.index(await read_config("wininv"))
+    except Exception as exc:
+        log.warning("Windows-Inventar für die Pfadanalyse nicht lesbar: %s", exc)
+        return None
+    h = wininv_service.lookup(idx, ip)
+    if not h:
+        return None
+    return {"hostname": h["hostname"], "os": h.get("os"), "ports": h.get("ports"),
+            "ports_time": h.get("ports_time"), "stale": h.get("stale")}
+
+
+def _when(iso: str | None) -> str:
+    if not iso:
+        return "unbekannt"
+    try:
+        return datetime.fromisoformat(iso).strftime("%d.%m.%Y %H:%M UTC")
+    except ValueError:
+        return iso
 
 
 @router.post("/trace", response_model=TraceResult)
@@ -222,7 +268,16 @@ async def trace_ports(body: PortTraceRequest, request: Request,
     finally:
         await client.close()
 
+    dst_windows = await _dst_windows(state, dst_ep["ip"])
+    if dst_windows and dst_windows["ports"] is not None:
+        open_tcp = data["tcp"] if data["reachable"] else []
+        def is_open(p: int) -> bool:
+            return any(lo <= p <= hi for lo, hi in open_tcp)
+        dst_windows["open"] = [p for p in dst_windows["ports"] if is_open(p)]
+        dst_windows["blocked"] = [p for p in dst_windows["ports"] if not is_open(p)]
+
     return PortTraceResult(
+        dst_windows=dst_windows,
         src=Endpoint(**src_ep), dst=Endpoint(**dst_ep),
         reachable=data["reachable"], hops=data["hops"],
         tcp=data["tcp"], udp=data["udp"], limits=data["limits"],

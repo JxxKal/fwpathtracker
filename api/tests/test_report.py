@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from report import build, chapters as ch, period, winlog_chapters as wch
+from report import build, chapters as ch, period, wininv_chapter as wiv, winlog_chapters as wch
 from webdrive.parse import Event
 
 CFG = {"enabled": True, "weekday": 4, "time": "06:30", "timezone": "Europe/Berlin"}
@@ -169,5 +169,62 @@ async def test_build_survives_failing_and_missing_sources(monkeypatch):
     data = await build.build(State(), read_config, START, SLOT, CFG)
     st = {s["id"]: s["status"] for s in data["sources"]}
     assert st["hosts"] == "error"
-    assert st["firewall"] == st["zabbix"] == st["ad"] == st["ifix"] == "off"
+    assert st["firewall"] == st["zabbix"] == st["ad"] == st["ifix"] == st["windows"] == "off"
     assert data["period"]["kw"] == "KW 43/2026" and data["summary"]["status"] == "failed"
+
+
+def _win_rows(kind, rows, host="SRV1", ts=None):
+    return {"hostname": host, "kind": kind, "valid_from": ts, "rows": rows}
+
+
+def test_windows_chapter_diffs_states_and_flags_what_matters():
+    before = START - timedelta(days=3)
+    groups0 = [{"GroupName": "Administratoren", "MemberName": "CORP\\Domain Admins"}]
+    groups1 = groups0 + [{"GroupName": "Administratoren", "MemberName": "CORP\\jdoe"}]
+    svc0 = [{"Name": "Spooler", "StartName": "LocalSystem", "PathName": "x", "StartMode": "Auto",
+             "State": "Running"}]
+    svc1 = [dict(svc0[0], State="Stopped"),                     # Zustand allein: keine Änderung
+            {"Name": "AppSvc", "DisplayName": "App", "StartName": "CORP\\svc.app",
+             "PathName": "D:\\app.exe", "StartMode": "Auto", "State": "Running"}]
+    sw0 = [{"DisplayName": "Editor", "DisplayVersion": "1.0"}]
+    sw1 = [{"DisplayName": "Editor", "DisplayVersion": "1.1"}]
+    ports0 = [{"Port": "445"}]
+    ports1 = [{"Port": "445"}, {"Port": "3389"}, {"Port": "49712"}]
+    share1 = [{"Name": "Daten", "Path": "D:\\Daten",
+               "Permissions": "Everyone:Allow(Full) | BUILTIN\\Administrators:Allow(Full)"}]
+    sys = [{"OS": "Microsoft Windows Server 2022 Standard", "IPs": "10.1.1.5"}]
+    win = {
+        "history_start": START - timedelta(days=30),
+        "base": [_win_rows("groups", groups0, ts=before), _win_rows("services", svc0, ts=before),
+                 _win_rows("software", sw0, ts=before), _win_rows("ports", ports0, ts=before),
+                 _win_rows("shares", [], ts=before)],
+        "inside": [_win_rows("groups", groups1, ts=at(19, 0)),
+                   _win_rows("services", svc1, ts=at(19, 0)),
+                   _win_rows("software", sw1, ts=at(20, 0)),
+                   _win_rows("ports", ports1, ts=at(20, 0)),
+                   _win_rows("shares", share1, ts=at(21, 0)),
+                   _win_rows("system", sys, host="NEU1", ts=at(21, 0))],
+        "newest": {"SRV1": at(21, 0), "ALT1": START - timedelta(days=9)},
+    }
+    c = wiv.windows_chapter(win, ctx(), stale_days=3, now=SLOT)
+    k = {x["key"]: x["value"] for x in c["kpis"]}
+    assert k == {"win_changes": 5, "win_admins": 1, "win_software": 1, "win_stale": 1}
+    titles = [(a["level"], a["title"]) for a in c["attention"]]
+    assert ("high", "Neuer lokaler Admin auf SRV1: CORP\\jdoe") in titles
+    assert ("high", "Freigabe mit Schreibrecht für alle auf SRV1: Daten") in titles
+    assert any(t.startswith("Dienst mit Domänenkonto auf SRV1: App") for _, t in titles)
+    assert ("medium", "SRV1 lauscht neu auf TCP/3389 (RDP)") in titles
+    assert not any("49712" in t for _, t in titles)              # nur in der Tabelle
+    assert any("ALT1 liefert keine Daten" in t for _, t in titles)
+    tables = {t["title"]: t for t in c["tables"]}
+    assert tables["Software"]["rows"][0][4] == "DisplayVersion: 1.0 → 1.1"
+    assert tables["Neu im Inventar"]["rows"][0][1] == "NEU1"
+    assert sum(c["daily"]) == 5 and c["status"] == "ok"
+
+
+def test_windows_chapter_young_history_is_partial_and_not_all_new():
+    win = {"history_start": at(18, 0), "base": [],
+           "inside": [_win_rows("system", [{"OS": "x", "IPs": "10.0.0.1"}], ts=at(18, 0))],
+           "newest": {"SRV1": at(18, 0)}}
+    c = wiv.windows_chapter(win, ctx(), stale_days=3, now=SLOT)
+    assert c["status"] == "partial" and "Neu im Inventar" not in {t["title"] for t in c["tables"]}
