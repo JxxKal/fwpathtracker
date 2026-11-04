@@ -20,6 +20,7 @@ SECRET_FIELDS: dict[str, tuple[str, ...]] = {
     "zabbix": ("token",),
     "graylog": ("token",),
     "wininv": ("password",),
+    "dnssync": ("write_password",),
 }
 
 

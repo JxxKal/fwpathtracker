@@ -47,6 +47,9 @@ from webdrive.store import WebdriveStore
 from routers import wininv as wininv_router
 from wininv.service import WinInventory
 from wininv.store import WinInvStore
+from routers import dnssync as dnssync_router
+from dnssync import service as dnssync_service
+from dnssync.store import DnsSyncStore
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -189,6 +192,32 @@ async def _periodic_webdrive_poll(app: FastAPI) -> None:
 
 REPORT_LOCK = 0x4133385752    # pg_advisory_lock-Schlüssel: „A38WR"
 WININV_LOCK = 0x4133385749    # „A38WI"
+DNSSYNC_LOCK = 0x4133384453   # „A38DS"
+
+
+async def _periodic_dnssync(app: FastAPI) -> None:
+    """iTop↔DNS-Abgleich zum Zeitplan (Default Montag 06:00): erzeugt nur die
+    Liste — geschrieben wird erst nach der Freigabe eines Admins."""
+    while True:
+        await asyncio.sleep(300)
+        try:
+            cfg = await read_config("dnssync")
+            if not cfg.get("enabled"):
+                continue
+            slot = report_period.last_slot(datetime.now(timezone.utc), cfg)
+            last = await app.state.dnssync_store.last_scheduled()
+            if last is not None and last >= slot:
+                continue
+            async with database.get_pool().acquire() as conn:
+                if not await conn.fetchval("SELECT pg_try_advisory_lock($1)", DNSSYNC_LOCK):
+                    continue
+                try:
+                    await dnssync_service.generate(app.state.dnssync_store, read_config,
+                                                   trigger="schedule", user=None)
+                finally:
+                    await conn.execute("SELECT pg_advisory_unlock($1)", DNSSYNC_LOCK)
+        except Exception as exc:
+            log.warning("iTop-DNS-Abgleich fehlgeschlagen: %s", exc)
 
 
 async def _periodic_wininv(app: FastAPI) -> None:
@@ -264,6 +293,7 @@ async def lifespan(app: FastAPI):
     app.state.report_store = ReportStore(pool)
     app.state.wininv_store = WinInvStore(pool)
     app.state.wininv = WinInventory(app.state.wininv_store)
+    app.state.dnssync_store = DnsSyncStore(pool)
     try:
         await migrate_graylog()
     except Exception as exc:  # Start nie daran scheitern lassen
@@ -277,6 +307,7 @@ async def lifespan(app: FastAPI):
     webdrive_task = asyncio.create_task(_periodic_webdrive_poll(app))
     report_task = asyncio.create_task(_periodic_report(app))
     wininv_task = asyncio.create_task(_periodic_wininv(app))
+    dnssync_task = asyncio.create_task(_periodic_dnssync(app))
     try:
         yield
     finally:
@@ -287,6 +318,7 @@ async def lifespan(app: FastAPI):
         webdrive_task.cancel()
         report_task.cancel()
         wininv_task.cancel()
+        dnssync_task.cancel()
         await database.close_pool()
 
 
@@ -304,6 +336,7 @@ app.include_router(zabbix_admin.router)  # Betriebszustand (Zabbix 7)
 app.include_router(graylog_admin.router)  # Graylog als Quelle (Webdrive, AD, iFIX)
 app.include_router(report.router)  # Wochenschau „Die Wochenschau, Stephan fragt, A38 antwortet"
 app.include_router(wininv_router.router)  # Windows-Inventar (CSV aus SMB-Freigabe)
+app.include_router(dnssync_router.router)  # iTop↔DNS-Abgleich (Todos, Freigabe durch Admin)
 app.include_router(dns_admin.router)  # Stand des Reverse-DNS-Caches
 app.include_router(search.router)
 app.include_router(locate.router)  # Switchport-Suche + Netzwerkport-Check (LibreNMS-FDB)

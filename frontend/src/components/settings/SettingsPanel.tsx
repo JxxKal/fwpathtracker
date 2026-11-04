@@ -3,6 +3,7 @@ import { de } from '../../i18n/de';
 import ErrorBoundary from '../ErrorBoundary';
 import SideNav, { type NavGroup } from '../SideNav';
 import DnsPanel from './DnsPanel';
+import DnsSyncPanel from './DnsSyncPanel';
 import DrawioPanel from './DrawioPanel';
 import FazPanel from './FazPanel';
 import FmgPanel from './FmgPanel';
@@ -31,6 +32,7 @@ const STORAGE_KEY = 'fwpt-settings';
 const PANELS: Record<string, () => JSX.Element> = {
   fmg: () => <FmgPanel />,
   itop: () => <ItopPanel />,
+  dnssync: () => <DnsSyncPanel />,
   librenms: () => <LibrenmsPanel />,
   faz: () => <FazPanel />,
   zabbix: () => <ZabbixPanel />,
@@ -55,6 +57,7 @@ const GROUPS: NavGroup[] = [
     items: [
       { id: 'fmg', label: de.settingsNav.fmg },
       { id: 'itop', label: de.settingsNav.itop },
+      { id: 'dnssync', label: de.settingsNav.dnssync },
       { id: 'librenms', label: de.settingsNav.librenms },
       { id: 'faz', label: de.settingsNav.faz },
       { id: 'zabbix', label: de.settingsNav.zabbix },

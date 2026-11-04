@@ -266,6 +266,21 @@ Einstellungen**. Der Tracker trägt dieselbe Seitenleiste — *Prüfen* mit
   und umgekehrt), **Alle Ports** (lauschende Ports getrennt nach erreichbar und
   gesperrt) und **Wochenschau** (Kapitel „Was hat sich auf den
   Windows-Rechnern geändert?").
+  **iTop-DNS-Abgleich** (Reiter *Todos*, *Einstellungen → iTop-DNS-Abgleich*,
+  nur Admins): wöchentlich (Default Montag 06:00) oder auf Knopfdruck eine
+  Liste der iTop-Adressobjekte (TeemIP `IPv4Address`, ohne released/unassigned)
+  in drei Abschnitten — CI mit Management-IP ohne DNS-Namen, Name weicht vom
+  DNS ab, belegte Adresse ohne CI. Vorschlag aus dem PTR der IP mit
+  Gegenprobe (A-Record zeigt wieder auf die IP = *bestätigt*), aufgeteilt in
+  `short_name` + iTop-`Domain` (längster Treffer; fehlt die Domain, ist die
+  Zeile nicht schreibbar). Vorausgewählt ist nur Bestätigtes ohne vorhandenen
+  Namen; der Admin setzt oder entfernt Häkchen, nimmt Adressen dauerhaft aus
+  und gibt frei. Erst dann schreibt A38 per `core/update` — ausschließlich
+  `IPv4Address.short_name`/`domain_id` (Wächter vor jedem Request), nur mit
+  „Schreiben erlauben", optional mit eigenem Schreibkonto — und prüft jede
+  Zeile unmittelbar davor erneut gegen iTop (inzwischen geändert → nicht
+  überschrieben) und DNS. Ergebnis je Zeile, wer freigegeben hat und der
+  iTop-Änderungskommentar bleiben am Lauf (`dns_sync_run`).
   **Physisch** zeichnet, wie die Netzwerkkomponenten untereinander hängen:
   Knoten und Kanten aus den **LLDP**-Nachbarschaften in LibreNMS, mit den Ports
   an beiden Enden, Ebenen per Breitensuche vom bestvernetzten Gerät (Core oben,
@@ -665,7 +680,7 @@ internen Servicenamen (`db`, `api`, `frontend`) ab.
 
 **Fachliche Config** liegt in `system_config` (JSONB, per Web-UI) — Keys:
 `fmg`, `itop`, `dns`, `sites`, `tracker`, `saml`, `checks`, `site_supernets`,
-`librenms`, `faz`, `zabbix`, `graylog`, `webdrive`, `report`, `wininv`.
+`librenms`, `faz`, `zabbix`, `graylog`, `webdrive`, `report`, `wininv`, `dnssync`.
 `GET /api/config/*` maskiert Secrets (`•••`), `PATCH` merged den Sentinel zurück.
 
 ---

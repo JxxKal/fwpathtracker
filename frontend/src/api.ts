@@ -1452,3 +1452,78 @@ export async function winInvHost(name: string): Promise<WinInvHostDetail> {
   }
   return request(`/api/wininv/hosts/${encodeURIComponent(name)}`);
 }
+
+// ── iTop↔DNS-Abgleich (Todos) ────────────────────────────────────────────────
+export type DnsSyncSection = 'missing' | 'mismatch' | 'orphan';
+export interface DnsSyncItem {
+  id: string; ip: string; section: DnsSyncSection;
+  status: 'confirmed' | 'unconfirmed' | 'no_domain'; reason: string; itop_status: string;
+  itop_name: string | null; dns_name: string; short_name: string | null; domain: string | null;
+  cis: { class: string; id: string; name: string }[]; selected: boolean; selectable: boolean;
+  result?: { state: 'ok' | 'skipped' | 'error'; text: string };
+}
+export interface DnsSyncRun {
+  id: number; created_at: string; trigger: string; created_by: string | null;
+  status: 'open' | 'applied' | 'partial' | 'failed' | 'discarded' | 'superseded';
+  stats: { addresses: number; checked: number; no_ptr: number; ok: number; ignored: number;
+    missing: number; mismatch: number; orphan: number; errors?: string[]; domains?: number;
+    no_ptr_sample?: { ip: string; ci: string | null }[] };
+  decided_by: string | null; decided_at: string | null;
+  result: { ok: number; skipped: number; error: number; selected: number } | null;
+  items?: DnsSyncItem[];
+}
+
+const DEMO_DNS_ITEMS: DnsSyncItem[] = [
+  { id: '101', ip: '10.180.17.141', section: 'missing', status: 'confirmed', reason: 'PTR und A-Record stimmen überein.',
+    itop_status: 'allocated', itop_name: null, dns_name: 'svo3035-ot.op-tech.com', short_name: 'svo3035-ot',
+    domain: 'op-tech.com', cis: [{ class: 'Server', id: '55', name: 'svo3035-ot' }], selected: true, selectable: true },
+  { id: '102', ip: '10.180.17.142', section: 'missing', status: 'unconfirmed', reason: 'PTR svo3051-ot.op-tech.com, aber A-Record zeigt auf 10.180.17.150.',
+    itop_status: 'allocated', itop_name: null, dns_name: 'svo3051-ot.op-tech.com', short_name: 'svo3051-ot',
+    domain: 'op-tech.com', cis: [{ class: 'VirtualMachine', id: '56', name: 'svo3051-ot' }], selected: false, selectable: true },
+  { id: '103', ip: '10.180.17.145', section: 'mismatch', status: 'confirmed', reason: 'PTR und A-Record stimmen überein.',
+    itop_status: 'allocated', itop_name: 'svo3044.op-tech.com', dns_name: 'svo3044-ot.op-tech.com', short_name: 'svo3044-ot',
+    domain: 'op-tech.com', cis: [{ class: 'Server', id: '57', name: 'SVO3044-OT' }], selected: false, selectable: true },
+  { id: '104', ip: '10.180.16.40', section: 'orphan', status: 'no_domain', reason: 'Für drucker-2.lab.local gibt es im iTop keine passende Domain — erst die Domain anlegen.',
+    itop_status: 'allocated', itop_name: null, dns_name: 'drucker-2.lab.local', short_name: null,
+    domain: null, cis: [], selected: false, selectable: false },
+];
+const DEMO_DNS_RUN: DnsSyncRun = { id: 3, created_at: '2026-11-02T05:00:00Z', trigger: 'schedule', created_by: null,
+  status: 'open', stats: { addresses: 1840, checked: 1702, no_ptr: 412, ok: 1286, ignored: 2, missing: 2, mismatch: 1, orphan: 1 },
+  decided_by: null, decided_at: null, result: null };
+
+export async function dnsSyncOverview(): Promise<{ runs: DnsSyncRun[]; write_enabled: boolean; open_items: number }> {
+  if (isDemoMode()) return { runs: [DEMO_DNS_RUN], write_enabled: true, open_items: DEMO_DNS_ITEMS.length };
+  return request('/api/dnssync');
+}
+export async function dnsSyncRun(id: number): Promise<DnsSyncRun> {
+  if (isDemoMode()) return { ...DEMO_DNS_RUN, items: DEMO_DNS_ITEMS.map((i) => ({ ...i })) };
+  return request(`/api/dnssync/runs/${id}`);
+}
+export async function dnsSyncCreate(): Promise<{ id: number }> {
+  if (isDemoMode()) return { id: 3 };
+  return request('/api/dnssync/runs', { method: 'POST' });
+}
+export async function dnsSyncToggle(id: number, ids: string[], selected: boolean): Promise<{ selected: number }> {
+  if (isDemoMode()) return { selected: 0 };
+  return request(`/api/dnssync/runs/${id}/items`, { method: 'PATCH', body: JSON.stringify({ ids, selected }) });
+}
+export async function dnsSyncApply(id: number): Promise<{ status: string; ok: number; skipped: number; error: number; selected: number }> {
+  if (isDemoMode()) return { status: 'applied', ok: 1, skipped: 0, error: 0, selected: 1 };
+  return request(`/api/dnssync/runs/${id}/apply`, { method: 'POST' });
+}
+export async function dnsSyncDiscard(id: number): Promise<void> {
+  if (isDemoMode()) return;
+  await request(`/api/dnssync/runs/${id}/discard`, { method: 'POST' });
+}
+export async function dnsSyncIgnore(ip_id: string, ip: string, reason: string | null): Promise<void> {
+  if (isDemoMode()) return;
+  await request('/api/dnssync/ignore', { method: 'POST', body: JSON.stringify({ ip_id, ip, reason }) });
+}
+export async function dnsSyncIgnored(): Promise<{ ip_id: string; ip: string; reason: string | null; created_by: string; created_at: string }[]> {
+  if (isDemoMode()) return [{ ip_id: '99', ip: '10.180.16.5', reason: 'Testsystem, bewusst ohne DNS', created_by: 'admin', created_at: '2026-10-20T08:00:00Z' }];
+  return request('/api/dnssync/ignore');
+}
+export async function dnsSyncUnignore(ip_id: string): Promise<void> {
+  if (isDemoMode()) return;
+  await request(`/api/dnssync/ignore/${encodeURIComponent(ip_id)}`, { method: 'DELETE' });
+}

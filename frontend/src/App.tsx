@@ -1,6 +1,6 @@
 import { History, Info, LogOut, Route } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { portTrace, runTrace, setToken, type FlowHistoryRequest } from './api';
+import { dnsSyncOverview, portTrace, runTrace, setToken, type FlowHistoryRequest } from './api';
 import LoginPage from './components/LoginPage';
 import HistoryList from './components/HistoryList';
 import AddToChecks from './components/AddToChecks';
@@ -17,15 +17,16 @@ import ToolsPanel, { isToolId, type ToolId } from './components/ToolsPanel';
 import TraceForm, { type TraceMode } from './components/TraceForm';
 import SettingsPanel from './components/settings/SettingsPanel';
 import WebdriveDashboard from './components/webdrive/WebdriveDashboard';
+import DnsSyncTodo from './components/todos/DnsSyncTodo';
 import { readCheckLink } from './checkLink';
 import { de } from './i18n/de';
 import type { Hop, PortTraceResult, Session, TraceRequest, TraceResult } from './types';
 
-type Tab = 'tracker' | 'tools' | 'webdrive' | 'einstellungen';
+type Tab = 'tracker' | 'tools' | 'webdrive' | 'todos' | 'einstellungen';
 
 const TAB_LABEL: Record<Tab, string> = {
   tracker: de.tabs.tracker, tools: de.tabs.tools, webdrive: de.tabs.webdrive,
-  einstellungen: de.tabs.settings,
+  todos: de.tabs.todos, einstellungen: de.tabs.settings,
 };
 /** Ansichten innerhalb des Trackers — Prüfung, Ist-Zustand aus dem
  *  FortiAnalyzer, gespeicherte Checks, Verlauf. */
@@ -65,6 +66,7 @@ function readTab(hasCheckLink: boolean, hasToolLink: boolean): [Tab, TrackerView
   if (TRACKER_VIEWS.includes(view as TrackerView)) return ['tracker', view as TrackerView];
   if (t === 'webdrive') return ['webdrive', 'pfad'];
   if (t === 'einstellungen') return ['einstellungen', 'pfad'];
+  if (t === 'todos') return ['todos', 'pfad'];
   return ['tracker', 'pfad'];
 }
 
@@ -98,6 +100,15 @@ export default function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   // Sprung in „Gestern ging es noch" mit fertigem Flow (aus Tracker oder Deny-Liste).
   const [flowInit, setFlowInit] = useState<FlowHistoryRequest | null>(null);
+  // Offene Todos (Zeilen im offenen iTop-DNS-Abgleich) als Zahl am Reiter.
+  const [todoCount, setTodoCount] = useState(0);
+  useEffect(() => {
+    if (session?.role !== 'admin') return;
+    const load = () => dnsSyncOverview().then((o) => setTodoCount(o.open_items)).catch(() => {});
+    load();
+    const timer = window.setInterval(load, 300_000);
+    return () => window.clearInterval(timer);
+  }, [session, tab]);
 
   useEffect(() => {
     const onLogout = () => logout();
@@ -184,8 +195,8 @@ export default function App() {
           <span className="font-semibold text-slate-100">{de.appTitle}</span>
         </div>
         <nav className="flex gap-1">
-          {(['tracker', 'tools', 'webdrive', 'einstellungen'] as Tab[])
-            .filter((t) => t !== 'einstellungen' || session.role === 'admin')
+          {(['tracker', 'tools', 'webdrive', 'todos', 'einstellungen'] as Tab[])
+            .filter((t) => (t !== 'einstellungen' && t !== 'todos') || session.role === 'admin')
             .map((t) => (
               <button
                 key={t} type="button"
@@ -195,6 +206,9 @@ export default function App() {
                 onClick={() => setTab(t)}
               >
                 {TAB_LABEL[t]}
+                {t === 'todos' && todoCount > 0 && (
+                  <span className="ml-1.5 rounded-full bg-amber-600 px-1.5 text-[10px] font-semibold text-white">{todoCount}</span>
+                )}
               </button>
             ))}
         </nav>
@@ -312,6 +326,8 @@ export default function App() {
         {tab === 'tools' && <ToolsPanel initial={toolLink} />}
 
         {tab === 'webdrive' && <WebdriveDashboard />}
+
+        {tab === 'todos' && session.role === 'admin' && <DnsSyncTodo />}
 
         {tab === 'einstellungen' && session.role === 'admin' && <SettingsPanel />}
         </ErrorBoundary>
